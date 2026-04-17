@@ -1,0 +1,449 @@
+/**
+ * Desktop Mode — Window Chrome.
+ *
+ * Styles for individual desktop windows: title bar, borders, shadows,
+ * resize handles, and state variations.
+ *
+ * @since 6.9.0
+ */
+
+/* Base window. */
+.wp-desktop-window {
+	position: absolute;
+	display: flex;
+	flex-direction: column;
+	background: var(--wp-desktop-window-bg);
+	border: 1px solid var(--wp-desktop-window-border);
+	border-radius: var(--wp-desktop-window-radius);
+	box-shadow: var(--wp-desktop-window-shadow);
+	overflow: hidden;
+	min-width: 320px;
+	min-height: 200px;
+	transform-origin: center center;
+	transition:
+		left 0.25s cubic-bezier(0.2, 0, 0.2, 1),
+		top 0.25s cubic-bezier(0.2, 0, 0.2, 1),
+		width 0.25s cubic-bezier(0.2, 0, 0.2, 1),
+		height 0.25s cubic-bezier(0.2, 0, 0.2, 1),
+		border-radius 0.25s ease,
+		transform 0.2s ease,
+		opacity 0.2s ease,
+		box-shadow 0.2s ease;
+}
+
+/*
+ * Suppress the left/top/width/height transition during drag or resize —
+ * otherwise every pointer move lerps and the window lags the cursor.
+ */
+.wp-desktop-window--dragging,
+.wp-desktop-window--resizing {
+	transition: none;
+}
+
+/* Focused window gets elevated shadow and distinct title bar. */
+.wp-desktop-window--focused {
+	box-shadow: var(--wp-desktop-window-shadow-focused);
+}
+
+/* Title bar. */
+.wp-desktop-window__titlebar {
+	display: flex;
+	align-items: center;
+	height: var(--wp-desktop-titlebar-height);
+	padding: 0 8px;
+	background: var(--wp-desktop-titlebar-bg);
+	color: var(--wp-desktop-titlebar-color);
+	cursor: default;
+	user-select: none;
+	flex-shrink: 0;
+	gap: 8px;
+}
+
+.wp-desktop-window--focused .wp-desktop-window__titlebar {
+	background: var(--wp-desktop-titlebar-bg-focused);
+	color: var(--wp-desktop-titlebar-color-focused);
+}
+
+/* Window icon in title bar. */
+.wp-desktop-window__icon {
+	font-size: 16px;
+	width: 16px;
+	height: 16px;
+	flex-shrink: 0;
+}
+
+/* Window title text. */
+.wp-desktop-window__title {
+	flex: 1;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 13px;
+	font-weight: 400;
+	line-height: var(--wp-desktop-titlebar-height);
+}
+
+/* Window control buttons container. */
+.wp-desktop-window__controls {
+	display: flex;
+	gap: 4px;
+	align-items: center;
+	flex-shrink: 0;
+}
+
+/* ---------------------------------------------------------------
+ * Window control buttons.
+ *
+ * Flat, icon-only buttons styled to feel at home in the WordPress
+ * admin: transparent by default, subtle tinted hover, focus ring in
+ * the active admin theme color, inline SVG icons inheriting
+ * currentColor so they adapt to focused / unfocused title bars.
+ *
+ * The close button gets a destructive red wash on hover only —
+ * never as a default state — so it reads as safe until interacted
+ * with, matching the WordPress admin's pattern of reserving color
+ * for semantic signal.
+ * --------------------------------------------------------------- */
+.wp-desktop-window__btn {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 26px;
+	height: 26px;
+	border: none;
+	border-radius: 4px;
+	cursor: pointer;
+	padding: 0;
+	background: transparent;
+	color: currentColor;
+	transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.wp-desktop-window__btn-icon {
+	display: block;
+	pointer-events: none;
+	flex-shrink: 0;
+}
+
+/* Focused title bar (solid theme color): light icons. */
+.wp-desktop-window--focused .wp-desktop-window__btn {
+	color: rgba(255, 255, 255, 0.7);
+}
+.wp-desktop-window--focused .wp-desktop-window__btn:hover {
+	color: #fff;
+	background: rgba(255, 255, 255, 0.18);
+}
+.wp-desktop-window--focused .wp-desktop-window__btn:focus-visible {
+	color: #fff;
+	background: rgba(255, 255, 255, 0.18);
+	outline: 2px solid rgba(255, 255, 255, 0.65);
+	outline-offset: 1px;
+}
+.wp-desktop-window--focused .wp-desktop-window__btn--focus.wp-desktop-window__btn--active {
+	color: #fff;
+	background: rgba(255, 255, 255, 0.25);
+}
+.wp-desktop-window--focused .wp-desktop-window__btn--close:hover {
+	color: #fff;
+	background: #d63638;
+}
+
+/* Unfocused title bar (gray): dark icons. */
+.wp-desktop-window:not(.wp-desktop-window--focused) .wp-desktop-window__btn {
+	color: rgba(0, 0, 0, 0.45);
+}
+.wp-desktop-window:not(.wp-desktop-window--focused) .wp-desktop-window__btn:hover {
+	color: rgba(0, 0, 0, 0.85);
+	background: rgba(0, 0, 0, 0.08);
+}
+.wp-desktop-window:not(.wp-desktop-window--focused) .wp-desktop-window__btn:focus-visible {
+	outline: 2px solid var(--wp-admin-theme-color, #2271b1);
+	outline-offset: 1px;
+}
+.wp-desktop-window:not(.wp-desktop-window--focused) .wp-desktop-window__btn--focus.wp-desktop-window__btn--active {
+	color: rgba(0, 0, 0, 0.85);
+	background: rgba(0, 0, 0, 0.12);
+}
+.wp-desktop-window:not(.wp-desktop-window--focused) .wp-desktop-window__btn--close:hover {
+	color: #fff;
+	background: #d63638;
+}
+
+/* ---------------------------------------------------------------
+ * Screen Meta buttons (Screen Options / Help) in the title bar.
+ * Positioned right after the title text, visually separated from
+ * the close / maximize / minimize cluster by a subtle divider.
+ * Sized to meet WCAG 2.2 target size (24x24 minimum).
+ * --------------------------------------------------------------- */
+.wp-desktop-window__screen-meta {
+	display: flex;
+	gap: 4px;
+	align-items: center;
+	flex-shrink: 0;
+	margin-inline-end: 8px;
+	padding-inline-end: 8px;
+	border-inline-end: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+/* Hide the divider when there are no screen-meta buttons. */
+.wp-desktop-window__screen-meta:empty {
+	display: none;
+}
+
+.wp-desktop-window__meta-btn {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	border: none;
+	border-radius: 6px;
+	cursor: pointer;
+	padding: 0;
+	background: transparent;
+	transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.wp-desktop-window__meta-btn .dashicons {
+	font-size: 18px;
+	width: 18px;
+	height: 18px;
+}
+
+/* Focused window: meta buttons visible. */
+.wp-desktop-window--focused .wp-desktop-window__meta-btn {
+	color: rgba(255, 255, 255, 0.65);
+}
+.wp-desktop-window--focused .wp-desktop-window__meta-btn:hover {
+	color: #fff;
+	background: rgba(255, 255, 255, 0.18);
+}
+.wp-desktop-window--focused .wp-desktop-window__meta-btn:focus-visible {
+	color: #fff;
+	background: rgba(255, 255, 255, 0.18);
+	outline: 2px solid rgba(255, 255, 255, 0.6);
+	outline-offset: 1px;
+}
+.wp-desktop-window--focused .wp-desktop-window__meta-btn--active {
+	color: #fff;
+	background: rgba(255, 255, 255, 0.25);
+}
+
+/* Unfocused window: divider and buttons adapt to light title bar. */
+.wp-desktop-window:not(.wp-desktop-window--focused) .wp-desktop-window__screen-meta {
+	border-inline-end-color: rgba(0, 0, 0, 0.1);
+}
+.wp-desktop-window:not(.wp-desktop-window--focused) .wp-desktop-window__meta-btn {
+	color: rgba(0, 0, 0, 0.3);
+}
+.wp-desktop-window:not(.wp-desktop-window--focused) .wp-desktop-window__meta-btn:hover {
+	color: rgba(0, 0, 0, 0.6);
+	background: rgba(0, 0, 0, 0.08);
+}
+.wp-desktop-window:not(.wp-desktop-window--focused) .wp-desktop-window__meta-btn--active {
+	color: rgba(0, 0, 0, 0.6);
+	background: rgba(0, 0, 0, 0.12);
+}
+
+/* ---------------------------------------------------------------
+ * Tab strip — submenu navigation rendered in the parent shell, just
+ * below the title bar. Each tab swaps the iframe URL in place; no
+ * new window opens. Horizontally scrollable on narrow windows so the
+ * same component works on tablet and mobile shells unchanged.
+ * --------------------------------------------------------------- */
+.wp-desktop-window__tabs {
+	display: flex;
+	flex-shrink: 0;
+	gap: 2px;
+	padding: 0 8px;
+	background: var(--wp-desktop-tabs-bg, #f6f7f7);
+	border-bottom: 1px solid var(--wp-desktop-window-border);
+	overflow-x: auto;
+	overflow-y: hidden;
+	scrollbar-width: thin;
+}
+
+.wp-desktop-window__tab {
+	flex-shrink: 0;
+	display: inline-flex;
+	align-items: center;
+	height: 32px;
+	padding: 0 12px;
+	border: none;
+	background: transparent;
+	color: var(--wp-desktop-tabs-color, #50575e);
+	font: inherit;
+	font-size: 12px;
+	line-height: 1;
+	cursor: pointer;
+	border-bottom: 2px solid transparent;
+	margin-bottom: -1px;
+	white-space: nowrap;
+	transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.wp-desktop-window__tab:hover {
+	color: var(--wp-admin-theme-color, #2271b1);
+	background: rgba(0, 0, 0, 0.03);
+}
+
+.wp-desktop-window__tab:focus-visible {
+	outline: 2px solid var(--wp-admin-theme-color, #2271b1);
+	outline-offset: -2px;
+}
+
+.wp-desktop-window__tab--active {
+	color: var(--wp-admin-theme-color, #2271b1);
+	border-bottom-color: var(--wp-admin-theme-color, #2271b1);
+	font-weight: 600;
+}
+
+/* Window body: contains the iframe. */
+.wp-desktop-window__body {
+	flex: 1;
+	position: relative;
+	overflow: hidden;
+}
+
+/* Iframe fills the window body. */
+.wp-desktop-window__iframe {
+	width: 100%;
+	height: 100%;
+	border: none;
+	display: block;
+	background: var(--wp-desktop-window-bg);
+}
+
+/* Resize handle (bottom-right corner). */
+.wp-desktop-window__resize-handle {
+	position: absolute;
+	inset-inline-end: 0;
+	bottom: 0;
+	width: var(--wp-desktop-resize-size);
+	height: var(--wp-desktop-resize-size);
+	cursor: nwse-resize; /* RTL override below. */
+	background: linear-gradient(
+		135deg,
+		transparent 30%,
+		var(--wp-desktop-resize-color) 30%,
+		var(--wp-desktop-resize-color) 40%,
+		transparent 40%,
+		transparent 55%,
+		var(--wp-desktop-resize-color) 55%,
+		var(--wp-desktop-resize-color) 65%,
+		transparent 65%,
+		transparent 80%,
+		var(--wp-desktop-resize-color) 80%
+	);
+	z-index: 1;
+}
+
+/*
+ * During drag/resize, overlay the iframe to prevent it from
+ * capturing pointer events and breaking the drag.
+ */
+.wp-desktop-window--dragging .wp-desktop-window__body::after,
+.wp-desktop-window--resizing .wp-desktop-window__body::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	z-index: 10;
+}
+
+/*
+ * Maximized state: the pixel geometry is applied inline from JS
+ * (matching the desktop area) so left/top/width/height can animate.
+ * Only cosmetic overrides here.
+ */
+.wp-desktop-window--maximized {
+	border-radius: 0;
+}
+
+.wp-desktop-window--maximized .wp-desktop-window__resize-handle {
+	display: none;
+}
+
+/*
+ * Fullscreen ("focus") state — the window escapes the desktop area and
+ * covers the entire viewport, hiding the admin bar, dock, and taskbar
+ * behind it. Uses position: fixed so no ancestor overflow clips it, and
+ * a z-index above the admin bar (--wp-desktop-z-adminbar). Inline
+ * geometry set by toggleMaximize() is overridden with !important because
+ * we never want fullscreen to respect a saved x/y/width/height.
+ */
+.wp-desktop-window--fullscreen {
+	position: fixed !important;
+	left: 0 !important;
+	top: 0 !important;
+	width: 100vw !important;
+	height: 100vh !important;
+	z-index: var(--wp-desktop-z-fullscreen) !important;
+	border-radius: 0 !important;
+	border: none;
+}
+
+.wp-desktop-window--fullscreen .wp-desktop-window__resize-handle {
+	display: none;
+}
+
+/*
+ * Opening animation — subtle scale-up + fade-in.
+ * The class is added on creation and removed after the animation ends.
+ */
+@keyframes wp-desktop-window-open {
+	from {
+		opacity: 0;
+		transform: scale(0.92);
+	}
+	to {
+		opacity: 1;
+		transform: scale(1);
+	}
+}
+
+.wp-desktop-window--opening {
+	animation: wp-desktop-window-open 0.2s ease forwards;
+}
+
+/*
+ * Minimized state — fade + scale down.
+ * Uses opacity + pointer-events instead of display: none so the
+ * CSS transition can animate the change. The window is invisible
+ * and non-interactive but stays in the DOM for a smooth restore.
+ */
+.wp-desktop-window--minimized {
+	opacity: 0;
+	transform: scale(0.92) translateY(16px);
+	pointer-events: none;
+	will-change: transform, opacity;
+}
+
+/*
+ * Closing animation — fade out + slight scale down.
+ * The JS waits for transitionend then removes the element.
+ */
+.wp-desktop-window--closing {
+	opacity: 0;
+	transform: scale(0.95);
+	pointer-events: none;
+	will-change: transform, opacity;
+}
+
+/*
+ * Respect prefers-reduced-motion: collapse all durations to near-zero
+ * so state changes are instant but still technically transition
+ * (avoids layout jumps from display: none).
+ */
+@media ( prefers-reduced-motion: reduce ) {
+	.wp-desktop-window {
+		transition-duration: 0.01ms !important;
+	}
+	.wp-desktop-window--opening {
+		animation-duration: 0.01ms !important;
+	}
+}
+
+/* RTL: flip the resize cursor direction. */
+[dir="rtl"] .wp-desktop-window__resize-handle {
+	cursor: nesw-resize;
+}

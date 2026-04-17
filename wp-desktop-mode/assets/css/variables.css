@@ -1,0 +1,43 @@
+/**
+ * Desktop Mode — CSS Custom Properties.
+ *
+ * All design tokens for the desktop shell. Color scheme overrides
+ * can redefine these variables to theme the entire desktop.
+ *
+ * @since 6.9.0
+ */
+
+:root {
+	/* Desktop area */
+	--wp-desktop-bg: linear-gradient(135deg, #1d2327 0%, #2c3338 50%, #1d2327 100%);
+	--wp-desktop-area-inset: 0;
+
+	/* Window chrome */
+	--wp-desktop-window-bg: #fff;
+	--wp-desktop-window-border: rgba(0, 0, 0, 0.12);
+	--wp-desktop-window-radius: 8px;
+	--wp-desktop-window-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), 0 2px 8px rgba(0, 0, 0, 0.15);
+	--wp-desktop-window-shadow-focused: 0 12px 48px rgba(0, 0, 0, 0.4), 0 4px 12px rgba(0, 0, 0, 0.2);
+
+	/* Title bar */
+	--wp-desktop-titlebar-bg: #f0f0f1;
+	--wp-desktop-titlebar-bg-focused: #2271b1;
+	--wp-desktop-titlebar-color: #50575e;
+	--wp-desktop-titlebar-color-focused: #fff;
+	--wp-desktop-titlebar-height: 36px;
+
+	/* Resize handle */
+	--wp-desktop-resize-size: 12px;
+	--wp-desktop-resize-color: rgba(0, 0, 0, 0.15);
+
+	/* Dock */
+	--wp-desktop-dock-width: 56px;
+	--wp-desktop-dock-bg: rgba(0, 0, 0, 0.4);
+	--wp-desktop-dock-border: rgba(255, 255, 255, 0.08);
+
+	/* Z-index layers */
+	--wp-desktop-z-base: 100;
+	--wp-desktop-z-dock: 200;
+	--wp-desktop-z-adminbar: 9991;
+	--wp-desktop-z-fullscreen: 99999;
+}

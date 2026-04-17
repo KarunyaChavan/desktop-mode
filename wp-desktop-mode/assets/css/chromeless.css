@@ -1,0 +1,152 @@
+/**
+ * Desktop Mode — Chromeless Overrides.
+ *
+ * CSS adjustments for legacy admin pages rendered inside desktop mode
+ * iframes (chromeless mode). All rules are scoped to .wp-desktop-chromeless
+ * so they never affect the classic admin or the desktop shell.
+ *
+ * Plugin and theme developers: to add your own chromeless overrides,
+ * enqueue a stylesheet on the 'wp_desktop_chromeless_styles' action.
+ * Your CSS just needs to target .wp-desktop-chromeless as the body class.
+ *
+ * Example:
+ *   add_action( 'wp_desktop_chromeless_styles', function() {
+ *       wp_enqueue_style( 'my-plugin-chromeless', plugin_dir_url( __FILE__ ) . 'chromeless.css' );
+ *   } );
+ *
+ * @since 0.1.0
+ */
+
+/* ---------------------------------------------------------------
+ * Hide the classic admin chrome elements. These would otherwise
+ * reserve space (sidebar gutter, footer, admin bar) around the
+ * chromeless page content.
+ * --------------------------------------------------------------- */
+.wp-desktop-chromeless #adminmenuwrap,
+.wp-desktop-chromeless #adminmenuback,
+.wp-desktop-chromeless #wpfooter,
+.wp-desktop-chromeless #wpadminbar,
+.wp-desktop-chromeless .wp-responsive-toggle,
+.wp-desktop-chromeless #collapse-menu {
+	display: none !important;
+}
+
+/*
+ * _wp_admin_html_begin() adds the `wp-toolbar` class to <html> whenever
+ * is_admin_bar_showing() is true — which, in admin, is unconditional.
+ * The class carries a `padding-top: var(--wp-admin--admin-bar--height)`
+ * that would leave a 32px (or 46px) dead gap at the top of the iframe.
+ * Zero it out inside chromeless iframes.
+ */
+html.wp-toolbar:has( body.wp-desktop-chromeless ) {
+	padding-top: 0 !important;
+}
+
+/* Remove the sidebar gutter on #wpcontent and let the body fill the frame. */
+.wp-desktop-chromeless #wpcontent {
+	margin-inline-start: 0 !important;
+	padding-inline-start: 0 !important;
+}
+
+/* ---------------------------------------------------------------
+ * Screen Meta (Screen Options / Help panels)
+ * The toggle buttons (#screen-meta-links) are hidden because
+ * the parent desktop shell adds its own buttons to the window
+ * title bar. The panels themselves stay visible and functional —
+ * they're toggled via postMessage from the parent.
+ *
+ * Collapse all margins on the hidden links and the panel container
+ * so they don't leave a gap at the top of the iframe content.
+ * --------------------------------------------------------------- */
+.wp-desktop-chromeless #screen-meta-links {
+	display: none;
+	margin: 0;
+}
+
+.wp-desktop-chromeless #screen-meta {
+	margin: 0;
+	border-top: 1px solid #c3c4c7;
+	border-inline-start: none;
+	border-inline-end: none;
+}
+
+/* ---------------------------------------------------------------
+ * Wrap container
+ * Remove the default left margin that accounts for the sidebar
+ * which doesn't exist in chromeless mode.
+ * --------------------------------------------------------------- */
+.wp-desktop-chromeless .wrap {
+	margin: 0;
+}
+
+/* ---------------------------------------------------------------
+ * Page title & header
+ * The window title bar already shows the page title, and the
+ * submenu tab strip below it already exposes actions like
+ * "Add New". Hide the in-page <h1>, the adjacent action button
+ * (.page-title-action), and the header separator (.wp-header-end)
+ * so the window content starts flush without a redundant header.
+ *
+ * Plugins that need their action button to remain visible can
+ * override these rules by enqueueing CSS on the
+ * 'wp_desktop_chromeless_styles' action.
+ * --------------------------------------------------------------- */
+.wp-desktop-chromeless .wrap > h1,
+.wp-desktop-chromeless .wrap > h1.wp-heading-inline,
+.wp-desktop-chromeless #wpbody-content > .wrap > h1,
+.wp-desktop-chromeless .wrap > .page-title-action,
+.wp-desktop-chromeless .wrap > .wp-header-end {
+	display: none;
+}
+
+/* ---------------------------------------------------------------
+ * Dashboard welcome panel
+ * The default 16px top margin pushes the panel down and creates a
+ * visible gap at the top of the iframe. Collapse it in chromeless
+ * mode so the panel sits flush with the top of the window body.
+ * --------------------------------------------------------------- */
+.wp-desktop-chromeless #welcome-panel,
+.wp-desktop-chromeless .welcome-panel {
+	margin-top: 0.5em;
+}
+
+/* ---------------------------------------------------------------
+ * Footer
+ * The classic footer is not rendered in chromeless mode,
+ * but some pages have bottom padding assuming it exists.
+ * --------------------------------------------------------------- */
+.wp-desktop-chromeless #wpbody-content {
+	margin: 0;
+	padding: 0 8px 8px;
+	float: none;
+	width: auto;
+}
+
+/* ---------------------------------------------------------------
+ * Block Editor & Site Editor — full-bleed layouts.
+ * Gutenberg owns its entire viewport (its own header bar, side
+ * panels, etc.). Any padding around #wpbody-content crops the
+ * editor and breaks its layout, so reset to zero on those pages
+ * and let the editor render edge-to-edge.
+ * --------------------------------------------------------------- */
+.wp-desktop-chromeless.block-editor-page #wpbody-content,
+.wp-desktop-chromeless.site-editor-php #wpbody-content,
+.wp-desktop-chromeless.is-fullscreen-mode #wpbody-content {
+	padding: 0;
+}
+
+/* ---------------------------------------------------------------
+ * Notices
+ * Give notices a bit of top margin since there's no admin bar above.
+ * --------------------------------------------------------------- */
+.wp-desktop-chromeless .notice:first-child {
+	margin-top: 4px;
+}
+
+/* ---------------------------------------------------------------
+ * Update nag
+ * Same top-border treatment as screen-meta.
+ * --------------------------------------------------------------- */
+.wp-desktop-chromeless .update-nag {
+	border-top: 1px solid #d63638;
+}

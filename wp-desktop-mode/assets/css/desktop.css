@@ -1,0 +1,98 @@
+/**
+ * Desktop Mode — Shell Layout.
+ *
+ * When desktop mode is active, the classic admin chrome still renders
+ * server-side (for hook compatibility) but is hidden with CSS. The
+ * plugin-injected shell floats above it, positioned just below the
+ * fixed admin bar, covering the rest of the viewport.
+ *
+ * @since 0.1.0
+ */
+
+/* Solid backdrop behind the shell. */
+body.wp-desktop-active {
+	background: #1d2327;
+	overflow: hidden;
+}
+
+/*
+ * Hide the classic admin chrome while the shell is active.
+ *
+ * The markup still exists in the DOM so server-side action hooks that
+ * target these regions (admin_notices, in_admin_footer, etc.) continue
+ * to fire — we just take them out of the visual flow.
+ */
+body.wp-desktop-active #adminmenuwrap,
+body.wp-desktop-active #adminmenuback,
+body.wp-desktop-active #wpbody,
+body.wp-desktop-active #wpfooter,
+body.wp-desktop-active .wp-responsive-toggle,
+body.wp-desktop-active #collapse-menu {
+	display: none !important;
+}
+
+/*
+ * Classic wpcontent carries a `margin-left: 160px` for the sidebar. With
+ * the sidebar hidden we let wpcontent fall back to flush — the shell is
+ * fixed-positioned anyway so this doesn't change the shell's layout, it
+ * just prevents a phantom sidebar gutter in any stray visible content.
+ */
+body.wp-desktop-active #wpcontent {
+	margin-inline-start: 0;
+	padding-inline-start: 0;
+}
+
+/*
+ * Desktop shell — fills the viewport below the admin bar.
+ * Uses position: fixed so it's unaffected by any containing-block
+ * quirks in #wpwrap/#wpcontent.
+ */
+.wp-desktop-shell {
+	position: fixed;
+	inset-block-start: var(--wp-admin--admin-bar--height, 32px);
+	inset-inline-start: 0;
+	inset-inline-end: 0;
+	inset-block-end: 0;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+	z-index: var(--wp-desktop-z-base);
+}
+
+/* Below 783px WP collapses the admin bar to 46px. */
+@media screen and (max-width: 782px) {
+	.wp-desktop-shell {
+		inset-block-start: var(--wp-admin--admin-bar--height, 46px);
+	}
+}
+
+/* Shell body: contains dock + desktop area side by side. */
+.wp-desktop-shell__body {
+	flex: 1;
+	display: flex;
+	overflow: hidden;
+	position: relative;
+}
+
+/* The desktop area where windows float. */
+.wp-desktop-area {
+	flex: 1;
+	position: relative;
+	overflow: hidden;
+	background: var(--wp-desktop-bg);
+}
+
+/**
+ * Chromeless mode: pages loaded inside iframes.
+ * Remove all shell chrome and let content fill the frame.
+ */
+.wp-desktop-chromeless {
+	margin: 0;
+	padding: 0;
+	background: var(--wp-desktop-window-bg);
+}
+
+/*
+ * Chromeless #wpbody-content, #adminmenuwrap, #wpfooter overrides are in
+ * chromeless.css to keep all legacy page tweaks in one place.
+ */

@@ -1,0 +1,155 @@
+/**
+ * Desktop Mode — Dock.
+ *
+ * Icon-only vertical strip on the left edge of the desktop.
+ * Contains admin menu shortcuts and an always-present
+ * "Show Desktop" (minimize all) button with the WordPress logo.
+ *
+ * @since 6.9.0
+ */
+
+/* Dock container — sits inside .wp-desktop-shell__body flex row. */
+.wp-desktop-dock {
+	width: var(--wp-desktop-dock-width);
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	padding: 16px 0 12px;
+	gap: 6px;
+	z-index: var(--wp-desktop-z-dock);
+	background: var(--wp-desktop-dock-bg);
+	backdrop-filter: blur(20px);
+	-webkit-backdrop-filter: blur(20px);
+	border-inline-end: 1px solid var(--wp-desktop-dock-border);
+	overflow-y: auto;
+	overflow-x: hidden;
+	scrollbar-width: none;
+	flex-shrink: 0;
+}
+
+.wp-desktop-dock::-webkit-scrollbar {
+	display: none;
+}
+
+/* Dock icon button. */
+.wp-desktop-dock__item {
+	position: relative;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 40px;
+	height: 40px;
+	border: none;
+	border-radius: 10px;
+	cursor: pointer;
+	padding: 0;
+	background: transparent;
+	color: rgba(255, 255, 255, 0.7);
+	transition: background-color 0.15s ease, transform 0.15s ease, color 0.15s ease;
+	flex-shrink: 0;
+}
+
+.wp-desktop-dock__item:hover {
+	background: rgba(255, 255, 255, 0.15);
+	color: #fff;
+	transform: scale(1.1);
+}
+
+.wp-desktop-dock__item:active {
+	transform: scale(0.95);
+}
+
+/* Active indicator — dot on the left edge when this page has an open window. */
+.wp-desktop-dock__item--active::before {
+	content: "";
+	position: absolute;
+	inset-inline-start: -6px;
+	top: 50%;
+	transform: translateY(-50%);
+	width: 4px;
+	height: 4px;
+	border-radius: 50%;
+	background: #fff;
+}
+
+/* Focused indicator — larger dot when this is the focused window. */
+.wp-desktop-dock__item--focused::before {
+	width: 4px;
+	height: 16px;
+	border-radius: 2px;
+}
+
+/* Dashicon inside dock item. */
+.wp-desktop-dock__item .dashicons {
+	font-size: 20px;
+	width: 20px;
+	height: 20px;
+	line-height: 1;
+}
+
+/* SVG icon (for custom post types with data:image/svg+xml icons). */
+.wp-desktop-dock__item-svg {
+	width: 20px;
+	height: 20px;
+	display: block;
+	fill: currentColor;
+}
+
+.wp-desktop-dock__item img.wp-desktop-dock__item-img {
+	width: 20px;
+	height: 20px;
+	display: block;
+	opacity: 0.7;
+	transition: opacity 0.15s ease;
+}
+
+.wp-desktop-dock__item:hover img.wp-desktop-dock__item-img {
+	opacity: 1;
+}
+
+/* Badge (update count). */
+.wp-desktop-dock__badge {
+	position: absolute;
+	top: 2px;
+	inset-inline-end: 2px;
+	min-width: 16px;
+	height: 16px;
+	padding: 0 4px;
+	border-radius: 8px;
+	background: #d63638;
+	color: #fff;
+	font-size: 10px;
+	font-weight: 600;
+	line-height: 16px;
+	text-align: center;
+	pointer-events: none;
+}
+
+/* Tooltip — appears on hover, to the right of the dock. */
+.wp-desktop-dock__tooltip {
+	position: fixed;
+	inset-inline-start: calc(var(--wp-desktop-dock-width) + 8px);
+	padding: 6px 12px;
+	background: rgba(0, 0, 0, 0.85);
+	color: #fff;
+	font-size: 12px;
+	font-weight: 400;
+	line-height: 1.4;
+	white-space: nowrap;
+	border-radius: 6px;
+	pointer-events: none;
+	z-index: calc(var(--wp-desktop-z-dock) + 1);
+	opacity: 0;
+	transform: translateX(-4px);
+	transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.wp-desktop-dock__tooltip--visible {
+	opacity: 1;
+	transform: translateX(0);
+}
+
+/*
+ * No margin needed — the dock and desktop area are flex siblings
+ * inside .wp-desktop-shell__body, so layout is automatic.
+ */

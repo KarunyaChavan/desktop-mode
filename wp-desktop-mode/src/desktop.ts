@@ -14,14 +14,22 @@ import { WindowManager } from './window-manager';
 import { Dock } from './dock';
 import { OsSettings } from './settings';
 import { deriveWindowId, urlMatchKey } from './utils';
-import { HOOKS, doAction, rawHooks, whenReady } from './hooks';
-import type { WpHooks } from './hooks';
+import {
+	HOOKS,
+	doAction,
+	rawHooks,
+	whenReady,
+	type WpHooks,
+} from './hooks';
 import * as registry from './wallpapers/registry';
 import { WallpaperLayer } from './wallpapers/layer';
 import { registerBuiltInWallpapers } from './wallpapers/built-in';
 import { loadVendorScript } from './wallpapers/vendor-loader';
-import { registerModule, loadModules } from './modules/registry';
-import type { ModuleDef } from './modules/registry';
+import {
+	registerModule,
+	loadModules,
+	type ModuleDef,
+} from './modules/registry';
 import type { WallpaperDef } from './wallpapers/types';
 import './plugins';
 import type { DesktopConfig, SessionWindow } from './types';
@@ -143,7 +151,7 @@ function init(): void {
 			restNonce: config.restNonce,
 			canUpload: !! config.canUpload,
 		},
-		wallpaperLayer ?? new WallpaperLayer( document.createElement( 'div' ), pluginUrl )
+		wallpaperLayer ?? new WallpaperLayer( document.createElement( 'div' ), pluginUrl ),
 	);
 	osSettings.apply();
 
@@ -252,13 +260,13 @@ function init(): void {
 			document.dispatchEvent(
 				new CustomEvent( 'wp-desktop-default-window-changed', {
 					detail: data,
-				} )
+				} ),
 			);
 		} catch ( err ) {
 			if ( typeof console !== 'undefined' ) {
 				console.error(
 					'[wp-desktop-mode] Failed to save default window:',
-					err
+					err,
 				);
 			}
 		}
@@ -371,7 +379,7 @@ function init(): void {
 	document.dispatchEvent(
 		new CustomEvent( 'wp-desktop-init', {
 			detail: { config, restored: hasSession },
-		} )
+		} ),
 	);
 }
 
@@ -386,7 +394,7 @@ function init(): void {
 function restoreSession(
 	manager: WindowManager,
 	config: DesktopConfig,
-	desktopArea: HTMLElement
+	desktopArea: HTMLElement,
 ): void {
 	const rect = desktopArea.getBoundingClientRect();
 
@@ -457,7 +465,7 @@ function openCurrentPage( manager: WindowManager, config: DesktopConfig ): void 
  */
 function bindTopWindowLinkInterceptor(
 	manager: WindowManager,
-	config: DesktopConfig
+	config: DesktopConfig,
 ): void {
 	document.addEventListener(
 		'click',
@@ -542,7 +550,7 @@ function bindTopWindowLinkInterceptor(
 				submenu: dockEntry?.submenu,
 			} );
 		},
-		true
+		true,
 	);
 }
 
@@ -557,15 +565,15 @@ function bindTopWindowLinkInterceptor(
  */
 function findDockEntryForUrl(
 	url: string,
-	config: DesktopConfig
+	config: DesktopConfig,
 ): DesktopConfig[ 'dockItems' ][ number ] | undefined {
 	const windowId = deriveWindowId( url, config.adminUrl );
 	return ( config.dockItems || [] ).find(
 		( i ) =>
 			deriveWindowId( i.url, config.adminUrl ) === windowId ||
 			( i.submenu || [] ).some(
-				( s ) => deriveWindowId( s.url, config.adminUrl ) === windowId
-			)
+				( s ) => deriveWindowId( s.url, config.adminUrl ) === windowId,
+			),
 	);
 }
 
@@ -583,7 +591,7 @@ function findDockEntryForUrl(
  */
 function clampGeometryToViewport(
 	win: SessionWindow,
-	rect: DOMRect
+	rect: DOMRect,
 ): { x: number; y: number; width: number; height: number } {
 	const maxW = Math.max( 200, rect.width - VIEWPORT_CLAMP_MARGIN * 2 );
 	const maxH = Math.max( 200, rect.height - VIEWPORT_CLAMP_MARGIN * 2 );
@@ -650,7 +658,7 @@ function createSessionSaver( manager: WindowManager, config: DesktopConfig ): ()
 		const payload = manager.snapshot();
 		const body = new Blob(
 			[ JSON.stringify( { session: payload } ) ],
-			{ type: 'application/json' }
+			{ type: 'application/json' },
 		);
 		const beaconUrl =
 			config.sessionUrl +

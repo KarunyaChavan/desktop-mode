@@ -168,10 +168,12 @@ const PARTICLE_PALETTE = [
 	0xc8804a, // warm brown (boosted for visibility under additive)
 ];
 
-/** CSS radial-gradient used as the backdrop. Painted by the browser
+/**
+ * CSS radial-gradient used as the backdrop. Painted by the browser
  * directly on the wallpaper container, so the shell does perfectly
  * smooth interpolation — Pixi Graphics can't produce gradients this
- * clean without shader work. */
+ * clean without shader work.
+ */
 const BACKDROP_CSS =
 	'radial-gradient(circle at 50% 50%, #1e40af 0%, #152a6b 45%, #0a1024 100%)';
 
@@ -185,14 +187,14 @@ const BACKDROP_CSS =
  * the shell does this via `needs: ['pixijs']` on the wallpaper def.
  */
 export async function mountScene(
-	{ container, logoUrl, prefersReducedMotion }: SceneOptions
+	{ container, logoUrl, prefersReducedMotion }: SceneOptions,
 ): Promise<SceneHandle> {
 	const pixi = window.PIXI;
 	if ( ! pixi ) {
 		throw new Error(
 			'[animated-logo-wallpaper] window.PIXI is undefined; ' +
 				'declare `needs: [\'pixijs\']` on the wallpaper def so ' +
-				'the shell loads it before mount.'
+				'the shell loads it before mount.',
 		);
 	}
 
@@ -271,7 +273,7 @@ export async function mountScene(
 		const h = app.canvas.clientHeight;
 		const target = Math.min(
 			CONFIG.targetLogoWidth,
-			Math.min( w, h ) * CONFIG.logoShellFraction
+			Math.min( w, h ) * CONFIG.logoShellFraction,
 		);
 		logoScale = target;
 		logoOffsetX = ( w - target ) / 2;
@@ -371,7 +373,7 @@ export async function mountScene(
 				pointerX,
 				pointerY,
 				pointerActive ? mouseDx : 0,
-				pointerActive ? mouseDy : 0
+				pointerActive ? mouseDy : 0,
 			);
 		}
 		// Consume the cursor-delta: after one tick applies its force,
@@ -455,7 +457,7 @@ function step(
 	pointerX: number,
 	pointerY: number,
 	mouseDx: number,
-	mouseDy: number
+	mouseDy: number,
 ): void {
 	const {
 		springK,
@@ -561,7 +563,7 @@ function buildBrushTexture( pixi: typeof import( 'pixi.js' ) ): Texture {
 		0,
 		center,
 		center,
-		center
+		center,
 	);
 	// A tight bright core blended into a long soft halo. The extra
 	// mid-stops shape the falloff so the halo reads as a smoke-soft

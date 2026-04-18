@@ -36,7 +36,7 @@ export function register( def: WallpaperDef ): void {
 		if ( typeof console !== 'undefined' ) {
 			console.warn(
 				'[wp-desktop-mode] Ignored invalid wallpaper registration:',
-				def
+				def,
 			);
 		}
 		return;
@@ -76,7 +76,7 @@ export function all(): WallpaperDef[] {
 		if ( typeof console !== 'undefined' ) {
 			console.warn(
 				'[wp-desktop-mode] `wp-desktop.wallpapers` filter ' +
-					'returned a non-array; falling back to seed list.'
+					'returned a non-array; falling back to seed list.',
 			);
 		}
 		return copy;

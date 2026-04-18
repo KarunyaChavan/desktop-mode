@@ -185,9 +185,9 @@ export class OsSettings {
 		// Wallpaper — look up in the registry. Fall back to the default
 		// id if the saved wallpaper was registered by a plugin that's
 		// no longer loaded, or if the id was never valid.
-		const def = registry.get( this.state.wallpaper )
-			|| registry.get( DEFAULT_WALLPAPER_ID )
-			|| registry.all()[ 0 ];
+		const def = registry.get( this.state.wallpaper ) ||
+			registry.get( DEFAULT_WALLPAPER_ID ) ||
+			registry.all()[ 0 ];
 		if ( def ) {
 			this.layer.apply( def );
 		}
@@ -296,7 +296,7 @@ export class OsSettings {
 	private buildWallpaperSection( body: HTMLElement ): HTMLElement {
 		const section = this.buildSection(
 			'Wallpaper',
-			'The backdrop behind your windows. Pick a preset, mix your own gradient, or drop in an image.'
+			'The backdrop behind your windows. Pick a preset, mix your own gradient, or drop in an image.',
 		);
 
 		// Swatch grid — every registered wallpaper EXCEPT custom-image,
@@ -350,7 +350,7 @@ export class OsSettings {
 
 	private buildWallpaperSwatch(
 		def: WallpaperDef,
-		onClick: () => void
+		onClick: () => void,
 	): HTMLElement {
 		const btn = document.createElement( 'button' );
 		btn.type = 'button';
@@ -384,7 +384,7 @@ export class OsSettings {
 		body.querySelectorAll<HTMLElement>( '[data-wallpaper-id]' ).forEach( ( el ) => {
 			el.setAttribute(
 				'aria-pressed',
-				el.dataset.wallpaperId === this.state.wallpaper ? 'true' : 'false'
+				el.dataset.wallpaperId === this.state.wallpaper ? 'true' : 'false',
 			);
 		} );
 	}
@@ -397,7 +397,7 @@ export class OsSettings {
 	private syncEditorSlot(
 		slot: HTMLElement,
 		inner: HTMLElement,
-		def: WallpaperDef
+		def: WallpaperDef,
 	): void {
 		this.teardownEditor();
 		inner.innerHTML = '';
@@ -429,7 +429,7 @@ export class OsSettings {
 			if ( typeof console !== 'undefined' ) {
 				console.error(
 					`[wp-desktop-mode] Wallpaper "${ def.id }" renderEditor threw:`,
-					err
+					err,
 				);
 			}
 		}
@@ -445,7 +445,7 @@ export class OsSettings {
 				if ( typeof console !== 'undefined' ) {
 					console.error(
 						'[wp-desktop-mode] Wallpaper editor teardown threw:',
-						err
+						err,
 					);
 				}
 			}
@@ -469,7 +469,7 @@ export class OsSettings {
 		const buildColorField = (
 			label: string,
 			initialValue: string,
-			onInput: ( value: string ) => void
+			onInput: ( value: string ) => void,
 		): HTMLElement => {
 			const field = document.createElement( 'label' );
 			field.className = 'wp-desktop-os-settings__gradient-field';
@@ -499,13 +499,13 @@ export class OsSettings {
 			buildColorField( 'From', this.state.customGradient.from, ( value ) => {
 				this.state.customGradient.from = value;
 				onGradientChange();
-			} )
+			} ),
 		);
 		row.appendChild(
 			buildColorField( 'To', this.state.customGradient.to, ( value ) => {
 				this.state.customGradient.to = value;
 				onGradientChange();
-			} )
+			} ),
 		);
 
 		container.appendChild( row );
@@ -551,7 +551,7 @@ export class OsSettings {
 	private syncGradientPreviewSwatch( editorEl: HTMLElement ): void {
 		const section = editorEl.closest( '.wp-desktop-os-settings__section' );
 		const preview = section?.querySelector<HTMLElement>(
-			`[data-wallpaper-id="${ CUSTOM_GRADIENT_ID }"]`
+			`[data-wallpaper-id="${ CUSTOM_GRADIENT_ID }"]`,
 		);
 		if ( preview ) {
 			preview.style.background = this.customGradientCss();
@@ -642,7 +642,7 @@ export class OsSettings {
 		tile.dataset.wallpaperId = CUSTOM_IMAGE_ID;
 		tile.setAttribute(
 			'aria-pressed',
-			this.state.wallpaper === CUSTOM_IMAGE_ID ? 'true' : 'false'
+			this.state.wallpaper === CUSTOM_IMAGE_ID ? 'true' : 'false',
 		);
 
 		const fileInput = document.createElement( 'input' );
@@ -824,7 +824,7 @@ export class OsSettings {
 		return items.filter(
 			( it ) =>
 				it.media_details.width >= HD_MIN_WIDTH &&
-				it.media_details.height >= HD_MIN_HEIGHT
+				it.media_details.height >= HD_MIN_HEIGHT,
 		);
 	}
 
@@ -877,7 +877,7 @@ export class OsSettings {
 					el.setAttribute( 'aria-pressed', selected ? 'true' : 'false' );
 					el.classList.toggle(
 						'wp-desktop-os-settings__library-tile--selected',
-						selected
+						selected,
 					);
 				} );
 			}
@@ -888,7 +888,7 @@ export class OsSettings {
 
 	private async fetchMediaPage(
 		page: number,
-		search: string
+		search: string,
 	): Promise<{ items: MediaItem[]; totalPages: number }> {
 		const url = new URL( this.config.mediaUrl );
 		url.searchParams.set( 'media_type', 'image' );
@@ -898,7 +898,7 @@ export class OsSettings {
 		url.searchParams.set( 'order', 'desc' );
 		url.searchParams.set(
 			'_fields',
-			'id,source_url,alt_text,title,media_details'
+			'id,source_url,alt_text,title,media_details',
 		);
 		if ( search ) {
 			url.searchParams.set( 'search', search );
@@ -935,7 +935,7 @@ export class OsSettings {
 	private renderUploadTile(
 		tile: HTMLElement,
 		fileInput: HTMLInputElement,
-		body: HTMLElement
+		body: HTMLElement,
 	): void {
 		tile.innerHTML = '';
 		tile.classList.remove( 'wp-desktop-os-settings__upload-tile--filled' );
@@ -1013,7 +1013,7 @@ export class OsSettings {
 	private async handleImageFile(
 		file: File,
 		tile: HTMLElement,
-		body: HTMLElement
+		body: HTMLElement,
 	): Promise<void> {
 		if ( ! file.type.startsWith( 'image/' ) ) {
 			this.showUploadError( tile, 'That file isn’t an image.' );
@@ -1033,7 +1033,7 @@ export class OsSettings {
 			this.save();
 			this.apply();
 			const fileInput = tile.parentElement?.querySelector<HTMLInputElement>(
-				'.wp-desktop-os-settings__file-input'
+				'.wp-desktop-os-settings__file-input',
 			);
 			if ( fileInput ) {
 				this.renderUploadTile( tile, fileInput, body );
@@ -1100,7 +1100,7 @@ export class OsSettings {
 	private buildAccentSection(): HTMLElement {
 		const section = this.buildSection(
 			'Accent color',
-			'Used in focused window title bars, buttons, and focus rings.'
+			'Used in focused window title bars, buttons, and focus rings.',
 		);
 		const grid = document.createElement( 'div' );
 		grid.className = 'wp-desktop-os-settings__grid wp-desktop-os-settings__grid--accents';
@@ -1112,7 +1112,7 @@ export class OsSettings {
 			btn.setAttribute( 'aria-label', accent.label );
 			btn.setAttribute(
 				'aria-pressed',
-				this.state.accent === accent.id ? 'true' : 'false'
+				this.state.accent === accent.id ? 'true' : 'false',
 			);
 			btn.dataset.id = accent.id;
 			btn.style.background = accent.value;
@@ -1134,7 +1134,7 @@ export class OsSettings {
 	private buildDockSizeSection(): HTMLElement {
 		const section = this.buildSection(
 			'Dock size',
-			'Width of the dock and size of its icons.'
+			'Width of the dock and size of its icons.',
 		);
 		const group = document.createElement( 'div' );
 		group.className = 'wp-desktop-os-settings__segmented';
@@ -1147,7 +1147,7 @@ export class OsSettings {
 			btn.setAttribute( 'role', 'radio' );
 			btn.setAttribute(
 				'aria-checked',
-				this.state.dockSize === size.id ? 'true' : 'false'
+				this.state.dockSize === size.id ? 'true' : 'false',
 			);
 			btn.dataset.id = size.id;
 			btn.textContent = size.label;
@@ -1185,7 +1185,7 @@ export class OsSettings {
 	private refreshSelected(
 		container: HTMLElement,
 		id: string,
-		attr: 'aria-pressed' | 'aria-checked' = 'aria-pressed'
+		attr: 'aria-pressed' | 'aria-checked' = 'aria-pressed',
 	): void {
 		container.querySelectorAll<HTMLElement>( '[data-id]' ).forEach( ( el ) => {
 			el.setAttribute( attr, el.dataset.id === id ? 'true' : 'false' );

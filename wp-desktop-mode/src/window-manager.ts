@@ -91,7 +91,7 @@ export class WindowManager {
 	 * openNew() — everything that happens once the id has been resolved.
 	 */
 	private createWindow(
-		config: Partial<WindowConfig> & { id: string; url: string; title: string; baseId?: string }
+		config: Partial<WindowConfig> & { id: string; url: string; title: string; baseId?: string },
 	): Window {
 		const desktopRect = this.desktop.getBoundingClientRect();
 		const defaultWidth = Math.min( Math.round( desktopRect.width * 0.8 ), 1200 );
@@ -155,7 +155,7 @@ export class WindowManager {
 			url: config.url,
 		};
 		document.dispatchEvent(
-			new CustomEvent( 'wp-desktop-window-opened', { detail: openedDetail } )
+			new CustomEvent( 'wp-desktop-window-opened', { detail: openedDetail } ),
 		);
 		// Fan out to the hook bus so plugins using wp.hooks.addAction()
 		// stay in their idiomatic API rather than juggling CustomEvents.
@@ -201,7 +201,7 @@ export class WindowManager {
 		// Dispatch custom event + action.
 		const focusedDetail = { windowId: win.id };
 		document.dispatchEvent(
-			new CustomEvent( 'wp-desktop-window-focused', { detail: focusedDetail } )
+			new CustomEvent( 'wp-desktop-window-focused', { detail: focusedDetail } ),
 		);
 		doAction( HOOKS.WINDOW_FOCUSED, focusedDetail );
 	}
@@ -223,7 +223,7 @@ export class WindowManager {
 		// Dispatch custom event + action.
 		const closedDetail = { windowId: win.id };
 		document.dispatchEvent(
-			new CustomEvent( 'wp-desktop-window-closed', { detail: closedDetail } )
+			new CustomEvent( 'wp-desktop-window-closed', { detail: closedDetail } ),
 		);
 		doAction( HOOKS.WINDOW_CLOSED, closedDetail );
 	}

@@ -1,0 +1,8 @@
+# Build outputs — Vite's job, not the linter's.
+assets/js/
+# Vendored libraries — we don't edit these.
+assets/vendor/
+node_modules/
+# Optional future outputs.
+dist/
+build/

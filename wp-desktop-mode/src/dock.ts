@@ -80,7 +80,7 @@ export class Dock {
 		container: HTMLElement,
 		windowManager: WindowManager,
 		items: DockItem[],
-		adminUrl: string
+		adminUrl: string,
 	) {
 		this.container = container;
 		this.windowManager = windowManager;
@@ -401,7 +401,7 @@ export class Dock {
 
 			if ( item.multi ) {
 				const addBtn = tile.querySelector<HTMLElement>(
-					'.wp-desktop-dock__item-new'
+					'.wp-desktop-dock__item-new',
 				);
 				if ( addBtn ) {
 					addBtn.hidden = instances.length === 0;

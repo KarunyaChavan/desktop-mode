@@ -27,7 +27,6 @@ function withChromelessParam( url: string ): string | null {
 	return parsed.toString();
 }
 
-
 /**
  * Toggle `wp-desktop-has-fullscreen-window` on `<body>` based on whether any
  * window is currently in fullscreen state.
@@ -160,17 +159,17 @@ function createWindowElement( config: WindowConfig ): HTMLElement {
 	const btnMin = createControlButton(
 		'minimize',
 		'Minimize',
-		'<path d="M3 6h6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>'
+		'<path d="M3 6h6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>',
 	);
 	const btnMax = createControlButton(
 		'maximize',
 		'Maximize',
-		'<rect x="3" y="3" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.25" fill="none"/>'
+		'<rect x="3" y="3" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.25" fill="none"/>',
 	);
 	const btnFocus = createControlButton(
 		'focus',
 		'Enter fullscreen',
-		'<path d="M4.5 2H2v2.5M10 4.5V2H7.5M4.5 10H2V7.5M10 7.5V10H7.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none"/>'
+		'<path d="M4.5 2H2v2.5M10 4.5V2H7.5M4.5 10H2V7.5M10 7.5V10H7.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none"/>',
 	);
 	// Detach: open this window's current URL in a new browser tab as
 	// plain classic admin (no desktop shell, no chromeless). Escape hatch
@@ -180,12 +179,12 @@ function createWindowElement( config: WindowConfig ): HTMLElement {
 	const btnDetach = createControlButton(
 		'detach',
 		'Detach to new tab',
-		'<path d="M5 2H2.5v7.5H10V7M6.5 2H10v3.5M10 2L5.5 6.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none"/>'
+		'<path d="M5 2H2.5v7.5H10V7M6.5 2H10v3.5M10 2L5.5 6.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none"/>',
 	);
 	const btnClose = createControlButton(
 		'close',
 		'Close',
-		'<path d="M3.25 3.25l5.5 5.5M3.25 8.75l5.5-5.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>'
+		'<path d="M3.25 3.25l5.5 5.5M3.25 8.75l5.5-5.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>',
 	);
 
 	controls.appendChild( btnMin );
@@ -355,7 +354,7 @@ export class Window {
 		// rendered UI rather than an empty flash.
 		if ( config.native && config.render ) {
 			const body = this.element.querySelector(
-				'.wp-desktop-window__body'
+				'.wp-desktop-window__body',
 			) as HTMLElement | null;
 			if ( body ) {
 				config.render( body );
@@ -416,7 +415,7 @@ export class Window {
 		document.dispatchEvent(
 			new CustomEvent( 'wp-desktop-window-changed', {
 				detail: { windowId: this.id, reason, state: this.state },
-			} )
+			} ),
 		);
 	}
 
@@ -464,17 +463,17 @@ export class Window {
 		const btnFocus = this.element.querySelector( '.wp-desktop-window__btn--focus' ) as HTMLElement;
 		// Native windows skip the detach button entirely.
 		const btnDetach = this.element.querySelector(
-			'.wp-desktop-window__btn--detach'
+			'.wp-desktop-window__btn--detach',
 		) as HTMLElement | null;
 		const btnClose = this.element.querySelector( '.wp-desktop-window__btn--close' ) as HTMLElement;
 
 		// Title-bar actions menu (multi-capable windows only — button
 		// absent for singletons).
 		const menuBtn = this.element.querySelector(
-			'.wp-desktop-window__menu-btn'
+			'.wp-desktop-window__menu-btn',
 		) as HTMLButtonElement | null;
 		const menuPanel = this.element.querySelector(
-			'.wp-desktop-window__menu-panel'
+			'.wp-desktop-window__menu-panel',
 		) as HTMLElement | null;
 		if ( menuBtn && menuPanel ) {
 			menuBtn.addEventListener( 'click', ( e: Event ) => {
@@ -482,7 +481,7 @@ export class Window {
 				this.toggleActionsMenu();
 			} );
 			const openAnother = menuPanel.querySelector(
-				'.wp-desktop-window__menu-item--open-another'
+				'.wp-desktop-window__menu-item--open-another',
 			);
 			if ( openAnother ) {
 				openAnother.addEventListener( 'click', ( e: Event ) => {
@@ -497,7 +496,7 @@ export class Window {
 			// callback is injected by the window manager so we don't
 			// couple the Window class to wp.desktop directly.
 			const startup = menuPanel.querySelector<HTMLButtonElement>(
-				'.wp-desktop-window__menu-item--startup'
+				'.wp-desktop-window__menu-item--startup',
 			);
 			if ( startup ) {
 				this.refreshStartupCheckState( startup );
@@ -523,7 +522,7 @@ export class Window {
 					'wp-desktop-default-window-changed',
 					() => {
 						this.refreshStartupCheckState( startup );
-					}
+					},
 				);
 			}
 			// Escape closes the menu, returning focus to the trigger so
@@ -650,7 +649,7 @@ export class Window {
 
 		if ( data.type === 'wp-desktop-screen-meta-state' ) {
 			this.setActiveScreenMetaPanel(
-				typeof data.open === 'string' ? data.open : null
+				typeof data.open === 'string' ? data.open : null,
 			);
 		}
 	}
@@ -671,7 +670,7 @@ export class Window {
 
 		const panelConfig: Record<string, { icon: string; label: string }> = {
 			'screen-options': { icon: 'dashicons-admin-generic', label: 'Screen Options' },
-			'help': { icon: 'dashicons-editor-help', label: 'Help' },
+			help: { icon: 'dashicons-editor-help', label: 'Help' },
 		};
 
 		for ( const panel of panels ) {
@@ -695,7 +694,7 @@ export class Window {
 				e.stopPropagation();
 				this.iframe?.contentWindow?.postMessage(
 					{ type: 'wp-desktop-toggle-panel', panel },
-					window.location.origin
+					window.location.origin,
 				);
 			} );
 
@@ -978,7 +977,7 @@ export class Window {
 				this.element.style.height = `${ s.height }px`;
 				this.element.classList.toggle(
 					'wp-desktop-window--maximized',
-					s.state === 'maximized'
+					s.state === 'maximized',
 				);
 				this.state = s.state;
 				this.savedFullscreenState = null;
@@ -1003,7 +1002,7 @@ export class Window {
 			this.state === 'fullscreen'
 				? HOOKS.WINDOW_FULLSCREEN_ENTERED
 				: HOOKS.WINDOW_FULLSCREEN_EXITED,
-			{ windowId: this.id }
+			{ windowId: this.id },
 		);
 	}
 
@@ -1013,7 +1012,7 @@ export class Window {
 	 */
 	private updateFocusButtonState(): void {
 		const btn = this.element.querySelector<HTMLButtonElement>(
-			'.wp-desktop-window__btn--focus'
+			'.wp-desktop-window__btn--focus',
 		);
 		if ( ! btn ) {
 			return;
@@ -1023,7 +1022,7 @@ export class Window {
 		btn.setAttribute( 'aria-pressed', isFullscreen ? 'true' : 'false' );
 		btn.setAttribute(
 			'aria-label',
-			isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'
+			isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen',
 		);
 	}
 
@@ -1103,13 +1102,13 @@ export class Window {
 		button.setAttribute( 'aria-checked', isDefault ? 'true' : 'false' );
 		button.classList.toggle(
 			'wp-desktop-window__menu-item--checked',
-			isDefault
+			isDefault,
 		);
 	}
 
 	private toggleActionsMenu(): void {
 		const panel = this.element.querySelector(
-			'.wp-desktop-window__menu-panel'
+			'.wp-desktop-window__menu-panel',
 		) as HTMLElement | null;
 		if ( ! panel ) {
 			return;
@@ -1130,10 +1129,10 @@ export class Window {
 	 */
 	private openActionsMenu(): void {
 		const panel = this.element.querySelector(
-			'.wp-desktop-window__menu-panel'
+			'.wp-desktop-window__menu-panel',
 		) as HTMLElement | null;
 		const btn = this.element.querySelector(
-			'.wp-desktop-window__menu-btn'
+			'.wp-desktop-window__menu-btn',
 		) as HTMLButtonElement | null;
 		if ( ! panel || ! btn ) {
 			return;
@@ -1148,7 +1147,7 @@ export class Window {
 		// that plus any external change (e.g. another window toggled
 		// itself as default) that hasn't propagated yet.
 		const startup = panel.querySelector<HTMLButtonElement>(
-			'.wp-desktop-window__menu-item--startup'
+			'.wp-desktop-window__menu-item--startup',
 		);
 		if ( startup ) {
 			this.refreshStartupCheckState( startup );
@@ -1173,14 +1172,14 @@ export class Window {
 				document.addEventListener(
 					'pointerdown',
 					this.boundOnDocumentPointerDown,
-					true
+					true,
 				);
 			}
 		}, 0 );
 
 		// Move focus into the panel for keyboard navigation.
 		const firstItem = panel.querySelector<HTMLElement>(
-			'[role="menuitem"]'
+			'[role="menuitem"]',
 		);
 		firstItem?.focus();
 	}
@@ -1190,10 +1189,10 @@ export class Window {
 	 */
 	private closeActionsMenu(): void {
 		const panel = this.element.querySelector(
-			'.wp-desktop-window__menu-panel'
+			'.wp-desktop-window__menu-panel',
 		) as HTMLElement | null;
 		const btn = this.element.querySelector(
-			'.wp-desktop-window__menu-btn'
+			'.wp-desktop-window__menu-btn',
 		) as HTMLButtonElement | null;
 		if ( panel ) {
 			panel.hidden = true;
@@ -1205,7 +1204,7 @@ export class Window {
 			document.removeEventListener(
 				'pointerdown',
 				this.boundOnDocumentPointerDown,
-				true
+				true,
 			);
 		}
 	}
@@ -1237,7 +1236,7 @@ export class Window {
 				document.removeEventListener(
 					'pointerdown',
 					this.boundOnDocumentPointerDown,
-					true
+					true,
 				);
 			}
 			this.element.remove();

@@ -73,7 +73,7 @@ function getWpHooks(): WpHooks {
 		throw new Error(
 			'[wp-desktop-mode] `window.wp.hooks` is not available. The ' +
 				'plugin declares `wp-hooks` as a script dependency; if ' +
-				'you are seeing this error, verify the enqueue order.'
+				'you are seeing this error, verify the enqueue order.',
 		);
 	}
 	return hooks;
@@ -88,13 +88,13 @@ export function addFilter<TValue, TArgs extends unknown[] = unknown[]>(
 	hookName: string,
 	namespace: string,
 	callback: ( value: TValue, ...args: TArgs ) => TValue,
-	priority?: number
+	priority?: number,
 ): void {
 	getWpHooks().addFilter(
 		hookName,
 		namespace,
 		callback as ( ...args: unknown[] ) => unknown,
-		priority
+		priority,
 	);
 }
 
@@ -102,13 +102,13 @@ export function addAction<TArgs extends unknown[] = unknown[]>(
 	hookName: string,
 	namespace: string,
 	callback: ( ...args: TArgs ) => void,
-	priority?: number
+	priority?: number,
 ): void {
 	getWpHooks().addAction(
 		hookName,
 		namespace,
 		callback as ( ...args: unknown[] ) => void,
-		priority
+		priority,
 	);
 }
 

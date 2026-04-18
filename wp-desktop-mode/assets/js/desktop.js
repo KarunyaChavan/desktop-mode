@@ -582,7 +582,7 @@ var wpDesktop = function(exports) {
       container.innerHTML = "";
       const panelConfig = {
         "screen-options": { icon: "dashicons-admin-generic", label: "Screen Options" },
-        "help": { icon: "dashicons-editor-help", label: "Help" }
+        help: { icon: "dashicons-editor-help", label: "Help" }
       };
       for (const panel of panels) {
         const cfg = panelConfig[panel];

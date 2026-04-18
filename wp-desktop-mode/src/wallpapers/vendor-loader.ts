@@ -51,7 +51,7 @@ export function loadVendorScript( url: string ): Promise<void> {
 			preexisting.addEventListener(
 				'error',
 				() => reject( new Error( `Failed to load ${ url }` ) ),
-				{ once: true }
+				{ once: true },
 			);
 			return;
 		}
@@ -66,7 +66,7 @@ export function loadVendorScript( url: string ): Promise<void> {
 				script.dataset.loaded = '1';
 				resolve();
 			},
-			{ once: true }
+			{ once: true },
 		);
 		script.addEventListener(
 			'error',
@@ -77,7 +77,7 @@ export function loadVendorScript( url: string ): Promise<void> {
 				script.remove();
 				reject( new Error( `Failed to load ${ url }` ) );
 			},
-			{ once: true }
+			{ once: true },
 		);
 		document.head.appendChild( script );
 	} );

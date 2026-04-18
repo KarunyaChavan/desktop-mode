@@ -60,7 +60,7 @@ export function registerModule( def: ModuleDef ): void {
 	if ( typeof def.url !== 'string' || def.url === '' ) {
 		if ( typeof console !== 'undefined' ) {
 			console.warn(
-				`[wp-desktop-mode] Module "${ def.id }" has no url; ignored.`
+				`[wp-desktop-mode] Module "${ def.id }" has no url; ignored.`,
 			);
 		}
 		return;
@@ -97,7 +97,7 @@ export async function loadModules( ids: string[] ): Promise<void> {
 		throw new Error(
 			`[wp-desktop-mode] Unknown module(s) in needs: ${ unknown
 				.map( ( id ) => `"${ id }"` )
-				.join( ', ' ) }. Known modules: ${ moduleIds().join( ', ' ) || '(none)' }.`
+				.join( ', ' ) }. Known modules: ${ moduleIds().join( ', ' ) || '(none)' }.`,
 		);
 	}
 
@@ -113,6 +113,6 @@ export async function loadModules( ids: string[] ): Promise<void> {
 				return Promise.resolve();
 			}
 			return loadVendorScript( def.url );
-		} )
+		} ),
 	);
 }

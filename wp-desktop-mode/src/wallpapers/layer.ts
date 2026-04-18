@@ -28,7 +28,7 @@ import type {
 /** Public context creator — also used by OS Settings for editor panels. */
 export function createContext(
 	id: string,
-	pluginUrl: string
+	pluginUrl: string,
 ): WallpaperContext {
 	return {
 		id,
@@ -56,12 +56,7 @@ export class WallpaperLayer {
 	private generation = 0;
 
 	/** Currently-active canvas wallpaper state, if any. */
-	private active:
-		| {
-				id: string;
-				teardown: WallpaperTeardown;
-		  }
-		| null = null;
+	private active: { id: string; teardown: WallpaperTeardown } | null = null;
 
 	/** Bound listener so we can remove it in dispose(). */
 	private boundVisibilityChange = (): void => {
@@ -126,7 +121,7 @@ export class WallpaperLayer {
 			if ( typeof console !== 'undefined' ) {
 				console.error(
 					`[wp-desktop-mode] Wallpaper "${ id }" teardown threw:`,
-					err
+					err,
 				);
 			}
 		}
@@ -218,7 +213,7 @@ export class WallpaperLayer {
 					return;
 				}
 				this.handleMountFailure( def.id, err );
-			}
+			},
 		);
 	}
 
@@ -228,7 +223,7 @@ export class WallpaperLayer {
 		if ( typeof console !== 'undefined' ) {
 			console.error(
 				`[wp-desktop-mode] Wallpaper "${ id }" failed to mount:`,
-				err
+				err,
 			);
 		}
 	}

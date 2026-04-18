@@ -67,17 +67,17 @@ addAction(
 				api.hooks.addAction(
 					HOOKS.WALLPAPER_VISIBILITY,
 					`${ NAMESPACE }/visibility`,
-					visibilityHandler
+					visibilityHandler,
 				);
 
 				return (): void => {
 					api.hooks.removeAction(
 						HOOKS.WALLPAPER_VISIBILITY,
-						`${ NAMESPACE }/visibility`
+						`${ NAMESPACE }/visibility`,
 					);
 					scene.destroy();
 				};
 			},
 		} );
-	}
+	},
 );

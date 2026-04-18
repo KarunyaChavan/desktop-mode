@@ -9,9 +9,16 @@
 		"build": "npm run vendor:pixi && vite build --mode development && vite build --mode production",
 		"dev": "vite build --mode development --watch",
 		"vendor:pixi": "node -e \"require('fs').cpSync('node_modules/pixi.js/dist/pixi.min.js', 'assets/vendor/pixi.min.js')\"",
+		"lint": "eslint 'src/**/*.ts'",
+		"lint:fix": "eslint 'src/**/*.ts' --fix",
 		"test:php": "phpunit --configuration tests/phpunit/phpunit.xml.dist"
 	},
 	"devDependencies": {
+		"@typescript-eslint/eslint-plugin": "^7.18.0",
+		"@typescript-eslint/parser": "^7.18.0",
+		"@wordpress/eslint-plugin": "^21.6.0",
+		"eslint": "^8.57.1",
+		"eslint-import-resolver-typescript": "^4.4.4",
 		"typescript": "5.9.3",
 		"vite": "^5.4.10"
 	},

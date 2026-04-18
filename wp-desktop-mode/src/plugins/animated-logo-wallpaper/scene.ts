@@ -64,8 +64,13 @@ const CONFIG = {
 	targetLogoWidth: 1000,
 	/** Fraction of the smaller shell dimension the logo is allowed to occupy. */
 	logoShellFraction: 0.72,
-	/** Spring stiffness — how hard a particle pulls back to its home. */
-	springK: 0.035,
+	/**
+	 * Spring stiffness — how hard a particle pulls back to its home.
+	 * Lower = slower, floatier return. At 0.015 the natural-frequency
+	 * period is ~50 frames (~0.85 s at 60 fps), so particles visibly
+	 * drift back after a cursor flick rather than snapping home.
+	 */
+	springK: 0.015,
 	/** Velocity damping per tick. 1 = no damping, 0 = instant stop. */
 	damping: 0.86,
 	/**
@@ -74,14 +79,39 @@ const CONFIG = {
 	 * the subpixel jitter that made the resting logo flicker.
 	 */
 	restVelocityEpsilon: 0.02,
-	/** Pointer repulsion radius in CSS pixels. Beyond this, no effect. */
-	repelRadius: 160,
 	/**
-	 * Repulsion strength. Combined with the (1 − distance/radius)^2
-	 * falloff, this is the acceleration per tick at the pointer's
-	 * dead-center position.
+	 * Sand-drag brush radius in CSS pixels. Particles within this
+	 * distance of the cursor pick up a fraction of the cursor's
+	 * per-frame displacement — they're carried in the direction the
+	 * cursor is moving, not pushed away from its position. Beyond
+	 * the radius the cursor has no effect.
 	 */
-	repelStrength: 2.6,
+	dragRadius: 150,
+	/**
+	 * Base fraction of the cursor's per-frame displacement that a
+	 * particle inherits when it's at the dead center of the brush.
+	 * At 0.22 a particle in the brush core picks up roughly a
+	 * quarter of the cursor's velocity per frame — enough to read
+	 * as "dragged" without the particles chasing the cursor.
+	 */
+	dragStrength: 0.22,
+	/**
+	 * Super-linear speed boost. For every {@link dragBoostRefSpeed}
+	 * pixels-per-frame of cursor speed, the applied drag force is
+	 * additionally scaled by this factor. Kept gentle (0.3) so fast
+	 * flicks feel a bit punchier than linear without flinging
+	 * particles across the screen.
+	 */
+	dragBoost: 0.3,
+	/** Reference cursor speed for the boost curve (CSS px / frame). */
+	dragBoostRefSpeed: 40,
+	/**
+	 * Cap on the mouse delta a single frame can accumulate. Prevents
+	 * a wild delta from a stale pointer (e.g. first pointermove after
+	 * the cursor entered from offscreen) from launching particles
+	 * into orbit. A real fast mouse rarely exceeds 80 px/frame.
+	 */
+	maxMouseDelta: 80,
 	/**
 	 * Radial-gradient brush texture size. Larger = smoother edges at
 	 * the cost of texture memory. 128px is plenty — sprites scale
@@ -264,21 +294,48 @@ export async function mountScene(
 	const resizeObserver = new ResizeObserver( () => computeLayout() );
 	resizeObserver.observe( container );
 
-	// Pointer tracking — we keep it in container-local coordinates so
-	// the repulsion math stays correct under any scale or scroll.
-	// Default to far-offscreen so we don't push particles on mount
-	// before the user has interacted.
+	// Pointer tracking — container-local coordinates so the drag math
+	// stays correct under any scroll/scale. Default to far-offscreen so
+	// particles aren't affected on mount before the user has moved the
+	// cursor. `pointerActive` distinguishes "genuinely idle" from "just
+	// teleported in from offscreen" — the first pointermove after a
+	// leave/initial-mount should NOT inject a giant delta.
 	let pointerX = -1e6;
 	let pointerY = -1e6;
+	let pointerActive = false;
+
+	// Cursor displacement accumulated between animation ticks. Each
+	// tick consumes the delta (applies the drag force, then zeros) so
+	// a stationary cursor doesn't keep dragging particles forever.
+	// Multiple pointermoves within one frame accumulate — total
+	// cursor travel for the frame becomes the drag impulse.
+	let mouseDx = 0;
+	let mouseDy = 0;
 
 	const onPointerMove = ( e: PointerEvent ): void => {
 		const rect = app.canvas.getBoundingClientRect();
-		pointerX = e.clientX - rect.left;
-		pointerY = e.clientY - rect.top;
+		const nx = e.clientX - rect.left;
+		const ny = e.clientY - rect.top;
+		if ( pointerActive ) {
+			// Clamp so a stale frame (e.g. cursor entered the window
+			// from far offscreen between events) can't inject a wild
+			// delta and launch the whole logo into orbit.
+			const rawDx = nx - pointerX;
+			const rawDy = ny - pointerY;
+			const cap = CONFIG.maxMouseDelta;
+			mouseDx += Math.max( -cap, Math.min( cap, rawDx ) );
+			mouseDy += Math.max( -cap, Math.min( cap, rawDy ) );
+		}
+		pointerX = nx;
+		pointerY = ny;
+		pointerActive = true;
 	};
 	const onPointerLeave = (): void => {
 		pointerX = -1e6;
 		pointerY = -1e6;
+		pointerActive = false;
+		mouseDx = 0;
+		mouseDy = 0;
 	};
 	// Listen on the container so pointer events bubble from windows too
 	// (they float above the wallpaper layer, but `pointer-events: none`
@@ -303,8 +360,25 @@ export async function mountScene(
 
 	const tick = (): void => {
 		if ( animating ) {
-			step( n, homeX, homeY, x, y, vx, vy, pointerX, pointerY );
+			step(
+				n,
+				homeX,
+				homeY,
+				x,
+				y,
+				vx,
+				vy,
+				pointerX,
+				pointerY,
+				pointerActive ? mouseDx : 0,
+				pointerActive ? mouseDy : 0
+			);
 		}
+		// Consume the cursor-delta: after one tick applies its force,
+		// subsequent frames without new pointermove events see zero
+		// delta and the drag effect stops, letting springs take over.
+		mouseDx = 0;
+		mouseDy = 0;
 		syncSprites();
 	};
 
@@ -354,13 +428,21 @@ export async function mountScene(
 }
 
 /**
- * Integration step — spring toward home, damp, repel from pointer,
+ * Integration step — spring toward home, damp, drag with the cursor,
  * integrate. Flat Float32Arrays keep the loop allocation-free.
  *
+ * Cursor interaction is a "sand drag," not a force field: particles
+ * within the brush radius inherit a fraction of the cursor's frame-
+ * to-frame displacement (`mouseDx` / `mouseDy`). A stationary cursor
+ * applies zero force — particles can rest under a parked cursor. A
+ * moving cursor carries them along in its direction, with faster
+ * cursor movement producing super-linearly stronger drag (lazy pans
+ * barely stir the surface; whip-fast flicks genuinely fling sand).
+ *
  * Once a particle's velocity drops below a small floor AND it's close
- * enough to its home to be visually at rest, we snap it to the home
- * and zero its velocity. This kills the subpixel jitter that otherwise
- * shows as shimmer on the resting logo.
+ * enough to its home to be visually at rest AND the cursor isn't
+ * actively dragging it, we snap to home and zero velocity. This
+ * keeps the resting logo pixel-identical frame-to-frame — no shimmer.
  */
 function step(
 	n: number,
@@ -371,33 +453,55 @@ function step(
 	vx: Float32Array,
 	vy: Float32Array,
 	pointerX: number,
-	pointerY: number
+	pointerY: number,
+	mouseDx: number,
+	mouseDy: number
 ): void {
-	const { springK, damping, repelRadius, repelStrength, restVelocityEpsilon } = CONFIG;
-	const repelRadiusSq = repelRadius * repelRadius;
+	const {
+		springK,
+		damping,
+		dragRadius,
+		dragStrength,
+		dragBoost,
+		dragBoostRefSpeed,
+		restVelocityEpsilon,
+	} = CONFIG;
+	const dragRadiusSq = dragRadius * dragRadius;
 	const restEpsSq = restVelocityEpsilon * restVelocityEpsilon;
 	const restPosEps = 0.25; // sub-pixel — imperceptible snap.
 	const restPosEpsSq = restPosEps * restPosEps;
 
+	// Compute the cursor's speed magnitude once; every particle in
+	// range applies the same boost factor. Super-linear: 1 + (speed /
+	// ref) * boost — a lazy pan at 5 px/f sees a near-1.0× multiplier,
+	// a whipping flick at 80 px/f sees ~2.6×.
+	const mouseSpeed = Math.sqrt( mouseDx * mouseDx + mouseDy * mouseDy );
+	const speedMultiplier = 1 + ( mouseSpeed / dragBoostRefSpeed ) * dragBoost;
+	const dragFx = mouseDx * dragStrength * speedMultiplier;
+	const dragFy = mouseDy * dragStrength * speedMultiplier;
+	const cursorMoving = mouseDx !== 0 || mouseDy !== 0;
+
 	for ( let i = 0; i < n; i++ ) {
-		// Spring force toward home.
+		// Spring force toward home — always on, always pulling.
 		const dhx = homeX[ i ] - x[ i ];
 		const dhy = homeY[ i ] - y[ i ];
 		let fx = dhx * springK;
 		let fy = dhy * springK;
 
-		// Pointer repulsion — soft quadratic falloff. Branchless
-		// hot-path: cheap squared-distance gate before the sqrt.
+		// Sand-drag: cheap squared-distance gate, quadratic falloff
+		// from the cursor's center. The drag force vector is the
+		// cursor's velocity × strength × boost × falloff — same
+		// direction as cursor motion, so particles are carried with
+		// the cursor rather than pushed away.
 		const dx = x[ i ] - pointerX;
 		const dy = y[ i ] - pointerY;
 		const distSq = dx * dx + dy * dy;
 		let disturbed = false;
-		if ( distSq < repelRadiusSq && distSq > 0.0001 ) {
-			const dist = Math.sqrt( distSq );
-			const t = 1 - dist / repelRadius; // 0..1
-			const mag = ( t * t * repelStrength ) / dist;
-			fx += dx * mag;
-			fy += dy * mag;
+		if ( cursorMoving && distSq < dragRadiusSq ) {
+			const t = 1 - Math.sqrt( distSq ) / dragRadius; // 0..1
+			const falloff = t * t;
+			fx += dragFx * falloff;
+			fy += dragFy * falloff;
 			disturbed = true;
 		}
 
@@ -406,9 +510,10 @@ function step(
 		const nvy = ( vy[ i ] + fy ) * damping;
 
 		// Snap-to-rest: only when the particle is both slow AND
-		// essentially at home AND not being disturbed by the pointer.
-		// Without all three conditions a particle decelerating through
-		// the rest threshold mid-orbit would get stuck off-home.
+		// essentially at home AND not being carried by the cursor.
+		// Without all three conditions, a particle decelerating
+		// through the rest threshold mid-flight would get stuck
+		// off-home — the snap would "freeze" it en route.
 		if (
 			! disturbed &&
 			nvx * nvx + nvy * nvy < restEpsSq &&

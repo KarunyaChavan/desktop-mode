@@ -2863,11 +2863,40 @@ var wpDesktop = function(exports) {
      * dead-center position.
      */
     repelStrength: 2.6,
-    /** Particle render radius (CSS pixels). */
-    particleRadius: 1.8,
-    /** Second outer-glow circle radius — painted first, softer. */
-    particleHaloRadius: 3.4
+    /**
+     * Radial-gradient brush texture size. Larger = smoother edges at
+     * the cost of texture memory. 128px is plenty — sprites scale
+     * down to 10–30 px range for rendering so we have headroom.
+     */
+    brushSize: 128,
+    /** Min/max sprite scale relative to the brush texture size. */
+    spriteScaleMin: 0.1,
+    spriteScaleMax: 0.26,
+    /** Min/max per-particle alpha. */
+    spriteAlphaMin: 0.55,
+    spriteAlphaMax: 0.92
   };
+  const PARTICLE_PALETTE = [
+    16777215,
+    16777215,
+    16777215,
+    16777215,
+    // 40% pure white — majority
+    15791871,
+    15791871,
+    // very-pale blue-white
+    14478591,
+    14478591,
+    // pale sky
+    12179711,
+    // soft blue
+    9289983,
+    // sky blue
+    6607103,
+    // cyan accent
+    5217279
+    // vivid wp-blue accent
+  ];
   const BACKDROP_CSS = "radial-gradient(circle at 50% 50%, #1e40af 0%, #152a6b 45%, #0a1024 100%)";
   async function mountScene({ container, logoUrl, prefersReducedMotion: prefersReducedMotion2 }) {
     const pixi = window.PIXI;
@@ -2889,7 +2918,8 @@ var wpDesktop = function(exports) {
     });
     container.appendChild(app.canvas);
     applyCanvasLayout(app.canvas);
-    const particleLayer = new pixi.Graphics();
+    const brushTexture = buildBrushTexture(pixi);
+    const particleLayer = new pixi.Container();
     app.stage.addChild(particleLayer);
     const n = homes.length;
     const homeX = new Float32Array(n);
@@ -2898,6 +2928,18 @@ var wpDesktop = function(exports) {
     const y = new Float32Array(n);
     const vx = new Float32Array(n);
     const vy = new Float32Array(n);
+    const sprites = new Array(n);
+    for (let i = 0; i < n; i++) {
+      const sprite = new pixi.Sprite(brushTexture);
+      sprite.anchor.set(0.5);
+      sprite.blendMode = "add";
+      sprite.tint = PARTICLE_PALETTE[Math.floor(Math.random() * PARTICLE_PALETTE.length)];
+      const scale = CONFIG.spriteScaleMin + Math.random() * (CONFIG.spriteScaleMax - CONFIG.spriteScaleMin);
+      sprite.scale.set(scale);
+      sprite.alpha = CONFIG.spriteAlphaMin + Math.random() * (CONFIG.spriteAlphaMax - CONFIG.spriteAlphaMin);
+      particleLayer.addChild(sprite);
+      sprites[i] = sprite;
+    }
     let logoScale = 1;
     let logoOffsetX = 0;
     let logoOffsetY = 0;
@@ -2937,15 +2979,22 @@ var wpDesktop = function(exports) {
     window.addEventListener("pointermove", onPointerMove, { passive: true });
     window.addEventListener("pointerleave", onPointerLeave);
     let animating = !prefersReducedMotion2;
+    const syncSprites = () => {
+      for (let i = 0; i < n; i++) {
+        sprites[i].x = x[i];
+        sprites[i].y = y[i];
+      }
+    };
     const tick = () => {
       if (animating) {
         step(n, homeX, homeY, x, y, vx, vy, pointerX, pointerY);
       }
-      paintParticles(particleLayer, n, x, y);
+      syncSprites();
     };
     app.ticker.add(tick);
-    tick();
+    syncSprites();
     if (!animating) {
+      app.renderer.render(app.stage);
       app.ticker.stop();
     }
     return {
@@ -2959,6 +3008,10 @@ var wpDesktop = function(exports) {
           textureSource: true,
           context: true
         });
+        try {
+          brushTexture.destroy(true);
+        } catch {
+        }
         container.style.background = priorBackground;
       },
       setAnimating(playing) {
@@ -3009,16 +3062,32 @@ var wpDesktop = function(exports) {
       y[i] += nvy;
     }
   }
-  function paintParticles(g, n, x, y) {
-    g.clear();
-    for (let i = 0; i < n; i++) {
-      g.circle(x[i], y[i], CONFIG.particleHaloRadius);
+  function buildBrushTexture(pixi) {
+    const size = CONFIG.brushSize;
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      throw new Error("[animated-logo-wallpaper] 2D canvas context unavailable.");
     }
-    g.fill({ color: 16777215, alpha: 0.14 });
-    for (let i = 0; i < n; i++) {
-      g.circle(x[i], y[i], CONFIG.particleRadius);
-    }
-    g.fill({ color: 16777215, alpha: 0.85 });
+    const center = size / 2;
+    const gradient = ctx.createRadialGradient(
+      center,
+      center,
+      0,
+      center,
+      center,
+      center
+    );
+    gradient.addColorStop(0, "rgba(255, 255, 255, 1)");
+    gradient.addColorStop(0.18, "rgba(255, 255, 255, 0.85)");
+    gradient.addColorStop(0.42, "rgba(255, 255, 255, 0.28)");
+    gradient.addColorStop(0.75, "rgba(255, 255, 255, 0.06)");
+    gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, size, size);
+    return pixi.Texture.from(canvas);
   }
   async function sampleLogoHomes(url) {
     const img = await loadImage(url);
@@ -3181,7 +3250,9 @@ var wpDesktop = function(exports) {
     if (hasSession) {
       restoreSession(manager, config, desktopArea);
     }
-    openCurrentPage(manager, config);
+    if (!config.fromPortal || !hasSession) {
+      openCurrentPage(manager, config);
+    }
     const saveSession = createSessionSaver(manager, config);
     wireSessionEvents(saveSession);
     window.wp = window.wp || {};

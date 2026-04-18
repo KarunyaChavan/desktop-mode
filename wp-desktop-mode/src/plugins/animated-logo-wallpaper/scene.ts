@@ -18,64 +18,35 @@
  */
 
 /**
- * Minimal structural types for the slice of PIXI we use. Declared
- * inline so the plugin doesn't depend on a separate loader module —
- * the shell loads PIXI via the module registry (`needs: ['pixijs']`)
- * before mount fires, and we just read `window.PIXI` at that point.
+ * Minimal structural typing for PIXI — we access it via `window.PIXI`
+ * which is populated by the shell's module registry before mount. The
+ * Pixi API surface we touch is wide (sprites, textures, blend modes,
+ * renderer) and Pixi's own .d.ts is too heavy for inline redeclaration,
+ * so we fall back to `any` at the runtime boundary. Correctness for
+ * this scene is validated by its visual output rather than its types.
  */
-interface PixiApi {
-	Application: new () => PixiApplication;
-	Graphics: new () => PixiGraphics;
-	Container: new () => PixiContainer;
-}
-
-interface PixiApplication {
-	init( options: {
-		resizeTo?: HTMLElement;
-		backgroundAlpha?: number;
-		antialias?: boolean;
-		resolution?: number;
-		autoDensity?: boolean;
-	} ): Promise<void>;
-	stage: PixiContainer;
-	canvas: HTMLCanvasElement;
-	ticker: {
-		add( cb: ( ticker: { deltaTime: number } ) => void ): void;
-		stop(): void;
-		start(): void;
-	};
-	destroy( removeView?: boolean, options?: object ): void;
-}
-
-interface PixiContainer {
-	addChild( child: unknown ): unknown;
-	x: number;
-	y: number;
-	rotation: number;
-	scale: { set( value: number ): void };
-	children: unknown[];
-}
-
-interface PixiGraphics extends PixiContainer {
-	circle( x: number, y: number, r: number ): PixiGraphics;
-	fill( options: { color: number; alpha?: number } ): PixiGraphics;
-	stroke( options: { color: number; alpha?: number; width: number } ): PixiGraphics;
-	moveTo( x: number, y: number ): PixiGraphics;
-	lineTo( x: number, y: number ): PixiGraphics;
-	clear(): PixiGraphics;
-}
-
 declare global {
 	interface Window {
-		PIXI?: PixiApi;
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		PIXI?: any;
 	}
 }
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 export interface SceneHandle {
 	/** Stop the render loop and release WebGL resources. */
 	destroy(): void;
 	/** Temporarily pause / resume animation (e.g. tab backgrounded). */
 	setAnimating( playing: boolean ): void;
+}
+
+/**
+ * One render sprite per particle. Collected at mount so the hot tick
+ * loop does nothing but array access + property assignment.
+ */
+interface ParticleSprite {
+	x: number;
+	y: number;
 }
 
 interface SceneOptions {
@@ -119,11 +90,36 @@ const CONFIG = {
 	 * dead-center position.
 	 */
 	repelStrength: 2.6,
-	/** Particle render radius (CSS pixels). */
-	particleRadius: 1.8,
-	/** Second outer-glow circle radius — painted first, softer. */
-	particleHaloRadius: 3.4,
+	/**
+	 * Radial-gradient brush texture size. Larger = smoother edges at
+	 * the cost of texture memory. 128px is plenty — sprites scale
+	 * down to 10–30 px range for rendering so we have headroom.
+	 */
+	brushSize: 128,
+	/** Min/max sprite scale relative to the brush texture size. */
+	spriteScaleMin: 0.1,
+	spriteScaleMax: 0.26,
+	/** Min/max per-particle alpha. */
+	spriteAlphaMin: 0.55,
+	spriteAlphaMax: 0.92,
 };
+
+/**
+ * Particle color palette. Weighted toward near-white for a clean logo
+ * read, with a minority of tinted particles (light blue, cyan, a few
+ * warmer WordPress-blue accents) so the field has subtle chromatic
+ * depth under the additive-glow blend. Each entry is a packed 0xRRGGBB
+ * tint — sprites multiply the white brush texture by this color.
+ */
+const PARTICLE_PALETTE = [
+	0xffffff, 0xffffff, 0xffffff, 0xffffff, // 40% pure white — majority
+	0xf0f6ff, 0xf0f6ff, // very-pale blue-white
+	0xdcecff, 0xdcecff, // pale sky
+	0xb9d8ff, // soft blue
+	0x8dc0ff, // sky blue
+	0x64d0ff, // cyan accent
+	0x4f9bff, // vivid wp-blue accent
+];
 
 /** CSS radial-gradient used as the backdrop. Painted by the browser
  * directly on the wallpaper container, so the shell does perfectly
@@ -177,12 +173,18 @@ export async function mountScene(
 	container.appendChild( app.canvas );
 	applyCanvasLayout( app.canvas );
 
-	// Particle layer — cleared + redrawn every frame.
-	const particleLayer = new pixi.Graphics();
+	// Brush texture — a single soft radial gradient rasterized once
+	// into a Pixi-owned texture. Every particle is a sprite of this
+	// texture, tinted per-particle and composited with additive blend
+	// so clusters genuinely glow instead of just stacking flat colors.
+	const brushTexture = buildBrushTexture( pixi );
+
+	const particleLayer = new pixi.Container();
 	app.stage.addChild( particleLayer );
 
-	// Particle state — flat typed arrays instead of objects so the hot
-	// loop doesn't walk 3k prototype chains per frame.
+	// Particle state — flat typed arrays keep the hot tick loop free
+	// of object allocations. `n` is hoisted so the sprite pre-allocation
+	// just below can size to it.
 	const n = homes.length;
 	const homeX = new Float32Array( n );
 	const homeY = new Float32Array( n );
@@ -190,6 +192,28 @@ export async function mountScene(
 	const y = new Float32Array( n );
 	const vx = new Float32Array( n );
 	const vy = new Float32Array( n );
+
+	// Pre-allocate one sprite per particle. Varying scale, alpha, and
+	// tint per particle is what sells the "beautiful" read — a uniform
+	// grid of identical dots reads as sterile; a field with subtle
+	// variation reads as organic.
+	const sprites: ParticleSprite[] = new Array( n );
+	for ( let i = 0; i < n; i++ ) {
+		const sprite = new pixi.Sprite( brushTexture );
+		sprite.anchor.set( 0.5 );
+		sprite.blendMode = 'add';
+		sprite.tint =
+			PARTICLE_PALETTE[ Math.floor( Math.random() * PARTICLE_PALETTE.length ) ];
+		const scale =
+			CONFIG.spriteScaleMin +
+			Math.random() * ( CONFIG.spriteScaleMax - CONFIG.spriteScaleMin );
+		sprite.scale.set( scale );
+		sprite.alpha =
+			CONFIG.spriteAlphaMin +
+			Math.random() * ( CONFIG.spriteAlphaMax - CONFIG.spriteAlphaMin );
+		particleLayer.addChild( sprite );
+		sprites[ i ] = sprite;
+	}
 
 	let logoScale = 1;
 	let logoOffsetX = 0;
@@ -253,17 +277,27 @@ export async function mountScene(
 	// clean still image of the logo.
 	let animating = ! prefersReducedMotion;
 
+	const syncSprites = (): void => {
+		for ( let i = 0; i < n; i++ ) {
+			sprites[ i ].x = x[ i ];
+			sprites[ i ].y = y[ i ];
+		}
+	};
+
 	const tick = (): void => {
 		if ( animating ) {
 			step( n, homeX, homeY, x, y, vx, vy, pointerX, pointerY );
 		}
-		paintParticles( particleLayer, n, x, y );
+		syncSprites();
 	};
 
 	app.ticker.add( tick );
 	// Even when not animating we need one paint to show the logo.
-	tick();
+	syncSprites();
 	if ( ! animating ) {
+		// Force a render before stopping so the user sees the still
+		// frame instead of an unpainted canvas.
+		app.renderer.render( app.stage );
 		app.ticker.stop();
 	}
 
@@ -272,12 +306,20 @@ export async function mountScene(
 			resizeObserver.disconnect();
 			window.removeEventListener( 'pointermove', onPointerMove );
 			window.removeEventListener( 'pointerleave', onPointerLeave );
+			// Destroy the app first so the renderer stops referencing
+			// the brush texture; THEN release the texture explicitly
+			// so its backing canvas doesn't linger in GPU memory.
 			app.destroy( true, {
 				children: true,
 				texture: true,
 				textureSource: true,
 				context: true,
 			} as object );
+			try {
+				brushTexture.destroy( true );
+			} catch {
+				/* already released by app.destroy when children:true is set */
+			}
 			// Put the container's inline background back however we
 			// found it — next wallpaper's apply() takes over from
 			// there via `--wp-desktop-bg`.
@@ -370,30 +412,48 @@ function step(
 }
 
 /**
- * Redraw every particle into the shared Graphics node. Pixi's
- * Graphics API is retained-mode, so we clear and re-issue every
- * frame — that's cheap compared to allocating thousands of sprites,
- * and keeps the code simple.
+ * Build the particle "brush" — a single soft radial-gradient texture
+ * drawn once into an offscreen canvas and wrapped as a Pixi Texture.
+ * Every particle sprite shares this texture (Pixi batches them in a
+ * single draw call), with per-sprite tint and alpha providing the
+ * visual variety.
+ *
+ * The gradient is front-loaded toward transparent so the alpha falls
+ * off aggressively past the core — prevents the entire sprite area
+ * from registering as a washed-out square under additive blending.
  */
-function paintParticles(
-	g: PixiGraphics,
-	n: number,
-	x: Float32Array,
-	y: Float32Array
-): void {
-	g.clear();
-	// Outer glow pass — soft larger circles at low alpha. Painted
-	// first so the brighter core draws on top.
-	for ( let i = 0; i < n; i++ ) {
-		g.circle( x[ i ], y[ i ], CONFIG.particleHaloRadius );
+function buildBrushTexture( pixi: any ): any {
+	const size = CONFIG.brushSize;
+	const canvas = document.createElement( 'canvas' );
+	canvas.width = size;
+	canvas.height = size;
+	const ctx = canvas.getContext( '2d' );
+	if ( ! ctx ) {
+		throw new Error( '[animated-logo-wallpaper] 2D canvas context unavailable.' );
 	}
-	g.fill( { color: 0xffffff, alpha: 0.14 } );
 
-	// Core pass — bright, small.
-	for ( let i = 0; i < n; i++ ) {
-		g.circle( x[ i ], y[ i ], CONFIG.particleRadius );
-	}
-	g.fill( { color: 0xffffff, alpha: 0.85 } );
+	const center = size / 2;
+	const gradient = ctx.createRadialGradient(
+		center,
+		center,
+		0,
+		center,
+		center,
+		center
+	);
+	// A tight bright core blended into a long soft halo. The extra
+	// mid-stops shape the falloff so the halo reads as a smoke-soft
+	// glow instead of a linear ramp.
+	gradient.addColorStop( 0, 'rgba(255, 255, 255, 1)' );
+	gradient.addColorStop( 0.18, 'rgba(255, 255, 255, 0.85)' );
+	gradient.addColorStop( 0.42, 'rgba(255, 255, 255, 0.28)' );
+	gradient.addColorStop( 0.75, 'rgba(255, 255, 255, 0.06)' );
+	gradient.addColorStop( 1, 'rgba(255, 255, 255, 0)' );
+
+	ctx.fillStyle = gradient;
+	ctx.fillRect( 0, 0, size, size );
+
+	return pixi.Texture.from( canvas );
 }
 
 /**

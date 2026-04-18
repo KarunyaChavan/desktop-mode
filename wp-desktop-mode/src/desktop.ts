@@ -171,19 +171,31 @@ function init(): void {
 		} );
 	}
 
-	// Bootstrap: restore session (if any), then open/focus the current
-	// page. `openCurrentPage` delegates to `manager.open`, which focuses
-	// an existing window with the same baseId — so when the user lands
-	// on /wp-desktop/ and their saved focused window matches currentPage,
-	// this second call is a no-op focus. But when they navigate directly
-	// to /wp-admin/profile.php (or any page not in the session), this is
-	// what actually surfaces that page instead of letting session-restore
-	// hide their intent behind the previously-open windows.
+	// Bootstrap: restore session (if any), then decide whether to also
+	// auto-open the current admin URL. Two rules:
+	//
+	//   1. If the user navigated directly to a specific admin URL
+	//      (e.g. /wp-admin/profile.php) — `fromPortal` is false — we
+	//      open that page so their navigation intent is honored. This
+	//      is what surfaces pages that weren't in the saved session.
+	//
+	//   2. If the user came through the portal (/wp-desktop/) AND has
+	//      a saved session, we DO NOT auto-open the current page. The
+	//      portal lands on `index.php` (Dashboard) by definition, and
+	//      forcing that window back after every refresh defeats the
+	//      user's intent when they just closed / minimized it. Respect
+	//      the saved stack verbatim.
+	//
+	//   3. If the user came through the portal with NO saved session
+	//      (first visit), still open the current page so the desktop
+	//      isn't empty — it's a better blank-slate than nothing.
 	const hasSession = !! ( config.session && config.session.windows && config.session.windows.length > 0 );
 	if ( hasSession ) {
 		restoreSession( manager, config, desktopArea );
 	}
-	openCurrentPage( manager, config );
+	if ( ! config.fromPortal || ! hasSession ) {
+		openCurrentPage( manager, config );
+	}
 
 	// Persistence.
 	const saveSession = createSessionSaver( manager, config );

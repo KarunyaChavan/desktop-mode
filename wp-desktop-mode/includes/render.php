@@ -125,11 +125,13 @@ function wpdm_enqueue_assets() {
 	 *     @type string $colorScheme  The active admin color scheme.
 	 *     @type array  $dockItems    Dock items derived from admin menu.
 	 *     @type array  $session      Saved session (windows, focused, updated).
-	 *     @type string $sessionUrl   REST endpoint for saving the session.
-	 *     @type string $mediaUrl     REST endpoint for media uploads (wp/v2/media).
-	 *     @type bool   $canUpload    Whether the user holds the `upload_files` capability.
-	 *     @type string $pluginUrl    Plugin base URL (no trailing slash). Used by the shell to locate vendor assets and by plugins to build asset URLs.
-	 *     @type string $restNonce    Nonce for the session REST endpoint.
+	 *     @type string $sessionUrl       REST endpoint for saving the session.
+	 *     @type string $mediaUrl         REST endpoint for media uploads (wp/v2/media).
+	 *     @type string $defaultWindowUrl REST endpoint for saving the default-window preference.
+	 *     @type array  $defaultWindow    { enabled: bool, url: string } — current default-window preference.
+	 *     @type bool   $canUpload        Whether the user holds the `upload_files` capability.
+	 *     @type string $pluginUrl        Plugin base URL (no trailing slash). Used by the shell to locate vendor assets and by plugins to build asset URLs.
+	 *     @type string $restNonce        Nonce for the session REST endpoint.
 	 *     @type string $portalUrl    Canonical `/wp-desktop/` URL.
 	 *     @type bool   $fromPortal   Whether the shell was reached via the portal.
 	 * }
@@ -137,20 +139,22 @@ function wpdm_enqueue_assets() {
 	$config = apply_filters(
 		'wp_desktop_shell_config',
 		array(
-			'currentPage'  => esc_url( $current_page ),
-			'currentTitle' => wp_strip_all_tags( $title ),
-			'currentIcon'  => sanitize_html_class( $menu_icon ),
-			'adminUrl'     => esc_url( admin_url() ),
-			'colorScheme'  => sanitize_html_class( get_user_option( 'admin_color' ), 'fresh' ),
-			'dockItems'    => $dock_items,
-			'session'      => wpdm_get_session( get_current_user_id() ),
-			'sessionUrl'   => esc_url_raw( rest_url( 'wp-desktop/v1/session' ) ),
-			'mediaUrl'     => esc_url_raw( rest_url( 'wp/v2/media' ) ),
-			'canUpload'    => current_user_can( 'upload_files' ),
-			'pluginUrl'    => esc_url_raw( untrailingslashit( WPDM_URL ) ),
-			'restNonce'    => wp_create_nonce( 'wp_rest' ),
-			'portalUrl'    => esc_url( wpdm_portal_url() ),
-			'fromPortal'   => $from_portal,
+			'currentPage'      => esc_url( $current_page ),
+			'currentTitle'     => wp_strip_all_tags( $title ),
+			'currentIcon'      => sanitize_html_class( $menu_icon ),
+			'adminUrl'         => esc_url( admin_url() ),
+			'colorScheme'      => sanitize_html_class( get_user_option( 'admin_color' ), 'fresh' ),
+			'dockItems'        => $dock_items,
+			'session'          => wpdm_get_session( get_current_user_id() ),
+			'sessionUrl'       => esc_url_raw( rest_url( 'wp-desktop/v1/session' ) ),
+			'mediaUrl'         => esc_url_raw( rest_url( 'wp/v2/media' ) ),
+			'defaultWindowUrl' => esc_url_raw( rest_url( 'wp-desktop/v1/default-window' ) ),
+			'defaultWindow'    => wpdm_get_default_window( get_current_user_id() ),
+			'canUpload'        => current_user_can( 'upload_files' ),
+			'pluginUrl'        => esc_url_raw( untrailingslashit( WPDM_URL ) ),
+			'restNonce'        => wp_create_nonce( 'wp_rest' ),
+			'portalUrl'        => esc_url( wpdm_portal_url() ),
+			'fromPortal'       => $from_portal,
 		)
 	);
 

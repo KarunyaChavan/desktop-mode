@@ -85,3 +85,24 @@ export function deriveWindowId( url: string, adminUrl: string ): string {
 export function sanitizeClassName( value: string ): string {
 	return value.replace( /[^a-zA-Z0-9_-]/g, '' );
 }
+
+/**
+ * Returns a comparable key for two admin URLs so equality checks work
+ * regardless of the chromeless flag, the portal flag, or trailing
+ * slashes. Used by the window class to match submenu tabs against
+ * iframe navigation, and by the shell to compare a window's URL
+ * against the default-window preference.
+ *
+ * Falls back to the raw URL if parsing fails — the caller will just
+ * see a stricter equality check than desired, not a crash.
+ */
+export function urlMatchKey( url: string ): string {
+	try {
+		const parsed = new URL( url, window.location.origin );
+		parsed.searchParams.delete( 'wp_desktop' );
+		parsed.searchParams.delete( 'wp_desktop_portal' );
+		return parsed.pathname.replace( /\/+$/, '' ) + '?' + parsed.searchParams.toString();
+	} catch {
+		return url;
+	}
+}

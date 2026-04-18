@@ -31,6 +31,14 @@ export class WindowManager {
 	/** Counter for cascade positioning. */
 	private cascadeIndex = 0;
 
+	/**
+	 * Injected by the shell on init — called when a user clicks
+	 * "Open on startup" in a window's ⋯ menu. The manager stays
+	 * decoupled from the public `wp.desktop.setDefaultWindow()` API
+	 * by taking the handler as a callback.
+	 */
+	public onToggleStartupRequested: ( ( win: Window ) => void ) | null = null;
+
 	constructor( desktop: HTMLElement ) {
 		this.desktop = desktop;
 	}
@@ -125,6 +133,15 @@ export class WindowManager {
 				submenu: w.config.submenu,
 				multi: true,
 			} );
+		};
+		// "Open on startup" toggles the user's default-window
+		// preference to point at this window's current URL — or
+		// disables it entirely when the window is already the
+		// default. The actual REST write is owned by the shell's
+		// public API (`wp.desktop.setDefaultWindow`), injected via
+		// `this.onToggleStartupRequested`.
+		win.onToggleStartup = ( w: Window ) => {
+			this.onToggleStartupRequested?.( w );
 		};
 
 		this.stack.push( win );

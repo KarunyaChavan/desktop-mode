@@ -13,7 +13,7 @@
 import { WindowManager } from './window-manager';
 import { Dock } from './dock';
 import { OsSettings } from './settings';
-import { deriveWindowId } from './utils';
+import { deriveWindowId, urlMatchKey } from './utils';
 import { HOOKS, doAction, rawHooks, whenReady } from './hooks';
 import type { WpHooks } from './hooks';
 import * as registry from './wallpapers/registry';
@@ -53,6 +53,20 @@ export interface WpDesktopPublicApi {
 	loadModules: ( ids: string[] ) => Promise<void>;
 	/** Run `cb` after `wp-desktop.init` has fired (immediately if already fired). */
 	whenReady: ( cb: () => void ) => void;
+	/**
+	 * Update the user's "default window" preference — the window that
+	 * opens when the user enters the portal with no saved session.
+	 *
+	 * - Passing a URL makes it the default (the shell clamps to
+	 *   same-origin wp-admin URLs; invalid URLs reject).
+	 * - Passing `null` disables the default entirely, giving the user
+	 *   an empty desktop on portal entry.
+	 *
+	 * Updates `config.defaultWindow` in place and dispatches the
+	 * `wp-desktop-default-window-changed` CustomEvent on `document`
+	 * so the ⋯-menu checkmarks repaint.
+	 */
+	setDefaultWindow: ( url: string | null ) => Promise<void>;
 	/**
 	 * The `DesktopConfig` that booted this shell. Read-only for plugins
 	 * — useful for picking up `pluginUrl` and other PHP-sourced bits.
@@ -172,34 +186,96 @@ function init(): void {
 	}
 
 	// Bootstrap: restore session (if any), then decide whether to also
-	// auto-open the current admin URL. Two rules:
+	// auto-open the current admin URL. The rules compose three signals:
 	//
-	//   1. If the user navigated directly to a specific admin URL
-	//      (e.g. /wp-admin/profile.php) — `fromPortal` is false — we
-	//      open that page so their navigation intent is honored. This
-	//      is what surfaces pages that weren't in the saved session.
+	//   1. `fromPortal=false`     → user navigated to a specific admin
+	//      URL (e.g. /wp-admin/edit.php). Always honor that navigation
+	//      by opening the page; direct URLs are intent.
 	//
-	//   2. If the user came through the portal (/wp-desktop/) AND has
-	//      a saved session, we DO NOT auto-open the current page. The
-	//      portal lands on `index.php` (Dashboard) by definition, and
-	//      forcing that window back after every refresh defeats the
-	//      user's intent when they just closed / minimized it. Respect
-	//      the saved stack verbatim.
+	//   2. `fromPortal=true`
+	//      + session exists       → user is returning to their saved
+	//      stack. Respect the stack verbatim — don't force Dashboard
+	//      (or any other default) back in. Matches their last state.
 	//
-	//   3. If the user came through the portal with NO saved session
-	//      (first visit), still open the current page so the desktop
-	//      isn't empty — it's a better blank-slate than nothing.
+	//   3. `fromPortal=true`
+	//      + session empty
+	//      + defaultWindow.enabled=false
+	//                              → user explicitly turned off the
+	//      default window. Show them an empty desktop. No auto-open.
+	//
+	//   4. `fromPortal=true`
+	//      + session empty
+	//      + defaultWindow.enabled=true
+	//                              → first visit or clean slate, and
+	//      the default window is set (Dashboard by default). The
+	//      portal already redirected to its URL, so the current page
+	//      IS the default window — open it. The desktop is populated
+	//      with the user's chosen startup.
 	const hasSession = !! ( config.session && config.session.windows && config.session.windows.length > 0 );
 	if ( hasSession ) {
 		restoreSession( manager, config, desktopArea );
 	}
-	if ( ! config.fromPortal || ! hasSession ) {
+	const defaultEnabled = config.defaultWindow?.enabled !== false;
+	const suppressAutoOpen =
+		config.fromPortal && ( hasSession || ! defaultEnabled );
+	if ( ! suppressAutoOpen ) {
 		openCurrentPage( manager, config );
 	}
 
 	// Persistence.
 	const saveSession = createSessionSaver( manager, config );
 	wireSessionEvents( saveSession );
+
+	// Async writer for the default-window preference. Writes the user's
+	// choice through the REST endpoint, mutates `config.defaultWindow`
+	// in place, and dispatches a CustomEvent the ⋯-menu listens to so
+	// the check state repaints live without an OS Settings reopen.
+	const setDefaultWindow = async ( url: string | null ): Promise<void> => {
+		try {
+			const response = await fetch( config.defaultWindowUrl, {
+				method: 'POST',
+				credentials: 'same-origin',
+				headers: {
+					'Content-Type': 'application/json',
+					'X-WP-Nonce': config.restNonce,
+				},
+				body: JSON.stringify( { url } ),
+			} );
+			if ( ! response.ok ) {
+				throw new Error( `HTTP ${ response.status }` );
+			}
+			const data = ( await response.json() ) as {
+				enabled: boolean;
+				url: string;
+			};
+			config.defaultWindow = data;
+			document.dispatchEvent(
+				new CustomEvent( 'wp-desktop-default-window-changed', {
+					detail: data,
+				} )
+			);
+		} catch ( err ) {
+			if ( typeof console !== 'undefined' ) {
+				console.error(
+					'[wp-desktop-mode] Failed to save default window:',
+					err
+				);
+			}
+		}
+	};
+
+	// Manager → public API wiring. When a user clicks "Open on startup"
+	// in a window's ⋯ menu, the manager calls this callback with the
+	// window. We either set this window's URL as the default, or — if
+	// it's already the default — disable it.
+	manager.onToggleStartupRequested = ( win ) => {
+		const currentPref = config.defaultWindow;
+		const winUrl = win.getCurrentUrl();
+		const alreadyDefault =
+			!! currentPref?.enabled &&
+			urlMatchKey( currentPref.url ) === urlMatchKey( winUrl );
+		void setDefaultWindow( alreadyDefault ? null : winUrl );
+	};
 
 	// Expose the public API on `window.wp.desktop`. The `hooks` field
 	// aliases `window.wp.hooks` so plugins have one idiomatic entry
@@ -222,6 +298,7 @@ function init(): void {
 		registerModule,
 		loadModules,
 		whenReady,
+		setDefaultWindow,
 		config,
 	};
 
@@ -278,11 +355,18 @@ function init(): void {
 		}
 	} );
 
-	// Unify the address bar. Whether the user reached us via /wp-desktop,
-	// /wp-admin/, or a deep link like /wp-admin/plugins.php?paged=2, the
-	// parent URL collapses to /wp-desktop/. The iframe URLs retain their
-	// real query strings — this only changes what the browser shows.
-	normalizeBrowserUrl( config );
+	// The URL bar is intentionally NOT normalized to /wp-desktop/.
+	// Prior versions did a `history.replaceState(..., config.portalUrl)`
+	// here to unify the address bar around the portal URL — cosmetically
+	// nicer, but every browser reload hit /wp-desktop/, which triggered
+	// a portal HTTP redirect to the canonical admin URL, producing a
+	// visible address-bar flash (`/wp-admin/index.php?wp_desktop_portal=1`
+	// → `/wp-desktop/`) on every reload. Leaving the URL as the actual
+	// admin URL eliminates the flash and makes reloads instant — the
+	// user sees /wp-admin/... in the address bar in exchange, which is
+	// also more transparent about where the shell is currently hosted.
+	// `config.portalUrl` stays in the shell config so plugins that want
+	// to build "home" links can still point at the portal.
 
 	document.dispatchEvent(
 		new CustomEvent( 'wp-desktop-init', {
@@ -555,15 +639,25 @@ function createSessionSaver( manager: WindowManager, config: DesktopConfig ): ()
 			clearTimeout( debounceTimer );
 			debounceTimer = null;
 		}
-		// Use sendBeacon for unload-time saves where fetch may not complete.
-		// sendBeacon accepts a Blob and doesn't need the nonce in a header —
-		// we encode it in the body as _wpnonce instead (WP also reads that).
+		// Use sendBeacon for unload-time saves where fetch may not
+		// complete. WP REST's cookie-auth middleware reads the nonce
+		// from `$_REQUEST` (URL query string + form-encoded body),
+		// NOT from JSON bodies — so to satisfy auth we append the
+		// nonce to the URL as a query param. Without this, the
+		// beacon arrives but WP returns 403 before our handler runs,
+		// and the session on disk stays at its pre-close state.
+		// Symptom: close a window, reload fast, window reappears.
 		const payload = manager.snapshot();
 		const body = new Blob(
-			[ JSON.stringify( { session: payload, _wpnonce: config.restNonce } ) ],
+			[ JSON.stringify( { session: payload } ) ],
 			{ type: 'application/json' }
 		);
-		if ( navigator.sendBeacon && navigator.sendBeacon( config.sessionUrl, body ) ) {
+		const beaconUrl =
+			config.sessionUrl +
+			( config.sessionUrl.includes( '?' ) ? '&' : '?' ) +
+			'_wpnonce=' +
+			encodeURIComponent( config.restNonce );
+		if ( navigator.sendBeacon && navigator.sendBeacon( beaconUrl, body ) ) {
 			return;
 		}
 		void doSave();
@@ -603,30 +697,6 @@ function wireSessionEvents( save: () => void ): void {
 	document.addEventListener( 'wp-desktop-window-closed', save );
 	document.addEventListener( 'wp-desktop-window-focused', save );
 	document.addEventListener( 'wp-desktop-window-changed', save );
-}
-
-/**
- * Replace the current browser URL with `/wp-desktop/` so the address
- * bar reads as a single desktop-mode entry regardless of which admin
- * page the shell happens to be loaded under. Purely cosmetic — iframes
- * retain their real URLs; the server still serves the admin page at
- * its canonical URL on refresh unless the user reaches us via the
- * portal.
- *
- * We prefer `replaceState` over `pushState` so the browser Back button
- * behaves the way the user expects (going back to wherever they came
- * from before entering desktop mode), not "back to desktop mode".
- */
-function normalizeBrowserUrl( config: DesktopConfig ): void {
-	if ( ! config.portalUrl || ! window.history || ! window.history.replaceState ) {
-		return;
-	}
-	try {
-		window.history.replaceState( window.history.state, '', config.portalUrl );
-	} catch {
-		/* Some browser security contexts refuse replaceState across paths —
-		 * fall through silently; the URL just remains as-is. */
-	}
 }
 
 /** Debounce window for the shell-resized action. Trailing-edge only. */

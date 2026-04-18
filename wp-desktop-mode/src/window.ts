@@ -7,7 +7,7 @@
  */
 
 import type { WindowConfig, WindowState } from './types';
-import { sanitizeClassName } from './utils';
+import { sanitizeClassName, urlMatchKey } from './utils';
 import { HOOKS, doAction } from './hooks';
 
 /** Minimum distance from viewport edges when dragging. */
@@ -27,19 +27,6 @@ function withChromelessParam( url: string ): string | null {
 	return parsed.toString();
 }
 
-/**
- * Returns a comparable key for two URLs so the active tab can be detected
- * regardless of the chromeless flag or trailing slashes.
- */
-function urlMatchKey( url: string ): string {
-	try {
-		const parsed = new URL( url, window.location.origin );
-		parsed.searchParams.delete( 'wp_desktop' );
-		return parsed.pathname.replace( /\/+$/, '' ) + '?' + parsed.searchParams.toString();
-	} catch {
-		return url;
-	}
-}
 
 /**
  * Toggle `wp-desktop-has-fullscreen-window` on `<body>` based on whether any
@@ -100,13 +87,19 @@ function createWindowElement( config: WindowConfig ): HTMLElement {
 	const titleBar = document.createElement( 'div' );
 	titleBar.className = 'wp-desktop-window__titlebar';
 
-	// Leading menu button — sits before the icon + title. Visible only on
-	// multi-capable windows for now (singletons have no items to offer
-	// yet). Future: window-management verbs like "Tile left", "Duplicate",
-	// "Detach to tab" migrate here so the title bar stops growing controls.
+	// Leading menu button — sits before the icon + title. Shown for
+	// any iframe-backed window; native windows (OS Settings, future
+	// plugins) have no admin URL and so skip the menu. Contents vary:
+	//
+	//   - Every iframe window gets "Open on startup" — a checkable
+	//     item that marks this window as the default-window preference.
+	//   - Multi-capable windows additionally get "Open another <page>".
+	//
+	// Future window-management verbs ("Tile left", "Duplicate", etc.)
+	// should migrate here so the title bar stops growing controls.
 	let menuBtn: HTMLButtonElement | null = null;
 	let menuPanel: HTMLElement | null = null;
-	if ( config.multi ) {
+	if ( ! config.native ) {
 		menuBtn = document.createElement( 'button' );
 		menuBtn.type = 'button';
 		menuBtn.className = 'wp-desktop-window__btn wp-desktop-window__menu-btn';
@@ -125,14 +118,31 @@ function createWindowElement( config: WindowConfig ): HTMLElement {
 		menuPanel.setAttribute( 'role', 'menu' );
 		menuPanel.hidden = true;
 
-		const openAnother = document.createElement( 'button' );
-		openAnother.type = 'button';
-		openAnother.className = 'wp-desktop-window__menu-item wp-desktop-window__menu-item--open-another';
-		openAnother.setAttribute( 'role', 'menuitem' );
-		openAnother.innerHTML =
-			'<span class="wp-desktop-window__menu-icon dashicons dashicons-plus-alt2" aria-hidden="true"></span>' +
-			`<span class="wp-desktop-window__menu-label">Open another ${ config.title }</span>`;
-		menuPanel.appendChild( openAnother );
+		// "Open on startup" — checkable. The checked state is
+		// hydrated in bindEvents() once we can read the shared public
+		// API; the button just needs to exist here.
+		const startup = document.createElement( 'button' );
+		startup.type = 'button';
+		startup.className =
+			'wp-desktop-window__menu-item wp-desktop-window__menu-item--startup';
+		startup.setAttribute( 'role', 'menuitemcheckbox' );
+		startup.setAttribute( 'aria-checked', 'false' );
+		startup.innerHTML =
+			'<span class="wp-desktop-window__menu-check" aria-hidden="true"></span>' +
+			'<span class="wp-desktop-window__menu-label">Open on startup</span>';
+		menuPanel.appendChild( startup );
+
+		if ( config.multi ) {
+			const openAnother = document.createElement( 'button' );
+			openAnother.type = 'button';
+			openAnother.className =
+				'wp-desktop-window__menu-item wp-desktop-window__menu-item--open-another';
+			openAnother.setAttribute( 'role', 'menuitem' );
+			openAnother.innerHTML =
+				'<span class="wp-desktop-window__menu-icon dashicons dashicons-plus-alt2" aria-hidden="true"></span>' +
+				`<span class="wp-desktop-window__menu-label">Open another ${ config.title }</span>`;
+			menuPanel.appendChild( openAnother );
+		}
 	}
 
 	const iconEl = document.createElement( 'span' );
@@ -316,6 +326,14 @@ export class Window {
 	 */
 	public onOpenAnother: ( ( win: Window ) => void ) | null = null;
 
+	/**
+	 * Invoked when the title-bar menu's "Open on startup" item is
+	 * toggled. The shell wires this to the public
+	 * `wp.desktop.setDefaultWindow()` call, which writes the user's
+	 * preference and fires the `default-window-changed` event.
+	 */
+	public onToggleStartup: ( ( win: Window ) => void ) | null = null;
+
 	/** Bound handler used to close the actions menu on outside clicks. */
 	private boundOnDocumentPointerDown: ( ( e: PointerEvent ) => void ) | null = null;
 
@@ -472,6 +490,41 @@ export class Window {
 					this.closeActionsMenu();
 					this.onOpenAnother?.( this );
 				} );
+			}
+			// "Open on startup" — checkable menu item. Hydrate its
+			// checked state from the shared public API, and wire the
+			// click handler to toggle via `setDefaultWindow`. The
+			// callback is injected by the window manager so we don't
+			// couple the Window class to wp.desktop directly.
+			const startup = menuPanel.querySelector<HTMLButtonElement>(
+				'.wp-desktop-window__menu-item--startup'
+			);
+			if ( startup ) {
+				this.refreshStartupCheckState( startup );
+				startup.addEventListener( 'click', ( e: Event ) => {
+					// Keep the menu open — a checkbox item is a toggle,
+					// not a one-shot action. Users commonly want to
+					// verify the new state without reopening the menu,
+					// and the REST round-trip is fast enough that the
+					// optimistic flip below + the server-confirmation
+					// refresh feels instant.
+					e.stopPropagation();
+					this.flipStartupCheckOptimistically( startup );
+					this.onToggleStartup?.( this );
+				} );
+				// Refresh the check state whenever the public
+				// default-window preference changes — this is the
+				// authoritative signal (fired after the REST save
+				// succeeds). If the REST failed, this event doesn't
+				// fire and the optimistic flip stays until the next
+				// menu open, where the canonical state from config
+				// takes over.
+				document.addEventListener(
+					'wp-desktop-default-window-changed',
+					() => {
+						this.refreshStartupCheckState( startup );
+					}
+				);
 			}
 			// Escape closes the menu, returning focus to the trigger so
 			// keyboard users don't lose their place.
@@ -1014,6 +1067,46 @@ export class Window {
 	/**
 	 * Toggle the title-bar actions menu.
 	 */
+	/**
+	 * Flip the "Open on startup" check state immediately on click so
+	 * the user sees instant feedback — the REST round-trip confirms
+	 * shortly after via the `wp-desktop-default-window-changed` event,
+	 * which calls `refreshStartupCheckState` with the canonical state.
+	 * If the REST fails the optimistic flip stays (wrong) until the
+	 * next menu open, where the canonical check takes over.
+	 */
+	private flipStartupCheckOptimistically( button: HTMLButtonElement ): void {
+		const isChecked = button.getAttribute( 'aria-checked' ) === 'true';
+		const next = ! isChecked;
+		button.setAttribute( 'aria-checked', next ? 'true' : 'false' );
+		button.classList.toggle( 'wp-desktop-window__menu-item--checked', next );
+	}
+
+	/**
+	 * Compare this window's current URL against the user's saved
+	 * default-window preference and paint the "Open on startup" menu
+	 * item's checked state accordingly. Called when the menu is built
+	 * and every time the public preference changes.
+	 */
+	private refreshStartupCheckState( button: HTMLButtonElement ): void {
+		const pref = window.wp?.desktop?.config?.defaultWindow;
+		let isDefault = false;
+		if ( pref && pref.enabled && typeof pref.url === 'string' ) {
+			try {
+				const currentKey = urlMatchKey( this.getCurrentUrl() );
+				const prefKey = urlMatchKey( pref.url );
+				isDefault = currentKey === prefKey;
+			} catch {
+				isDefault = false;
+			}
+		}
+		button.setAttribute( 'aria-checked', isDefault ? 'true' : 'false' );
+		button.classList.toggle(
+			'wp-desktop-window__menu-item--checked',
+			isDefault
+		);
+	}
+
 	private toggleActionsMenu(): void {
 		const panel = this.element.querySelector(
 			'.wp-desktop-window__menu-panel'
@@ -1047,6 +1140,19 @@ export class Window {
 		}
 		panel.hidden = false;
 		btn.setAttribute( 'aria-expanded', 'true' );
+
+		// Refresh "Open on startup" check state every time the menu
+		// opens. The initial paint runs at window construction, BEFORE
+		// `window.wp.desktop` is populated, so the first read would
+		// silently fall back to unchecked. Reading on each open catches
+		// that plus any external change (e.g. another window toggled
+		// itself as default) that hasn't propagated yet.
+		const startup = panel.querySelector<HTMLButtonElement>(
+			'.wp-desktop-window__menu-item--startup'
+		);
+		if ( startup ) {
+			this.refreshStartupCheckState( startup );
+		}
 
 		if ( ! this.boundOnDocumentPointerDown ) {
 			this.boundOnDocumentPointerDown = ( e: PointerEvent ) => {

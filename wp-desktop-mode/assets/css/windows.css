@@ -272,6 +272,40 @@
 	text-overflow: ellipsis;
 }
 
+/*
+ * Check indicator for role="menuitemcheckbox" entries (currently
+ * "Open on startup"). Uses a small 16px square slot so unchecked
+ * items stay visually aligned with icon-bearing items like
+ * "Open another".
+ */
+.wp-desktop-window__menu-check {
+	flex-shrink: 0;
+	width: 16px;
+	height: 16px;
+	border-radius: 3px;
+	border: 1.5px solid rgba(0, 0, 0, 0.25);
+	position: relative;
+	background: transparent;
+	transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+
+.wp-desktop-window__menu-item--checked .wp-desktop-window__menu-check {
+	background: var(--wp-admin-theme-color, #2271b1);
+	border-color: var(--wp-admin-theme-color, #2271b1);
+}
+
+.wp-desktop-window__menu-item--checked .wp-desktop-window__menu-check::after {
+	content: "";
+	position: absolute;
+	top: 1px;
+	left: 4px;
+	width: 4px;
+	height: 8px;
+	border: solid #fff;
+	border-width: 0 2px 2px 0;
+	transform: rotate(45deg);
+}
+
 /* ---------------------------------------------------------------
  * Screen Meta buttons (Screen Options / Help) in the title bar.
  * Positioned right after the title text, visually separated from

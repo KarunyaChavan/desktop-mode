@@ -33,6 +33,16 @@ var wpDesktop = function(exports) {
   function sanitizeClassName(value) {
     return value.replace(/[^a-zA-Z0-9_-]/g, "");
   }
+  function urlMatchKey(url) {
+    try {
+      const parsed = new URL(url, window.location.origin);
+      parsed.searchParams.delete("wp_desktop");
+      parsed.searchParams.delete("wp_desktop_portal");
+      return parsed.pathname.replace(/\/+$/, "") + "?" + parsed.searchParams.toString();
+    } catch {
+      return url;
+    }
+  }
   function getWpHooks() {
     const hooks = window.wp?.hooks;
     if (!hooks) {
@@ -152,15 +162,6 @@ var wpDesktop = function(exports) {
     parsed.searchParams.set("wp_desktop", "1");
     return parsed.toString();
   }
-  function urlMatchKey(url) {
-    try {
-      const parsed = new URL(url, window.location.origin);
-      parsed.searchParams.delete("wp_desktop");
-      return parsed.pathname.replace(/\/+$/, "") + "?" + parsed.searchParams.toString();
-    } catch {
-      return url;
-    }
-  }
   function updateFullscreenBodyClass() {
     const hasFullscreen = document.querySelectorAll(".wp-desktop-window--fullscreen").length > 0;
     document.body.classList.toggle("wp-desktop-has-fullscreen-window", hasFullscreen);
@@ -190,7 +191,7 @@ var wpDesktop = function(exports) {
     titleBar.className = "wp-desktop-window__titlebar";
     let menuBtn = null;
     let menuPanel = null;
-    if (config.multi) {
+    if (!config.native) {
       menuBtn = document.createElement("button");
       menuBtn.type = "button";
       menuBtn.className = "wp-desktop-window__btn wp-desktop-window__menu-btn";
@@ -202,12 +203,21 @@ var wpDesktop = function(exports) {
       menuPanel.className = "wp-desktop-window__menu-panel";
       menuPanel.setAttribute("role", "menu");
       menuPanel.hidden = true;
-      const openAnother = document.createElement("button");
-      openAnother.type = "button";
-      openAnother.className = "wp-desktop-window__menu-item wp-desktop-window__menu-item--open-another";
-      openAnother.setAttribute("role", "menuitem");
-      openAnother.innerHTML = `<span class="wp-desktop-window__menu-icon dashicons dashicons-plus-alt2" aria-hidden="true"></span><span class="wp-desktop-window__menu-label">Open another ${config.title}</span>`;
-      menuPanel.appendChild(openAnother);
+      const startup = document.createElement("button");
+      startup.type = "button";
+      startup.className = "wp-desktop-window__menu-item wp-desktop-window__menu-item--startup";
+      startup.setAttribute("role", "menuitemcheckbox");
+      startup.setAttribute("aria-checked", "false");
+      startup.innerHTML = '<span class="wp-desktop-window__menu-check" aria-hidden="true"></span><span class="wp-desktop-window__menu-label">Open on startup</span>';
+      menuPanel.appendChild(startup);
+      if (config.multi) {
+        const openAnother = document.createElement("button");
+        openAnother.type = "button";
+        openAnother.className = "wp-desktop-window__menu-item wp-desktop-window__menu-item--open-another";
+        openAnother.setAttribute("role", "menuitem");
+        openAnother.innerHTML = `<span class="wp-desktop-window__menu-icon dashicons dashicons-plus-alt2" aria-hidden="true"></span><span class="wp-desktop-window__menu-label">Open another ${config.title}</span>`;
+        menuPanel.appendChild(openAnother);
+      }
     }
     const iconEl = document.createElement("span");
     iconEl.className = `wp-desktop-window__icon dashicons ${sanitizeClassName(config.icon)}`;
@@ -320,6 +330,7 @@ var wpDesktop = function(exports) {
       this.onClose = null;
       this.onMinimize = null;
       this.onOpenAnother = null;
+      this.onToggleStartup = null;
       this.boundOnDocumentPointerDown = null;
       this.id = config.id;
       this.config = config;
@@ -435,6 +446,23 @@ var wpDesktop = function(exports) {
             this.closeActionsMenu();
             this.onOpenAnother?.(this);
           });
+        }
+        const startup = menuPanel.querySelector(
+          ".wp-desktop-window__menu-item--startup"
+        );
+        if (startup) {
+          this.refreshStartupCheckState(startup);
+          startup.addEventListener("click", (e) => {
+            e.stopPropagation();
+            this.flipStartupCheckOptimistically(startup);
+            this.onToggleStartup?.(this);
+          });
+          document.addEventListener(
+            "wp-desktop-default-window-changed",
+            () => {
+              this.refreshStartupCheckState(startup);
+            }
+          );
         }
         menuPanel.addEventListener("keydown", (e) => {
           const kev = e;
@@ -890,6 +918,44 @@ var wpDesktop = function(exports) {
     /**
      * Toggle the title-bar actions menu.
      */
+    /**
+     * Flip the "Open on startup" check state immediately on click so
+     * the user sees instant feedback — the REST round-trip confirms
+     * shortly after via the `wp-desktop-default-window-changed` event,
+     * which calls `refreshStartupCheckState` with the canonical state.
+     * If the REST fails the optimistic flip stays (wrong) until the
+     * next menu open, where the canonical check takes over.
+     */
+    flipStartupCheckOptimistically(button) {
+      const isChecked = button.getAttribute("aria-checked") === "true";
+      const next = !isChecked;
+      button.setAttribute("aria-checked", next ? "true" : "false");
+      button.classList.toggle("wp-desktop-window__menu-item--checked", next);
+    }
+    /**
+     * Compare this window's current URL against the user's saved
+     * default-window preference and paint the "Open on startup" menu
+     * item's checked state accordingly. Called when the menu is built
+     * and every time the public preference changes.
+     */
+    refreshStartupCheckState(button) {
+      const pref = window.wp?.desktop?.config?.defaultWindow;
+      let isDefault = false;
+      if (pref && pref.enabled && typeof pref.url === "string") {
+        try {
+          const currentKey = urlMatchKey(this.getCurrentUrl());
+          const prefKey = urlMatchKey(pref.url);
+          isDefault = currentKey === prefKey;
+        } catch {
+          isDefault = false;
+        }
+      }
+      button.setAttribute("aria-checked", isDefault ? "true" : "false");
+      button.classList.toggle(
+        "wp-desktop-window__menu-item--checked",
+        isDefault
+      );
+    }
     toggleActionsMenu() {
       const panel = this.element.querySelector(
         ".wp-desktop-window__menu-panel"
@@ -922,6 +988,12 @@ var wpDesktop = function(exports) {
       }
       panel.hidden = false;
       btn.setAttribute("aria-expanded", "true");
+      const startup = panel.querySelector(
+        ".wp-desktop-window__menu-item--startup"
+      );
+      if (startup) {
+        this.refreshStartupCheckState(startup);
+      }
       if (!this.boundOnDocumentPointerDown) {
         this.boundOnDocumentPointerDown = (e) => {
           const target = e.target;
@@ -1030,6 +1102,7 @@ var wpDesktop = function(exports) {
     constructor(desktop) {
       this.stack = [];
       this.cascadeIndex = 0;
+      this.onToggleStartupRequested = null;
       this.desktop = desktop;
     }
     /**
@@ -1113,6 +1186,9 @@ var wpDesktop = function(exports) {
           submenu: w.config.submenu,
           multi: true
         });
+      };
+      win.onToggleStartup = (w) => {
+        this.onToggleStartupRequested?.(w);
       };
       this.stack.push(win);
       this.desktop.appendChild(win.element);
@@ -2877,25 +2953,35 @@ var wpDesktop = function(exports) {
     spriteAlphaMax: 0.92
   };
   const PARTICLE_PALETTE = [
+    // Rainbow six (higher weight — the flag's main body).
+    16726843,
+    16726843,
+    // red
+    16747562,
+    16747562,
+    // orange
+    16767293,
+    16767293,
+    // yellow
+    5036388,
+    5036388,
+    // green
+    4104447,
+    4104447,
+    // blue
+    11037695,
+    11037695,
+    // purple
+    // Trans flag stripes.
+    16757703,
+    // pink
+    8380415,
+    // light blue
     16777215,
-    16777215,
-    16777215,
-    16777215,
-    // 40% pure white — majority
-    15791871,
-    15791871,
-    // very-pale blue-white
-    14478591,
-    14478591,
-    // pale sky
-    12179711,
-    // soft blue
-    9289983,
-    // sky blue
-    6607103,
-    // cyan accent
-    5217279
-    // vivid wp-blue accent
+    // white
+    // POC inclusion stripe.
+    13140042
+    // warm brown (boosted for visibility under additive)
   ];
   const BACKDROP_CSS = "radial-gradient(circle at 50% 50%, #1e40af 0%, #152a6b 45%, #0a1024 100%)";
   async function mountScene({ container, logoUrl, prefersReducedMotion: prefersReducedMotion2 }) {
@@ -3250,11 +3336,49 @@ var wpDesktop = function(exports) {
     if (hasSession) {
       restoreSession(manager, config, desktopArea);
     }
-    if (!config.fromPortal || !hasSession) {
+    const defaultEnabled = config.defaultWindow?.enabled !== false;
+    const suppressAutoOpen = config.fromPortal && (hasSession || !defaultEnabled);
+    if (!suppressAutoOpen) {
       openCurrentPage(manager, config);
     }
     const saveSession = createSessionSaver(manager, config);
     wireSessionEvents(saveSession);
+    const setDefaultWindow = async (url) => {
+      try {
+        const response = await fetch(config.defaultWindowUrl, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            "Content-Type": "application/json",
+            "X-WP-Nonce": config.restNonce
+          },
+          body: JSON.stringify({ url })
+        });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const data = await response.json();
+        config.defaultWindow = data;
+        document.dispatchEvent(
+          new CustomEvent("wp-desktop-default-window-changed", {
+            detail: data
+          })
+        );
+      } catch (err) {
+        if (typeof console !== "undefined") {
+          console.error(
+            "[wp-desktop-mode] Failed to save default window:",
+            err
+          );
+        }
+      }
+    };
+    manager.onToggleStartupRequested = (win) => {
+      const currentPref = config.defaultWindow;
+      const winUrl = win.getCurrentUrl();
+      const alreadyDefault = !!currentPref?.enabled && urlMatchKey(currentPref.url) === urlMatchKey(winUrl);
+      void setDefaultWindow(alreadyDefault ? null : winUrl);
+    };
     window.wp = window.wp || {};
     window.wp.desktop = {
       windowManager: manager,
@@ -3269,6 +3393,7 @@ var wpDesktop = function(exports) {
       registerModule,
       loadModules,
       whenReady,
+      setDefaultWindow,
       config
     };
     doAction(HOOKS.INIT, { config });
@@ -3296,7 +3421,6 @@ var wpDesktop = function(exports) {
         }
       }
     });
-    normalizeBrowserUrl(config);
     document.dispatchEvent(
       new CustomEvent("wp-desktop-init", {
         detail: { config, restored: hasSession }
@@ -3470,10 +3594,11 @@ var wpDesktop = function(exports) {
       }
       const payload = manager.snapshot();
       const body = new Blob(
-        [JSON.stringify({ session: payload, _wpnonce: config.restNonce })],
+        [JSON.stringify({ session: payload })],
         { type: "application/json" }
       );
-      if (navigator.sendBeacon && navigator.sendBeacon(config.sessionUrl, body)) {
+      const beaconUrl = config.sessionUrl + (config.sessionUrl.includes("?") ? "&" : "?") + "_wpnonce=" + encodeURIComponent(config.restNonce);
+      if (navigator.sendBeacon && navigator.sendBeacon(beaconUrl, body)) {
         return;
       }
       void doSave();
@@ -3500,15 +3625,6 @@ var wpDesktop = function(exports) {
     document.addEventListener("wp-desktop-window-closed", save);
     document.addEventListener("wp-desktop-window-focused", save);
     document.addEventListener("wp-desktop-window-changed", save);
-  }
-  function normalizeBrowserUrl(config) {
-    if (!config.portalUrl || !window.history || !window.history.replaceState) {
-      return;
-    }
-    try {
-      window.history.replaceState(window.history.state, "", config.portalUrl);
-    } catch {
-    }
   }
   const SHELL_RESIZE_DEBOUNCE_MS = 120;
   function bindShellLifecycle() {

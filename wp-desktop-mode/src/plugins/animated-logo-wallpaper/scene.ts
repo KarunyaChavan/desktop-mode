@@ -97,20 +97,45 @@ const CONFIG = {
 };
 
 /**
- * Particle color palette. Weighted toward near-white for a clean logo
- * read, with a minority of tinted particles (light blue, cyan, a few
- * warmer WordPress-blue accents) so the field has subtle chromatic
- * depth under the additive-glow blend. Each entry is a packed 0xRRGGBB
- * tint — sprites multiply the white brush texture by this color.
+ * Particle color palette — Progress Pride flag, rendered as an
+ * inclusive field of color. Every stripe of the flag is represented:
+ * the classic six-color rainbow (red, orange, yellow, green, blue,
+ * purple), the trans flag (pink, light blue, white), and the POC
+ * inclusion stripe (brown).
+ *
+ * Weighted so the rainbow stripes dominate by count — that's what
+ * reads as "a rainbow of particles" — with the trans + POC colors
+ * sprinkled through at lower frequency. Each entry is a packed
+ * 0xRRGGBB tint; sprites multiply the white brush texture by this
+ * color so additive-blend overlaps cross-fade between hues.
+ *
+ * Colors sampled from the widely-shared Progress Pride flag palette
+ * (Daniel Quasar, 2018) at brightness boosted ~15% for readability
+ * against the dark backdrop.
+ *
+ * Note on representation: the Pride flag's black stripe is omitted
+ * here because additive blending (which gives us the luminous
+ * cluster-glow effect) renders pure-black particles as invisible —
+ * they can't add light to the backdrop. We keep the brown stripe
+ * present and use a rich warm palette for the POC inclusion
+ * symbolism; the black stripe is honored conceptually in the
+ * inclusion design but can't be made visually present under this
+ * blend mode without a separate render pass.
  */
 const PARTICLE_PALETTE = [
-	0xffffff, 0xffffff, 0xffffff, 0xffffff, // 40% pure white — majority
-	0xf0f6ff, 0xf0f6ff, // very-pale blue-white
-	0xdcecff, 0xdcecff, // pale sky
-	0xb9d8ff, // soft blue
-	0x8dc0ff, // sky blue
-	0x64d0ff, // cyan accent
-	0x4f9bff, // vivid wp-blue accent
+	// Rainbow six (higher weight — the flag's main body).
+	0xff3b3b, 0xff3b3b, // red
+	0xff8c2a, 0xff8c2a, // orange
+	0xffd93d, 0xffd93d, // yellow
+	0x4cd964, 0x4cd964, // green
+	0x3ea0ff, 0x3ea0ff, // blue
+	0xa86bff, 0xa86bff, // purple
+	// Trans flag stripes.
+	0xffb3c7, // pink
+	0x7fdfff, // light blue
+	0xffffff, // white
+	// POC inclusion stripe.
+	0xc8804a, // warm brown (boosted for visibility under additive)
 ];
 
 /** CSS radial-gradient used as the backdrop. Painted by the browser

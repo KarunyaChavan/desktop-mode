@@ -264,7 +264,14 @@ add_action( 'admin_init', 'wpdm_redirect_plain_admin_to_portal' );
 function wpdm_portal_entry_url( $user_id ) {
 	$session   = wpdm_get_session( $user_id );
 	$admin_url = admin_url();
-	$fallback  = admin_url( 'index.php' );
+
+	// User's configured default-window preference. When disabled, we
+	// still have to forward SOMEWHERE (the portal is an HTTP redirect),
+	// so we land on the Dashboard URL — but the shell detects the
+	// `enabled=false` state via the config and skips the auto-open,
+	// leaving the user with an empty desktop as they chose.
+	$default_window = wpdm_get_default_window( $user_id );
+	$fallback       = $default_window['url'];
 
 	if ( empty( $session['focused'] ) || empty( $session['windows'] ) ) {
 		return $fallback;

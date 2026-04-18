@@ -175,6 +175,20 @@ export interface DesktopConfig {
 	sessionUrl: string;
 	/** REST endpoint for media uploads (wp/v2/media). */
 	mediaUrl: string;
+	/** REST endpoint for saving the default-window preference. */
+	defaultWindowUrl: string;
+	/**
+	 * Current default-window preference.
+	 *
+	 * - `enabled: true`  — on portal entry with no saved session,
+	 *   open the window at `url`. First-run default is Dashboard.
+	 * - `enabled: false` — on portal entry with no saved session, do
+	 *   NOT auto-open anything. The user gets a clean empty desktop.
+	 *   `url` still carries a sensible fallback (typically Dashboard)
+	 *   that the portal forwards through at the HTTP layer; the shell
+	 *   uses the flag to decide whether to auto-open it.
+	 */
+	defaultWindow: { enabled: boolean; url: string };
 	/** Whether the user has the `upload_files` capability. */
 	canUpload: boolean;
 	/**

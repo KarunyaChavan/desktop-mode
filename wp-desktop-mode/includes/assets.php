@@ -52,10 +52,15 @@ function wpdm_register_assets() {
 	);
 
 	// Scripts.
+	//
+	// `wp-hooks` is a hard dependency: the shell exposes a WordPress-style
+	// filter/action API (`window.wp.hooks`) to third-party plugins. Core
+	// only pre-enqueues `wp-hooks` when a Gutenberg-adjacent dep pulls it
+	// in, so we can't rely on transitive loads — list it explicitly.
 	wp_register_script(
 		'wp-desktop',
 		WPDM_URL . 'assets/js/desktop' . $suffix . '.js',
-		array(),
+		array( 'wp-hooks' ),
 		$version,
 		true
 	);

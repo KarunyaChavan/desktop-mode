@@ -3,18 +3,29 @@
  *
  * Shell-level preferences that live outside WordPress: wallpaper, accent
  * color, dock size. Persisted to localStorage so they survive reloads
- * without a round-trip to the server; applied as CSS custom properties on
- * the desktop shell so every downstream rule (title bars, dock chips,
- * focus rings, window chrome) inherits the new values without any
- * per-rule plumbing.
+ * without a round-trip to the server; applied via the wallpaper layer +
+ * CSS custom properties on the desktop shell so every downstream rule
+ * (title bars, dock chips, focus rings, window chrome) inherits the new
+ * values without per-rule plumbing.
  *
- * Opens in a native desktop window — no iframe, direct DOM — as the
- * first real customer of the native-window path. Custom-image wallpapers
- * round-trip through the REST media endpoint, so Media Library becomes
- * the storage layer for user-uploaded backgrounds for free.
+ * As of 0.6.0, wallpapers are registry-driven: built-in presets live in
+ * `src/wallpapers/built-in.ts`, third-party plugins register via the
+ * public `wp.desktop.registerWallpaper()` / `wp-desktop.wallpapers`
+ * filter, and this file is responsible only for
+ *
+ *   - managing user preference state (current wallpaper id, accent,
+ *     dock size, custom-gradient colors/angle, custom-image reference)
+ *   - delegating wallpaper application to the WallpaperLayer
+ *   - rendering the OS Settings panel UI, iterating the registry to
+ *     produce swatches and hosting each selected wallpaper's optional
+ *     in-panel editor (`renderEditor`).
  *
  * @since 0.5.0
  */
+
+import type { WallpaperLayer } from './wallpapers/layer';
+import type { WallpaperDef, WallpaperTeardown } from './wallpapers/types';
+import * as registry from './wallpapers/registry';
 
 /** localStorage key under which preferences are serialized. */
 const STORAGE_KEY = 'wp-desktop-os-settings';
@@ -29,43 +40,14 @@ const MEDIA_PER_PAGE = 40;
 /** Debounce window for the library search input. */
 const SEARCH_DEBOUNCE_MS = 300;
 
-/** Built-in wallpaper presets. Custom gradient + image are extra ids. */
-const WALLPAPER_PRESETS = [
-	{
-		id: 'dark',
-		label: 'Graphite',
-		value: 'linear-gradient(135deg, #1d2327 0%, #2c3338 50%, #1d2327 100%)',
-	},
-	{
-		id: 'aurora',
-		label: 'Aurora',
-		value: 'linear-gradient(135deg, #1a2980 0%, #26d0ce 100%)',
-	},
-	{
-		id: 'sunset',
-		label: 'Sunset',
-		value: 'linear-gradient(135deg, #ff512f 0%, #dd2476 100%)',
-	},
-	{
-		id: 'forest',
-		label: 'Forest',
-		value: 'linear-gradient(135deg, #134e5e 0%, #71b280 100%)',
-	},
-	{
-		id: 'mono',
-		label: 'Mono',
-		value: '#1d2327',
-	},
-] as const;
+/** Built-in wallpaper id for the custom-gradient editor. */
+const CUSTOM_GRADIENT_ID = 'custom-gradient';
 
-type PresetWallpaperId = ( typeof WALLPAPER_PRESETS )[ number ][ 'id' ];
-type WallpaperId = PresetWallpaperId | 'custom-gradient' | 'custom-image';
+/** Built-in wallpaper id for uploaded/library-picked images. */
+const CUSTOM_IMAGE_ID = 'custom-image';
 
-const ALL_WALLPAPER_IDS: WallpaperId[] = [
-	...WALLPAPER_PRESETS.map( ( w ) => w.id ),
-	'custom-gradient',
-	'custom-image',
-];
+/** Default fallback id when a registered wallpaper isn't available. */
+const DEFAULT_WALLPAPER_ID = 'dark';
 
 /** Accent swatches. Applied to `--wp-admin-theme-color`. */
 const ACCENTS = [
@@ -103,7 +85,7 @@ interface CustomImage {
 
 /** Shape of the persisted settings. Defaults merged on load. */
 interface OsSettingsState {
-	wallpaper: WallpaperId;
+	wallpaper: string;
 	accent: AccentId;
 	dockSize: DockSizeId;
 	customGradient: CustomGradient;
@@ -118,7 +100,7 @@ interface OsSettingsState {
 }
 
 const DEFAULTS: OsSettingsState = {
-	wallpaper: 'dark',
+	wallpaper: DEFAULT_WALLPAPER_ID,
 	accent: 'wp-blue',
 	dockSize: 'default',
 	customGradient: {
@@ -160,22 +142,39 @@ export interface OsSettingsConfig {
 /**
  * OS Settings controller.
  *
- * Single instance per shell. Owns the persisted state, applies it to
- * the DOM, and renders the configuration panel into a native window's
- * body when requested.
+ * Single instance per shell. Owns the persisted state, delegates
+ * wallpaper painting to the {@link WallpaperLayer}, and renders the
+ * configuration panel into a native window's body on demand.
  */
 export class OsSettings {
 	private state: OsSettingsState;
 	private config: OsSettingsConfig;
+	private layer: WallpaperLayer;
 
-	constructor( config: OsSettingsConfig ) {
+	/**
+	 * Teardown for whichever wallpaper's `renderEditor` is currently
+	 * mounted in the OS Settings panel. Null when no editor is active.
+	 */
+	private activeEditorTeardown: WallpaperTeardown | null = null;
+
+	constructor( config: OsSettingsConfig, layer: WallpaperLayer ) {
 		this.config = config;
+		this.layer = layer;
 		this.state = this.load();
+
+		// Built-in dynamic wallpapers — registered here rather than in
+		// `built-in.ts` because their `resolveValue` and `renderEditor`
+		// close over state that lives on this instance.
+		this.registerCustomGradient();
+		this.registerCustomImageIfPresent();
 	}
 
 	/**
-	 * Apply the current state to the shell. Safe to call repeatedly —
-	 * subsequent calls just reset the same CSS variables.
+	 * Apply the current state: wallpaper via the layer, accent + dock
+	 * size as CSS custom properties on the shell.
+	 *
+	 * Safe to call repeatedly — calls into `layer.apply` dedupe via
+	 * generation counter; CSS property writes are idempotent.
 	 */
 	public apply(): void {
 		const shell = document.getElementById( 'wp-desktop-shell' );
@@ -183,7 +182,15 @@ export class OsSettings {
 			return;
 		}
 
-		shell.style.setProperty( '--wp-desktop-bg', this.resolveWallpaperValue() );
+		// Wallpaper — look up in the registry. Fall back to the default
+		// id if the saved wallpaper was registered by a plugin that's
+		// no longer loaded, or if the id was never valid.
+		const def = registry.get( this.state.wallpaper )
+			|| registry.get( DEFAULT_WALLPAPER_ID )
+			|| registry.all()[ 0 ];
+		if ( def ) {
+			this.layer.apply( def );
+		}
 
 		const accent = ACCENTS.find( ( a ) => a.id === this.state.accent ) ?? ACCENTS[ 0 ];
 		const dockSize = DOCK_SIZES.find( ( d ) => d.id === this.state.dockSize ) ?? DOCK_SIZES[ 1 ];
@@ -194,40 +201,18 @@ export class OsSettings {
 	}
 
 	/**
-	 * Compute the current wallpaper's `background` shorthand value.
-	 *
-	 * Falls back gracefully: custom-gradient uses the stored angle/colors;
-	 * custom-image falls back to the first preset if the uploaded image is
-	 * missing (e.g. the attachment was deleted from Media Library since
-	 * the preference was saved).
-	 */
-	private resolveWallpaperValue(): string {
-		if ( this.state.wallpaper === 'custom-gradient' ) {
-			const { from, to, angle } = this.state.customGradient;
-			return `linear-gradient(${ angle }deg, ${ from }, ${ to })`;
-		}
-
-		if ( this.state.wallpaper === 'custom-image' && this.state.customImage ) {
-			// Layered: the image on top, a graphite fallback behind it so a
-			// broken URL / slow load degrades to something dark instead of
-			// the browser's default white backdrop.
-			const safeUrl = encodeURI( this.state.customImage.url );
-			return `url("${ safeUrl }") center/cover no-repeat, #1d2327`;
-		}
-
-		const preset =
-			WALLPAPER_PRESETS.find( ( w ) => w.id === this.state.wallpaper ) ?? WALLPAPER_PRESETS[ 0 ];
-		return preset.value;
-	}
-
-	/**
 	 * Render the settings panel into the given native-window body.
 	 *
-	 * Builds three pickers (wallpaper, accent, dock size) and wires
+	 * Builds three sections (wallpaper, accent, dock size) and wires
 	 * each to save/apply on change. The panel is a one-shot build per
 	 * window open — closing and re-opening renders a fresh tree.
 	 */
 	public renderPanel( body: HTMLElement ): void {
+		// Tear down any editor mounted by a previous render — closing
+		// the OS Settings window doesn't necessarily fire our teardown
+		// path, so we do it defensively here.
+		this.teardownEditor();
+
 		body.classList.add( 'wp-desktop-os-settings' );
 		body.innerHTML = '';
 
@@ -262,97 +247,122 @@ export class OsSettings {
 		body.appendChild( footer );
 	}
 
+	// ------------------------------------------------------------------
+	// Built-in dynamic registrations
+	// ------------------------------------------------------------------
+
 	/**
-	 * Wallpaper section — preset grid, a "Custom gradient" swatch with an
-	 * inline editor that only appears when selected, and an image
-	 * uploader tile below.
+	 * Register the custom-gradient wallpaper. Its CSS value is computed
+	 * on every apply from user state (so live edits through the editor
+	 * repaint without re-registering), and its renderEditor hosts the
+	 * color + angle controls.
 	 */
+	private registerCustomGradient(): void {
+		registry.register( {
+			id: CUSTOM_GRADIENT_ID,
+			label: 'Custom gradient',
+			type: 'css',
+			preview: this.customGradientCss(),
+			resolveValue: () => this.customGradientCss(),
+			renderEditor: ( container ) => this.renderCustomGradientEditor( container ),
+		} );
+	}
+
+	/**
+	 * Register or update the custom-image wallpaper based on current
+	 * state. Called on boot and after every upload/library pick/remove
+	 * action so the registry entry tracks `state.customImage`.
+	 */
+	private registerCustomImageIfPresent(): void {
+		if ( ! this.state.customImage ) {
+			registry.unregister( CUSTOM_IMAGE_ID );
+			return;
+		}
+		const safeUrl = encodeURI( this.state.customImage.url );
+		const value = `url("${ safeUrl }") center/cover no-repeat, #1d2327`;
+		registry.register( {
+			id: CUSTOM_IMAGE_ID,
+			label: 'Custom image',
+			type: 'css',
+			value,
+			preview: value,
+		} );
+	}
+
+	// ------------------------------------------------------------------
+	// Wallpaper section — registry-driven grid + editor slot + image UI
+	// ------------------------------------------------------------------
+
 	private buildWallpaperSection( body: HTMLElement ): HTMLElement {
 		const section = this.buildSection(
 			'Wallpaper',
 			'The backdrop behind your windows. Pick a preset, mix your own gradient, or drop in an image.'
 		);
+
+		// Swatch grid — every registered wallpaper EXCEPT custom-image,
+		// which has its own dedicated upload/library UI below.
 		const grid = document.createElement( 'div' );
 		grid.className = 'wp-desktop-os-settings__grid wp-desktop-os-settings__grid--wallpapers';
 
-		// Inline gradient editor is created up front so we can reveal /
-		// hide it without re-rendering the whole section when the
-		// selection changes. The CSS animates the outer wrapper via a
-		// grid-template-rows transition (0fr → 1fr), driven by the
-		// `data-expanded` attribute we flip from the swatch handler.
-		const gradientEditor = this.buildCustomGradientEditor( () => {
-			this.selectWallpaper( 'custom-gradient', body );
-		} );
-		const toggleGradientEditor = () => {
-			gradientEditor.dataset.expanded =
-				this.state.wallpaper === 'custom-gradient' ? 'true' : 'false';
+		// Editor slot: a stable DOM position where the currently-
+		// selected wallpaper's `renderEditor` output lives. Uses the
+		// same `data-expanded` collapsing pattern the old gradient
+		// editor used (CSS animates grid-template-rows 0fr ↔ 1fr).
+		const editorSlot = document.createElement( 'div' );
+		editorSlot.className = 'wp-desktop-os-settings__editor-slot';
+		editorSlot.dataset.expanded = 'false';
+		const editorInner = document.createElement( 'div' );
+		editorInner.className = 'wp-desktop-os-settings__editor-slot-inner';
+		editorSlot.appendChild( editorInner );
+
+		const onSelect = ( def: WallpaperDef ): void => {
+			this.selectWallpaper( def.id, body );
+			this.syncEditorSlot( editorSlot, editorInner, def );
 		};
 
-		// Presets.
-		for ( const wp of WALLPAPER_PRESETS ) {
-			grid.appendChild(
-				this.buildWallpaperSwatch( wp.id, wp.label, wp.value, () => {
-					this.selectWallpaper( wp.id, body );
-					toggleGradientEditor();
-				} )
-			);
+		for ( const def of registry.all() ) {
+			if ( def.id === CUSTOM_IMAGE_ID ) {
+				// The upload/library UI below is the authoritative
+				// surface for custom-image; don't double up a swatch.
+				continue;
+			}
+			grid.appendChild( this.buildWallpaperSwatch( def, () => onSelect( def ) ) );
 		}
-
-		// Custom gradient swatch (shows the live preview of whatever
-		// colors the user has chosen so it always previews its own
-		// state, not a placeholder).
-		grid.appendChild(
-			this.buildWallpaperSwatch(
-				'custom-gradient',
-				'Custom gradient',
-				this.customGradientCss(),
-				() => {
-					this.selectWallpaper( 'custom-gradient', body );
-					toggleGradientEditor();
-				}
-			)
-		);
 
 		section.appendChild( grid );
 
-		// Gradient editor — collapsed (via `data-expanded`) unless the
-		// custom-gradient swatch is selected. Setting the attribute
-		// before the node enters the live DOM keeps the initial paint
-		// from triggering the expand animation on panel open.
-		gradientEditor.dataset.expanded =
-			this.state.wallpaper === 'custom-gradient' ? 'true' : 'false';
-		section.appendChild( gradientEditor );
+		// Initial editor state — mount the editor for the active
+		// wallpaper before the section enters the live DOM so the
+		// expansion doesn't animate on panel open.
+		const active = registry.get( this.state.wallpaper );
+		if ( active ) {
+			this.syncEditorSlot( editorSlot, editorInner, active );
+		}
+		section.appendChild( editorSlot );
 
-		// Custom-image section — tabbed between "Upload new" and
-		// "Media Library" so the user can either drop a fresh file or
-		// reach back into images they've already uploaded. Becomes a
-		// selectable swatch once any custom image is in state.
+		// Custom-image tabbed section — stays special-cased for v1
+		// (multi-pane upload + library UI isn't a natural fit for the
+		// single-container `renderEditor` contract yet).
 		section.appendChild( this.buildCustomImageSection( body ) );
 
 		return section;
 	}
 
-	/**
-	 * Build one clickable wallpaper preview tile. Factored out because we
-	 * use the same shape for presets and for the custom-gradient swatch.
-	 */
 	private buildWallpaperSwatch(
-		id: WallpaperId,
-		label: string,
-		backgroundValue: string,
+		def: WallpaperDef,
 		onClick: () => void
 	): HTMLElement {
 		const btn = document.createElement( 'button' );
 		btn.type = 'button';
 		btn.className = 'wp-desktop-os-settings__swatch wp-desktop-os-settings__swatch--wallpaper';
-		btn.setAttribute( 'aria-label', label );
-		btn.setAttribute( 'aria-pressed', this.state.wallpaper === id ? 'true' : 'false' );
-		btn.dataset.wallpaperId = id;
-		btn.style.background = backgroundValue;
+		btn.setAttribute( 'aria-label', def.label );
+		btn.setAttribute( 'aria-pressed', this.state.wallpaper === def.id ? 'true' : 'false' );
+		btn.dataset.wallpaperId = def.id;
+		btn.style.background = def.preview;
 
 		const labelEl = document.createElement( 'span' );
 		labelEl.className = 'wp-desktop-os-settings__swatch-label';
-		labelEl.textContent = label;
+		labelEl.textContent = def.label;
 		btn.appendChild( labelEl );
 
 		btn.addEventListener( 'click', onClick );
@@ -360,22 +370,16 @@ export class OsSettings {
 	}
 
 	/**
-	 * Mark a wallpaper id as selected and refresh the grid's pressed
-	 * state. Separate from the swatch handlers so the image uploader
-	 * (which lives outside the grid) can call it too.
+	 * Select a wallpaper by id. Updates state, persists, applies to the
+	 * shell, and refreshes the grid's aria-pressed attributes.
 	 */
-	private selectWallpaper( id: WallpaperId, body: HTMLElement ): void {
+	private selectWallpaper( id: string, body: HTMLElement ): void {
 		this.state.wallpaper = id;
 		this.save();
 		this.apply();
 		this.refreshWallpaperPressedState( body );
 	}
 
-	/**
-	 * Update `aria-pressed` on every wallpaper swatch + image tile so the
-	 * UI reflects `state.wallpaper`. Cheaper than re-rendering the whole
-	 * section and keeps focus on whichever button the user clicked.
-	 */
 	private refreshWallpaperPressedState( body: HTMLElement ): void {
 		body.querySelectorAll<HTMLElement>( '[data-wallpaper-id]' ).forEach( ( el ) => {
 			el.setAttribute(
@@ -386,22 +390,78 @@ export class OsSettings {
 	}
 
 	/**
-	 * Inline editor for the custom gradient — two color inputs and an
-	 * angle slider. Changing any field updates state live (the
-	 * `input` event, not `change`) so the desktop repaints as the user
-	 * drags the angle slider or scrubs through the color picker.
+	 * Mount the given wallpaper's editor into the editor slot, tearing
+	 * down any prior editor first. If the wallpaper has no editor, the
+	 * slot collapses.
 	 */
-	private buildCustomGradientEditor( onApply: () => void ): HTMLElement {
-		// Outer: the collapsible frame — CSS animates grid-template-rows
-		// + margin + opacity based on `data-expanded`. Inner: the actual
-		// editor chrome (padding, border, background) so overflow
-		// clipping during the reveal doesn't eat the border-radius.
-		const wrap = document.createElement( 'div' );
-		wrap.className = 'wp-desktop-os-settings__gradient-editor';
-		wrap.dataset.expanded = 'false';
+	private syncEditorSlot(
+		slot: HTMLElement,
+		inner: HTMLElement,
+		def: WallpaperDef
+	): void {
+		this.teardownEditor();
+		inner.innerHTML = '';
 
-		const inner = document.createElement( 'div' );
-		inner.className = 'wp-desktop-os-settings__gradient-editor-inner';
+		if ( ! def.renderEditor ) {
+			slot.dataset.expanded = 'false';
+			return;
+		}
+
+		const ctx = {
+			id: def.id,
+			pluginUrl: '',
+			prefersReducedMotion:
+				typeof window.matchMedia === 'function' &&
+				window.matchMedia( '( prefers-reduced-motion: reduce )' ).matches,
+			visible: ! document.hidden,
+		};
+
+		try {
+			const result = def.renderEditor( inner, ctx );
+			if ( isPromise( result ) ) {
+				result.then( ( teardown ) => {
+					this.activeEditorTeardown = teardown;
+				} );
+			} else {
+				this.activeEditorTeardown = result;
+			}
+		} catch ( err ) {
+			if ( typeof console !== 'undefined' ) {
+				console.error(
+					`[wp-desktop-mode] Wallpaper "${ def.id }" renderEditor threw:`,
+					err
+				);
+			}
+		}
+
+		slot.dataset.expanded = 'true';
+	}
+
+	private teardownEditor(): void {
+		if ( this.activeEditorTeardown ) {
+			try {
+				this.activeEditorTeardown();
+			} catch ( err ) {
+				if ( typeof console !== 'undefined' ) {
+					console.error(
+						'[wp-desktop-mode] Wallpaper editor teardown threw:',
+						err
+					);
+				}
+			}
+			this.activeEditorTeardown = null;
+		}
+	}
+
+	// ------------------------------------------------------------------
+	// Custom gradient editor — implements `renderEditor` for the
+	// built-in custom-gradient wallpaper. Color + angle inputs write
+	// to state; every change updates the swatch preview and re-applies.
+	// ------------------------------------------------------------------
+
+	private renderCustomGradientEditor( container: HTMLElement ): WallpaperTeardown {
+		container.classList.add( 'wp-desktop-os-settings__gradient-editor-inner' );
+		container.innerHTML = '';
 
 		const row = document.createElement( 'div' );
 		row.className = 'wp-desktop-os-settings__gradient-row';
@@ -429,26 +489,27 @@ export class OsSettings {
 			return field;
 		};
 
+		const onGradientChange = (): void => {
+			this.save();
+			this.apply();
+			this.syncGradientPreviewSwatch( container );
+		};
+
 		row.appendChild(
 			buildColorField( 'From', this.state.customGradient.from, ( value ) => {
 				this.state.customGradient.from = value;
-				this.save();
-				onApply();
-				this.syncGradientPreviewSwatch( wrap );
+				onGradientChange();
 			} )
 		);
 		row.appendChild(
 			buildColorField( 'To', this.state.customGradient.to, ( value ) => {
 				this.state.customGradient.to = value;
-				this.save();
-				onApply();
-				this.syncGradientPreviewSwatch( wrap );
+				onGradientChange();
 			} )
 		);
 
-		inner.appendChild( row );
+		container.appendChild( row );
 
-		// Angle slider with live numeric readout.
 		const angleField = document.createElement( 'label' );
 		angleField.className = 'wp-desktop-os-settings__gradient-angle';
 
@@ -477,30 +538,20 @@ export class OsSettings {
 			}
 			this.state.customGradient.angle = n;
 			angleValue.textContent = `${ n }°`;
-			this.save();
-			onApply();
-			this.syncGradientPreviewSwatch( wrap );
+			onGradientChange();
 		} );
 
-		inner.appendChild( angleField );
-		wrap.appendChild( inner );
+		container.appendChild( angleField );
 
-		return wrap;
+		// Empty teardown — the editor holds no long-lived resources
+		// (timers, observers) and the container is cleared by the slot.
+		return () => { /* noop */ };
 	}
 
-	/**
-	 * Keep the "Custom gradient" swatch's preview background in sync with
-	 * the live-edited gradient. Called from each color/angle input so the
-	 * user sees the same swatch they'll be selecting from.
-	 *
-	 * Walks up from the editor element to find its enclosing section so
-	 * the lookup stays local to this panel — important because the same
-	 * class names could appear elsewhere if a plugin ever embeds us.
-	 */
 	private syncGradientPreviewSwatch( editorEl: HTMLElement ): void {
 		const section = editorEl.closest( '.wp-desktop-os-settings__section' );
 		const preview = section?.querySelector<HTMLElement>(
-			'[data-wallpaper-id="custom-gradient"]'
+			`[data-wallpaper-id="${ CUSTOM_GRADIENT_ID }"]`
 		);
 		if ( preview ) {
 			preview.style.background = this.customGradientCss();
@@ -512,15 +563,10 @@ export class OsSettings {
 		return `linear-gradient(${ angle }deg, ${ from }, ${ to })`;
 	}
 
-	/**
-	 * Build the custom-image section: a tabbed widget that lets the user
-	 * either upload a new image or pick one from the Media Library.
-	 *
-	 * The "Upload new" tab is only offered when the user holds the
-	 * `upload_files` capability; "Media Library" is always available
-	 * because browsing media only requires the standard `read` cap plus
-	 * whatever Core enforces on individual attachments.
-	 */
+	// ------------------------------------------------------------------
+	// Custom-image section — upload + library tabs (unchanged from v0.5)
+	// ------------------------------------------------------------------
+
 	private buildCustomImageSection( body: HTMLElement ): HTMLElement {
 		const wrap = document.createElement( 'div' );
 		wrap.className = 'wp-desktop-os-settings__uploader';
@@ -530,9 +576,6 @@ export class OsSettings {
 		heading.textContent = 'Or use your own image';
 		wrap.appendChild( heading );
 
-		// Tabs — rendered only when both panes exist. If the user can't
-		// upload we drop straight into the library pane without a tab
-		// strip so the single-option UI doesn't read like a dead tab.
 		const tabList = document.createElement( 'div' );
 		tabList.className = 'wp-desktop-os-settings__tabs';
 		tabList.setAttribute( 'role', 'tablist' );
@@ -591,19 +634,15 @@ export class OsSettings {
 		return wrap;
 	}
 
-	/**
-	 * Render the "Upload new" pane into the given container. Replaces
-	 * any prior contents so tab switching stays cheap.
-	 */
 	private renderUploadPane( pane: HTMLElement, body: HTMLElement ): void {
 		pane.innerHTML = '';
 
 		const tile = document.createElement( 'div' );
 		tile.className = 'wp-desktop-os-settings__upload-tile';
-		tile.dataset.wallpaperId = 'custom-image';
+		tile.dataset.wallpaperId = CUSTOM_IMAGE_ID;
 		tile.setAttribute(
 			'aria-pressed',
-			this.state.wallpaper === 'custom-image' ? 'true' : 'false'
+			this.state.wallpaper === CUSTOM_IMAGE_ID ? 'true' : 'false'
 		);
 
 		const fileInput = document.createElement( 'input' );
@@ -623,21 +662,12 @@ export class OsSettings {
 		pane.appendChild( tile );
 	}
 
-	/**
-	 * Render the "Media Library" pane into the given container.
-	 *
-	 * Owns its own in-pane state (search query, HD toggle live value,
-	 * current page, loaded items) via closure. Every tab re-activation
-	 * starts fresh — simpler than persisting pagination across tab
-	 * swaps and the payload is small.
-	 */
 	private renderLibraryPane( pane: HTMLElement, body: HTMLElement ): void {
 		pane.innerHTML = '';
 
 		const library = document.createElement( 'div' );
 		library.className = 'wp-desktop-os-settings__library';
 
-		// Toolbar: search + HD toggle.
 		const toolbar = document.createElement( 'div' );
 		toolbar.className = 'wp-desktop-os-settings__library-toolbar';
 
@@ -679,7 +709,6 @@ export class OsSettings {
 
 		pane.appendChild( library );
 
-		// In-pane paging / filter state.
 		let query = '';
 		let page = 0;
 		let totalPages = 0;
@@ -725,8 +754,6 @@ export class OsSettings {
 			loading = true;
 			updateMeta();
 
-			// Skeleton placeholders while the first page lands — helps
-			// the pane feel responsive on slow connections.
 			if ( page === 0 ) {
 				grid.innerHTML = '';
 				for ( let i = 0; i < 8; i++ ) {
@@ -765,7 +792,6 @@ export class OsSettings {
 			void loadNextPage();
 		};
 
-		// Debounced search — reset pagination and refetch.
 		let searchTimer: number | null = null;
 		search.addEventListener( 'input', () => {
 			if ( searchTimer !== null ) {
@@ -778,11 +804,6 @@ export class OsSettings {
 			}, SEARCH_DEBOUNCE_MS ) as unknown as number;
 		} );
 
-		// HD toggle — the server applies the same filter when our opt-in
-		// params are sent, so flipping this refetches from page 1 to
-		// pick up images the previous request narrowed out. The local
-		// re-filter in `visibleLibraryItems` still runs to catch stray
-		// mis-stamped rows during backfill.
 		hdInput.addEventListener( 'change', () => {
 			this.state.libraryHdOnly = hdInput.checked;
 			this.save();
@@ -793,14 +814,9 @@ export class OsSettings {
 			void loadNextPage();
 		} );
 
-		// Initial fetch.
 		void loadNextPage();
 	}
 
-	/**
-	 * Apply the HD filter if it's enabled. Factored out so the toggle
-	 * can re-filter without re-fetching.
-	 */
 	private visibleLibraryItems( items: MediaItem[] ): MediaItem[] {
 		if ( ! this.state.libraryHdOnly ) {
 			return items;
@@ -812,10 +828,6 @@ export class OsSettings {
 		);
 	}
 
-	/**
-	 * Build one thumbnail tile for a REST media item. Clicking selects
-	 * the image as the custom wallpaper.
-	 */
 	private buildLibraryTile( item: MediaItem, body: HTMLElement ): HTMLElement {
 		const tile = document.createElement( 'button' );
 		tile.type = 'button';
@@ -823,16 +835,13 @@ export class OsSettings {
 		tile.dataset.mediaId = String( item.id );
 
 		const isSelected =
-			this.state.wallpaper === 'custom-image' &&
+			this.state.wallpaper === CUSTOM_IMAGE_ID &&
 			this.state.customImage?.id === item.id;
 		tile.setAttribute( 'aria-pressed', isSelected ? 'true' : 'false' );
 		if ( isSelected ) {
 			tile.classList.add( 'wp-desktop-os-settings__library-tile--selected' );
 		}
 
-		// Prefer the medium size for the grid — big enough to read, small
-		// enough to keep the pane snappy. Fall back to thumbnail, then
-		// to the full image if nothing else exists.
 		const sizes = item.media_details.sizes || {};
 		const thumbUrl =
 			sizes.medium?.source_url ||
@@ -856,12 +865,11 @@ export class OsSettings {
 
 		tile.addEventListener( 'click', () => {
 			this.state.customImage = { id: item.id, url: item.source_url };
-			this.state.wallpaper = 'custom-image';
+			this.state.wallpaper = CUSTOM_IMAGE_ID;
+			this.registerCustomImageIfPresent();
 			this.save();
 			this.apply();
 			this.refreshWallpaperPressedState( body );
-			// Refresh the library grid's selected highlighting without a
-			// full re-fetch.
 			const grid = tile.parentElement;
 			if ( grid ) {
 				grid.querySelectorAll<HTMLElement>( '[data-media-id]' ).forEach( ( el ) => {
@@ -878,16 +886,6 @@ export class OsSettings {
 		return tile;
 	}
 
-	/**
-	 * Fetch one page of image attachments from the REST API. Filters
-	 * `_fields` down to the data we actually render, sorts newest-first,
-	 * and reads `X-WP-TotalPages` to drive the Load more button.
-	 *
-	 * Dimension filtering is intentionally client-side: Core's REST
-	 * doesn't let us filter by `media_details.width` without a custom
-	 * query var, and we'd rather not force each install to register
-	 * one.
-	 */
 	private async fetchMediaPage(
 		page: number,
 		search: string
@@ -905,12 +903,6 @@ export class OsSettings {
 		if ( search ) {
 			url.searchParams.set( 'search', search );
 		}
-		// Server-side dimension filter — the plugin registers these on
-		// the media collection so we can ask the DB to do the heavy
-		// lifting instead of paginating through thousands of icons. The
-		// client-side filter in `visibleLibraryItems` still runs as a
-		// safety net in case an older attachment's stamped meta is
-		// stale.
 		if ( this.state.libraryHdOnly ) {
 			url.searchParams.set( 'wpdm_min_width', String( HD_MIN_WIDTH ) );
 			url.searchParams.set( 'wpdm_min_height', String( HD_MIN_HEIGHT ) );
@@ -940,11 +932,6 @@ export class OsSettings {
 		return { items: items.filter( isUsableImage ), totalPages: totalPages || 1 };
 	}
 
-	/**
-	 * Paint the image uploader tile based on `state.customImage`. Also
-	 * wires the click / drag listeners — factored into its own method so
-	 * swapping empty ↔ filled states is a single call.
-	 */
 	private renderUploadTile(
 		tile: HTMLElement,
 		fileInput: HTMLInputElement,
@@ -969,12 +956,13 @@ export class OsSettings {
 			remove.addEventListener( 'click', ( e ) => {
 				e.stopPropagation();
 				this.state.customImage = null;
-				// If the image was the active wallpaper, fall back to the
-				// first preset so the user isn't left with an unreadable
-				// transparent desktop the moment they hit remove.
-				if ( this.state.wallpaper === 'custom-image' ) {
-					this.state.wallpaper = WALLPAPER_PRESETS[ 0 ].id;
+				// If the image was the active wallpaper, fall back to
+				// the default preset so the user isn't left with an
+				// unreadable blank desktop the moment they hit remove.
+				if ( this.state.wallpaper === CUSTOM_IMAGE_ID ) {
+					this.state.wallpaper = DEFAULT_WALLPAPER_ID;
 				}
+				this.registerCustomImageIfPresent();
 				this.save();
 				this.apply();
 				this.renderUploadTile( tile, fileInput, body );
@@ -994,26 +982,17 @@ export class OsSettings {
 			tile.setAttribute( 'aria-label', 'Upload a wallpaper image' );
 		}
 
-		// Click routes to the file picker. Clicks on the "Remove" button
-		// bubble through stopPropagation above so this doesn't also open
-		// a picker when the user just wants to remove.
 		tile.onclick = () => {
 			if ( tile.classList.contains( 'wp-desktop-os-settings__upload-tile--busy' ) ) {
 				return;
 			}
-			// If an image is already set, clicking the tile selects it
-			// as the active wallpaper rather than re-prompting for a
-			// new upload (users who want to replace it can hit Remove
-			// first, or just drop a new file on top).
 			if ( this.state.customImage ) {
-				this.selectWallpaper( 'custom-image', body );
+				this.selectWallpaper( CUSTOM_IMAGE_ID, body );
 				return;
 			}
 			fileInput.click();
 		};
 
-		// Dragover / drop — needed on both empty and filled tiles so the
-		// user can replace an existing image by dropping a new one.
 		tile.ondragover = ( e ) => {
 			e.preventDefault();
 			tile.classList.add( 'wp-desktop-os-settings__upload-tile--dragover' );
@@ -1031,11 +1010,6 @@ export class OsSettings {
 		};
 	}
 
-	/**
-	 * Validate + upload one dropped/chosen file. Errors surface as
-	 * transient text inside the tile so the user never has to open
-	 * DevTools to learn why their upload didn't stick.
-	 */
 	private async handleImageFile(
 		file: File,
 		tile: HTMLElement,
@@ -1054,12 +1028,10 @@ export class OsSettings {
 		try {
 			const media = await this.uploadImage( file );
 			this.state.customImage = { id: media.id, url: media.url };
-			this.state.wallpaper = 'custom-image';
+			this.state.wallpaper = CUSTOM_IMAGE_ID;
+			this.registerCustomImageIfPresent();
 			this.save();
 			this.apply();
-			// Re-find the file input — the busy state wiped our inner
-			// DOM. Easier than juggling state is to fully re-render the
-			// uploader section on success.
 			const fileInput = tile.parentElement?.querySelector<HTMLInputElement>(
 				'.wp-desktop-os-settings__file-input'
 			);
@@ -1075,10 +1047,6 @@ export class OsSettings {
 		}
 	}
 
-	/**
-	 * Floats a temporary error message inside the tile. Auto-clears
-	 * after a few seconds so it doesn't linger past the user's attention.
-	 */
 	private showUploadError( tile: HTMLElement, message: string ): void {
 		let err = tile.querySelector<HTMLElement>( '.wp-desktop-os-settings__upload-error' );
 		if ( ! err ) {
@@ -1093,18 +1061,6 @@ export class OsSettings {
 		}, 4000 );
 	}
 
-	/**
-	 * POST a single image to the WP REST media endpoint.
-	 *
-	 * Using the raw-binary (Content-Disposition header) variant rather
-	 * than multipart so we don't need a FormData boundary or depend on
-	 * the server parsing multipart uploads — the REST media endpoint
-	 * accepts both, and raw-binary is simpler to reason about.
-	 *
-	 * Returns the attachment's id and source URL; throws on HTTP error
-	 * with the server's `message` field preserved so the tile can show
-	 * the real reason (size, mime, cap) instead of a generic "Failed".
-	 */
 	private async uploadImage( file: File ): Promise<{ id: number; url: string }> {
 		const response = await fetch( this.config.mediaUrl, {
 			method: 'POST',
@@ -1136,6 +1092,10 @@ export class OsSettings {
 		};
 		return { id: data.id, url: data.source_url };
 	}
+
+	// ------------------------------------------------------------------
+	// Accent + dock-size sections (unchanged)
+	// ------------------------------------------------------------------
 
 	private buildAccentSection(): HTMLElement {
 		const section = this.buildSection(
@@ -1205,9 +1165,6 @@ export class OsSettings {
 		return section;
 	}
 
-	/**
-	 * Helper: builds a `<section>` wrapper with a heading + description.
-	 */
 	private buildSection( title: string, description: string ): HTMLElement {
 		const section = document.createElement( 'section' );
 		section.className = 'wp-desktop-os-settings__section';
@@ -1225,10 +1182,6 @@ export class OsSettings {
 		return section;
 	}
 
-	/**
-	 * Flip the pressed state on whichever button in the group matches the
-	 * given id. Extracted so each picker can stay terse.
-	 */
 	private refreshSelected(
 		container: HTMLElement,
 		id: string,
@@ -1239,11 +1192,10 @@ export class OsSettings {
 		} );
 	}
 
-	/**
-	 * Read state from localStorage, merged over defaults. Invalid or
-	 * unknown values fall back silently — a user editing their storage
-	 * by hand shouldn't brick the panel.
-	 */
+	// ------------------------------------------------------------------
+	// Persistence
+	// ------------------------------------------------------------------
+
 	private load(): OsSettingsState {
 		try {
 			const raw = window.localStorage.getItem( STORAGE_KEY );
@@ -1252,10 +1204,13 @@ export class OsSettings {
 			}
 			const parsed = JSON.parse( raw ) as Partial<OsSettingsState>;
 			return {
+				// `wallpaper` is now any non-empty string — registry
+				// membership is validated at apply time rather than
+				// here, so a plugin that gets enqueued late still
+				// delivers its persisted selection.
 				wallpaper:
-					typeof parsed.wallpaper === 'string' &&
-					ALL_WALLPAPER_IDS.includes( parsed.wallpaper as WallpaperId )
-						? ( parsed.wallpaper as WallpaperId )
+					typeof parsed.wallpaper === 'string' && parsed.wallpaper !== ''
+						? parsed.wallpaper
 						: DEFAULTS.wallpaper,
 				accent: ACCENTS.some( ( a ) => a.id === parsed.accent )
 					? ( parsed.accent as AccentId )
@@ -1284,7 +1239,6 @@ export class OsSettings {
 	}
 }
 
-/** Deep-ish clone so runtime mutation can't leak into DEFAULTS. */
 function structuredDefaults(): OsSettingsState {
 	return {
 		...DEFAULTS,
@@ -1293,11 +1247,6 @@ function structuredDefaults(): OsSettingsState {
 	};
 }
 
-/**
- * Coerce a stored `customGradient` payload into a valid shape — any field
- * missing or malformed is replaced with the corresponding default.
- * Keeps `apply()` free of null checks.
- */
 function sanitizeCustomGradient( raw: unknown ): CustomGradient {
 	if ( ! raw || typeof raw !== 'object' ) {
 		return { ...DEFAULTS.customGradient };
@@ -1331,23 +1280,11 @@ function isHexColor( value: unknown ): boolean {
 	return typeof value === 'string' && /^#[0-9a-f]{3,8}$/i.test( value );
 }
 
-/**
- * Strip anything a server might trip on while still preserving enough of
- * the original filename to keep Media Library grids readable. Allows
- * ASCII letters/numbers/dot/dash/underscore — everything else becomes
- * a hyphen. Empty result falls back to "wallpaper".
- */
 function sanitizeFilename( name: string ): string {
 	const cleaned = name.replace( /[^a-zA-Z0-9._-]+/g, '-' ).replace( /^-+|-+$/g, '' );
 	return cleaned || 'wallpaper';
 }
 
-/**
- * Defensive filter — the REST endpoint occasionally returns records with
- * missing / zero dimensions (e.g. SVGs or uploads where the attachment
- * metadata never regenerated). Those break HD filtering and render as
- * broken tiles; better to drop them.
- */
 function isUsableImage( item: MediaItem ): boolean {
 	if ( ! item || typeof item.id !== 'number' || ! item.source_url ) {
 		return false;
@@ -1362,11 +1299,6 @@ function isUsableImage( item: MediaItem ): boolean {
 	);
 }
 
-/**
- * Quick-and-correct text extraction for REST `title.rendered` values,
- * which arrive with Core's HTML-entity encoding ("&amp;", "&#8217;").
- * We let the browser's parser decode them, then read textContent.
- */
 function stripHtml( html: string ): string {
 	if ( ! html ) {
 		return '';
@@ -1374,4 +1306,12 @@ function stripHtml( html: string ): string {
 	const el = document.createElement( 'div' );
 	el.innerHTML = html;
 	return el.textContent?.trim() || '';
+}
+
+function isPromise<T>( value: unknown ): value is Promise<T> {
+	return (
+		!! value &&
+		typeof value === 'object' &&
+		typeof ( value as { then?: unknown } ).then === 'function'
+	);
 }

@@ -33,6 +33,116 @@ var wpDesktop = function(exports) {
   function sanitizeClassName(value) {
     return value.replace(/[^a-zA-Z0-9_-]/g, "");
   }
+  function getWpHooks() {
+    const hooks = window.wp?.hooks;
+    if (!hooks) {
+      throw new Error(
+        "[wp-desktop-mode] `window.wp.hooks` is not available. The plugin declares `wp-hooks` as a script dependency; if you are seeing this error, verify the enqueue order."
+      );
+    }
+    return hooks;
+  }
+  function addAction(hookName, namespace, callback, priority) {
+    getWpHooks().addAction(
+      hookName,
+      namespace,
+      callback,
+      priority
+    );
+  }
+  function applyFilters(hookName, value, ...args) {
+    return getWpHooks().applyFilters(hookName, value, ...args);
+  }
+  function doAction(hookName, ...args) {
+    getWpHooks().doAction(hookName, ...args);
+  }
+  function didAction(hookName) {
+    return getWpHooks().didAction(hookName);
+  }
+  function rawHooks() {
+    return getWpHooks();
+  }
+  const HOOKS = {
+    /** Action, fires once after shell boot; plugins register here. */
+    INIT: "wp-desktop.init",
+    /** Filter, receives the wallpaper registry array. */
+    WALLPAPERS: "wp-desktop.wallpapers",
+    /** Action before a canvas wallpaper mounts. */
+    WALLPAPER_MOUNTING: "wp-desktop.wallpaper.mounting",
+    /** Action after a canvas wallpaper mounts successfully. */
+    WALLPAPER_MOUNTED: "wp-desktop.wallpaper.mounted",
+    /** Action before a canvas wallpaper tears down. */
+    WALLPAPER_UNMOUNTING: "wp-desktop.wallpaper.unmounting",
+    /** Action when a canvas wallpaper's mount throws / rejects. */
+    WALLPAPER_MOUNT_FAILED: "wp-desktop.wallpaper.mount-failed",
+    /** Action mirroring document.visibilitychange for active canvas wallpapers. */
+    WALLPAPER_VISIBILITY: "wp-desktop.wallpaper.visibility",
+    // ------------------------------------------------------------------
+    // Window lifecycle actions. All payloads share a `windowId: string`
+    // field; additional fields are documented per-hook in the JS
+    // reference. These mirror the existing `wp-desktop-window-*`
+    // CustomEvents but ship under the hook bus so plugins can use one
+    // idiomatic API for everything the shell emits.
+    // ------------------------------------------------------------------
+    /** Action, fires when a window is added to the stack. */
+    WINDOW_OPENED: "wp-desktop.window.opened",
+    /** Action, fires when a window is removed from the stack. */
+    WINDOW_CLOSED: "wp-desktop.window.closed",
+    /** Action, fires when focus changes to a different window. */
+    WINDOW_FOCUSED: "wp-desktop.window.focused",
+    /** Action, fires when a window is minimized. */
+    WINDOW_MINIMIZED: "wp-desktop.window.minimized",
+    /** Action, fires when a window is restored from minimized. */
+    WINDOW_RESTORED: "wp-desktop.window.restored",
+    /** Action, fires when a window is maximized (fills desktop area). */
+    WINDOW_MAXIMIZED: "wp-desktop.window.maximized",
+    /** Action, fires when a window exits maximized state. */
+    WINDOW_UNMAXIMIZED: "wp-desktop.window.unmaximized",
+    /** Action, fires when a window enters fullscreen / focus mode. */
+    WINDOW_FULLSCREEN_ENTERED: "wp-desktop.window.fullscreen-entered",
+    /** Action, fires when a window exits fullscreen / focus mode. */
+    WINDOW_FULLSCREEN_EXITED: "wp-desktop.window.fullscreen-exited",
+    /** Action, fires at drag-end with the final `{ x, y }` position. */
+    WINDOW_MOVED: "wp-desktop.window.moved",
+    /** Action, fires at resize-end with the final `{ width, height }`. */
+    WINDOW_RESIZED: "wp-desktop.window.resized",
+    /** Action, fires when title-bar drag begins. */
+    WINDOW_DRAG_START: "wp-desktop.window.drag-start",
+    /** Action, fires when title-bar drag ends. Payload mirrors WINDOW_MOVED. */
+    WINDOW_DRAG_END: "wp-desktop.window.drag-end",
+    /** Action, fires when the resize handle is first pressed. */
+    WINDOW_RESIZE_START: "wp-desktop.window.resize-start",
+    /** Action, fires when resize completes. Payload mirrors WINDOW_RESIZED. */
+    WINDOW_RESIZE_END: "wp-desktop.window.resize-end",
+    /** Action, fires when the user "detaches" a window to a classic tab. */
+    WINDOW_DETACHED: "wp-desktop.window.detached",
+    /** Action, fires when iframe title updates change the window title. */
+    WINDOW_TITLE_CHANGED: "wp-desktop.window.title-changed",
+    // ------------------------------------------------------------------
+    // Shell-level lifecycle actions.
+    // ------------------------------------------------------------------
+    /**
+     * Action, fires (debounced) after the browser viewport stops
+     * resizing. Payload `{ width, height }` describes the shell's
+     * bounding rect — plugins that render canvas-driven UIs hook here
+     * to adjust their render surface.
+     */
+    SHELL_RESIZED: "wp-desktop.shell.resized",
+    /**
+     * Action mirroring `document.visibilitychange` for the shell as a
+     * whole. Payload `{ state: 'visible' | 'hidden' }`. Different from
+     * the wallpaper-specific visibility action in that it fires
+     * regardless of which wallpaper (if any) is active.
+     */
+    SHELL_VISIBILITY: "wp-desktop.shell.visibility"
+  };
+  function whenReady(cb) {
+    if (didAction(HOOKS.INIT) > 0) {
+      Promise.resolve().then(cb);
+      return;
+    }
+    addAction(HOOKS.INIT, "wp-desktop-mode/when-ready", cb);
+  }
   const EDGE_MARGIN = 8;
   function withChromelessParam(url) {
     const parsed = new URL(url, window.location.origin);
@@ -499,6 +609,7 @@ var wpDesktop = function(exports) {
       this.dragOffsetY = e.clientY - this.element.offsetTop;
       this.titleBar.setPointerCapture(e.pointerId);
       this.element.classList.add("wp-desktop-window--dragging");
+      doAction(HOOKS.WINDOW_DRAG_START, { windowId: this.id });
       const onDragMove = (ev) => {
         if (!this.isDragging) {
           return;
@@ -524,6 +635,13 @@ var wpDesktop = function(exports) {
         this.titleBar.removeEventListener("pointercancel", onDragEnd);
         this.titleBar.removeEventListener("lostpointercapture", onDragEnd);
         this.emitChange("moved");
+        const payload = {
+          windowId: this.id,
+          x: this.element.offsetLeft,
+          y: this.element.offsetTop
+        };
+        doAction(HOOKS.WINDOW_DRAG_END, payload);
+        doAction(HOOKS.WINDOW_MOVED, payload);
       };
       this.titleBar.addEventListener("pointermove", onDragMove);
       this.titleBar.addEventListener("pointerup", onDragEnd);
@@ -546,6 +664,7 @@ var wpDesktop = function(exports) {
       this.resizeStartH = this.element.offsetHeight;
       e.target.setPointerCapture(e.pointerId);
       this.element.classList.add("wp-desktop-window--resizing");
+      doAction(HOOKS.WINDOW_RESIZE_START, { windowId: this.id });
       const onResizeMove = (ev) => {
         if (!this.isResizing) {
           return;
@@ -567,6 +686,13 @@ var wpDesktop = function(exports) {
         handle2.removeEventListener("pointercancel", onResizeEnd);
         handle2.removeEventListener("lostpointercapture", onResizeEnd);
         this.emitChange("resized");
+        const payload = {
+          windowId: this.id,
+          width: this.element.offsetWidth,
+          height: this.element.offsetHeight
+        };
+        doAction(HOOKS.WINDOW_RESIZE_END, payload);
+        doAction(HOOKS.WINDOW_RESIZED, payload);
       };
       const handle = e.target;
       handle.addEventListener("pointermove", onResizeMove);
@@ -591,6 +717,7 @@ var wpDesktop = function(exports) {
      */
     setTitle(title) {
       this.titleEl.textContent = title;
+      doAction(HOOKS.WINDOW_TITLE_CHANGED, { windowId: this.id, title });
     }
     /**
      * Minimize the window.
@@ -608,6 +735,7 @@ var wpDesktop = function(exports) {
       }
       this.onMinimize?.(this);
       this.emitChange("state");
+      doAction(HOOKS.WINDOW_MINIMIZED, { windowId: this.id });
     }
     /**
      * Restore the window from minimized state.
@@ -616,12 +744,16 @@ var wpDesktop = function(exports) {
       if (this.iframe) {
         this.iframe.style.visibility = "";
       }
+      const wasMinimized = this.state === "minimized";
       this.element.classList.remove("wp-desktop-window--minimized");
-      if (this.state === "minimized") {
+      if (wasMinimized) {
         this.state = "normal";
       }
       this.onFocusRequest?.(this);
       this.emitChange("state");
+      if (wasMinimized) {
+        doAction(HOOKS.WINDOW_RESTORED, { windowId: this.id });
+      }
     }
     /**
      * Toggle between maximized and normal states.
@@ -640,6 +772,8 @@ var wpDesktop = function(exports) {
           this.element.style.height = `${this.savedGeometry.height}px`;
         }
         this.state = "normal";
+        this.emitChange("state");
+        doAction(HOOKS.WINDOW_UNMAXIMIZED, { windowId: this.id });
       } else {
         this.savedGeometry = {
           x: this.element.offsetLeft,
@@ -653,8 +787,9 @@ var wpDesktop = function(exports) {
         this.element.style.width = `${parent.clientWidth}px`;
         this.element.style.height = `${parent.clientHeight}px`;
         this.state = "maximized";
+        this.emitChange("state");
+        doAction(HOOKS.WINDOW_MAXIMIZED, { windowId: this.id });
       }
-      this.emitChange("state");
     }
     /**
      * Toggle fullscreen ("focus") mode — the window covers the entire
@@ -696,6 +831,10 @@ var wpDesktop = function(exports) {
       updateFullscreenBodyClass();
       this.updateFocusButtonState();
       this.emitChange("state");
+      doAction(
+        this.state === "fullscreen" ? HOOKS.WINDOW_FULLSCREEN_ENTERED : HOOKS.WINDOW_FULLSCREEN_EXITED,
+        { windowId: this.id }
+      );
     }
     /**
      * Reflect fullscreen state on the focus-mode button (active class,
@@ -746,6 +885,7 @@ var wpDesktop = function(exports) {
       url.searchParams.delete("wp_desktop_portal");
       url.searchParams.set("wp_desktop_classic", "1");
       window.open(url.toString(), "_blank", "noopener");
+      doAction(HOOKS.WINDOW_DETACHED, { windowId: this.id, url: url.toString() });
     }
     /**
      * Toggle the title-bar actions menu.
@@ -977,9 +1117,16 @@ var wpDesktop = function(exports) {
       this.stack.push(win);
       this.desktop.appendChild(win.element);
       this.focus(win);
-      document.dispatchEvent(new CustomEvent("wp-desktop-window-opened", {
-        detail: { windowId: win.id, page: config.url, title: config.title }
-      }));
+      const openedDetail = {
+        windowId: win.id,
+        page: config.url,
+        title: config.title,
+        url: config.url
+      };
+      document.dispatchEvent(
+        new CustomEvent("wp-desktop-window-opened", { detail: openedDetail })
+      );
+      doAction(HOOKS.WINDOW_OPENED, openedDetail);
       return win;
     }
     /**
@@ -1011,9 +1158,11 @@ var wpDesktop = function(exports) {
         w.setZIndex(BASE_Z_INDEX + i);
         w.setFocused(i === this.stack.length - 1);
       });
-      document.dispatchEvent(new CustomEvent("wp-desktop-window-focused", {
-        detail: { windowId: win.id }
-      }));
+      const focusedDetail = { windowId: win.id };
+      document.dispatchEvent(
+        new CustomEvent("wp-desktop-window-focused", { detail: focusedDetail })
+      );
+      doAction(HOOKS.WINDOW_FOCUSED, focusedDetail);
     }
     /**
      * Remove a window from the stack and DOM.
@@ -1026,9 +1175,11 @@ var wpDesktop = function(exports) {
       if (this.stack.length > 0) {
         this.focus(this.stack[this.stack.length - 1]);
       }
-      document.dispatchEvent(new CustomEvent("wp-desktop-window-closed", {
-        detail: { windowId: win.id }
-      }));
+      const closedDetail = { windowId: win.id };
+      document.dispatchEvent(
+        new CustomEvent("wp-desktop-window-closed", { detail: closedDetail })
+      );
+      doAction(HOOKS.WINDOW_CLOSED, closedDetail);
     }
     /**
      * Get a window by its ID.
@@ -1397,43 +1548,76 @@ var wpDesktop = function(exports) {
       }
     }
   }
+  const seed = [];
+  function register(def) {
+    if (!isValidDef(def)) {
+      if (typeof console !== "undefined") {
+        console.warn(
+          "[wp-desktop-mode] Ignored invalid wallpaper registration:",
+          def
+        );
+      }
+      return;
+    }
+    const idx = seed.findIndex((w) => w.id === def.id);
+    if (idx >= 0) {
+      seed[idx] = def;
+    } else {
+      seed.push(def);
+    }
+  }
+  function unregister(id) {
+    const idx = seed.findIndex((w) => w.id === id);
+    if (idx >= 0) {
+      seed.splice(idx, 1);
+    }
+  }
+  function all() {
+    const copy = seed.slice();
+    const filtered = applyFilters(HOOKS.WALLPAPERS, copy);
+    if (!Array.isArray(filtered)) {
+      if (typeof console !== "undefined") {
+        console.warn(
+          "[wp-desktop-mode] `wp-desktop.wallpapers` filter returned a non-array; falling back to seed list."
+        );
+      }
+      return copy;
+    }
+    return filtered.filter(isValidDef);
+  }
+  function get(id) {
+    return all().find((w) => w.id === id);
+  }
+  function isValidDef(def) {
+    if (!def || typeof def !== "object") {
+      return false;
+    }
+    const d = def;
+    if (typeof d.id !== "string" || d.id === "") {
+      return false;
+    }
+    if (typeof d.label !== "string" || d.label === "") {
+      return false;
+    }
+    if (typeof d.preview !== "string" || d.preview === "") {
+      return false;
+    }
+    if (d.type === "css") {
+      return typeof d.value === "string" || typeof d.resolveValue === "function";
+    }
+    if (d.type === "canvas") {
+      return typeof d.mount === "function";
+    }
+    return false;
+  }
   const STORAGE_KEY = "wp-desktop-os-settings";
   const HD_MIN_WIDTH = 1920;
   const HD_MIN_HEIGHT = 1080;
   const MEDIA_PER_PAGE = 40;
   const SEARCH_DEBOUNCE_MS = 300;
-  const WALLPAPER_PRESETS = [
-    {
-      id: "dark",
-      label: "Graphite",
-      value: "linear-gradient(135deg, #1d2327 0%, #2c3338 50%, #1d2327 100%)"
-    },
-    {
-      id: "aurora",
-      label: "Aurora",
-      value: "linear-gradient(135deg, #1a2980 0%, #26d0ce 100%)"
-    },
-    {
-      id: "sunset",
-      label: "Sunset",
-      value: "linear-gradient(135deg, #ff512f 0%, #dd2476 100%)"
-    },
-    {
-      id: "forest",
-      label: "Forest",
-      value: "linear-gradient(135deg, #134e5e 0%, #71b280 100%)"
-    },
-    {
-      id: "mono",
-      label: "Mono",
-      value: "#1d2327"
-    }
-  ];
-  const ALL_WALLPAPER_IDS = [
-    ...WALLPAPER_PRESETS.map((w) => w.id),
-    "custom-gradient",
-    "custom-image"
-  ];
+  const CUSTOM_GRADIENT_ID = "custom-gradient";
+  const CUSTOM_IMAGE_ID = "custom-image";
+  const DEFAULT_WALLPAPER_ID = "dark";
   const ACCENTS = [
     { id: "wp-blue", label: "WordPress Blue", value: "#2271b1" },
     { id: "indigo", label: "Indigo", value: "#3858e9" },
@@ -1448,7 +1632,7 @@ var wpDesktop = function(exports) {
     { id: "large", label: "Large", width: 72, icon: 26 }
   ];
   const DEFAULTS = {
-    wallpaper: "dark",
+    wallpaper: DEFAULT_WALLPAPER_ID,
     accent: "wp-blue",
     dockSize: "default",
     customGradient: {
@@ -1460,20 +1644,30 @@ var wpDesktop = function(exports) {
     libraryHdOnly: true
   };
   class OsSettings {
-    constructor(config) {
+    constructor(config, layer) {
+      this.activeEditorTeardown = null;
       this.config = config;
+      this.layer = layer;
       this.state = this.load();
+      this.registerCustomGradient();
+      this.registerCustomImageIfPresent();
     }
     /**
-     * Apply the current state to the shell. Safe to call repeatedly —
-     * subsequent calls just reset the same CSS variables.
+     * Apply the current state: wallpaper via the layer, accent + dock
+     * size as CSS custom properties on the shell.
+     *
+     * Safe to call repeatedly — calls into `layer.apply` dedupe via
+     * generation counter; CSS property writes are idempotent.
      */
     apply() {
       const shell = document.getElementById("wp-desktop-shell");
       if (!shell) {
         return;
       }
-      shell.style.setProperty("--wp-desktop-bg", this.resolveWallpaperValue());
+      const def = get(this.state.wallpaper) || get(DEFAULT_WALLPAPER_ID) || all()[0];
+      if (def) {
+        this.layer.apply(def);
+      }
       const accent = ACCENTS.find((a) => a.id === this.state.accent) ?? ACCENTS[0];
       const dockSize = DOCK_SIZES.find((d) => d.id === this.state.dockSize) ?? DOCK_SIZES[1];
       shell.style.setProperty("--wp-admin-theme-color", accent.value);
@@ -1481,33 +1675,14 @@ var wpDesktop = function(exports) {
       shell.style.setProperty("--wp-desktop-dock-icon-size", `${dockSize.icon}px`);
     }
     /**
-     * Compute the current wallpaper's `background` shorthand value.
-     *
-     * Falls back gracefully: custom-gradient uses the stored angle/colors;
-     * custom-image falls back to the first preset if the uploaded image is
-     * missing (e.g. the attachment was deleted from Media Library since
-     * the preference was saved).
-     */
-    resolveWallpaperValue() {
-      if (this.state.wallpaper === "custom-gradient") {
-        const { from, to, angle } = this.state.customGradient;
-        return `linear-gradient(${angle}deg, ${from}, ${to})`;
-      }
-      if (this.state.wallpaper === "custom-image" && this.state.customImage) {
-        const safeUrl = encodeURI(this.state.customImage.url);
-        return `url("${safeUrl}") center/cover no-repeat, #1d2327`;
-      }
-      const preset = WALLPAPER_PRESETS.find((w) => w.id === this.state.wallpaper) ?? WALLPAPER_PRESETS[0];
-      return preset.value;
-    }
-    /**
      * Render the settings panel into the given native-window body.
      *
-     * Builds three pickers (wallpaper, accent, dock size) and wires
+     * Builds three sections (wallpaper, accent, dock size) and wires
      * each to save/apply on change. The panel is a one-shot build per
      * window open — closing and re-opening renders a fresh tree.
      */
     renderPanel(body) {
+      this.teardownEditor();
       body.classList.add("wp-desktop-os-settings");
       body.innerHTML = "";
       const intro = document.createElement("p");
@@ -1533,11 +1708,48 @@ var wpDesktop = function(exports) {
       footer.appendChild(reset);
       body.appendChild(footer);
     }
+    // ------------------------------------------------------------------
+    // Built-in dynamic registrations
+    // ------------------------------------------------------------------
     /**
-     * Wallpaper section — preset grid, a "Custom gradient" swatch with an
-     * inline editor that only appears when selected, and an image
-     * uploader tile below.
+     * Register the custom-gradient wallpaper. Its CSS value is computed
+     * on every apply from user state (so live edits through the editor
+     * repaint without re-registering), and its renderEditor hosts the
+     * color + angle controls.
      */
+    registerCustomGradient() {
+      register({
+        id: CUSTOM_GRADIENT_ID,
+        label: "Custom gradient",
+        type: "css",
+        preview: this.customGradientCss(),
+        resolveValue: () => this.customGradientCss(),
+        renderEditor: (container) => this.renderCustomGradientEditor(container)
+      });
+    }
+    /**
+     * Register or update the custom-image wallpaper based on current
+     * state. Called on boot and after every upload/library pick/remove
+     * action so the registry entry tracks `state.customImage`.
+     */
+    registerCustomImageIfPresent() {
+      if (!this.state.customImage) {
+        unregister(CUSTOM_IMAGE_ID);
+        return;
+      }
+      const safeUrl = encodeURI(this.state.customImage.url);
+      const value = `url("${safeUrl}") center/cover no-repeat, #1d2327`;
+      register({
+        id: CUSTOM_IMAGE_ID,
+        label: "Custom image",
+        type: "css",
+        value,
+        preview: value
+      });
+    }
+    // ------------------------------------------------------------------
+    // Wallpaper section — registry-driven grid + editor slot + image UI
+    // ------------------------------------------------------------------
     buildWallpaperSection(body) {
       const section = this.buildSection(
         "Wallpaper",
@@ -1545,60 +1757,49 @@ var wpDesktop = function(exports) {
       );
       const grid = document.createElement("div");
       grid.className = "wp-desktop-os-settings__grid wp-desktop-os-settings__grid--wallpapers";
-      const gradientEditor = this.buildCustomGradientEditor(() => {
-        this.selectWallpaper("custom-gradient", body);
-      });
-      const toggleGradientEditor = () => {
-        gradientEditor.dataset.expanded = this.state.wallpaper === "custom-gradient" ? "true" : "false";
+      const editorSlot = document.createElement("div");
+      editorSlot.className = "wp-desktop-os-settings__editor-slot";
+      editorSlot.dataset.expanded = "false";
+      const editorInner = document.createElement("div");
+      editorInner.className = "wp-desktop-os-settings__editor-slot-inner";
+      editorSlot.appendChild(editorInner);
+      const onSelect = (def) => {
+        this.selectWallpaper(def.id, body);
+        this.syncEditorSlot(editorSlot, editorInner, def);
       };
-      for (const wp of WALLPAPER_PRESETS) {
-        grid.appendChild(
-          this.buildWallpaperSwatch(wp.id, wp.label, wp.value, () => {
-            this.selectWallpaper(wp.id, body);
-            toggleGradientEditor();
-          })
-        );
+      for (const def of all()) {
+        if (def.id === CUSTOM_IMAGE_ID) {
+          continue;
+        }
+        grid.appendChild(this.buildWallpaperSwatch(def, () => onSelect(def)));
       }
-      grid.appendChild(
-        this.buildWallpaperSwatch(
-          "custom-gradient",
-          "Custom gradient",
-          this.customGradientCss(),
-          () => {
-            this.selectWallpaper("custom-gradient", body);
-            toggleGradientEditor();
-          }
-        )
-      );
       section.appendChild(grid);
-      gradientEditor.dataset.expanded = this.state.wallpaper === "custom-gradient" ? "true" : "false";
-      section.appendChild(gradientEditor);
+      const active = get(this.state.wallpaper);
+      if (active) {
+        this.syncEditorSlot(editorSlot, editorInner, active);
+      }
+      section.appendChild(editorSlot);
       section.appendChild(this.buildCustomImageSection(body));
       return section;
     }
-    /**
-     * Build one clickable wallpaper preview tile. Factored out because we
-     * use the same shape for presets and for the custom-gradient swatch.
-     */
-    buildWallpaperSwatch(id, label, backgroundValue, onClick) {
+    buildWallpaperSwatch(def, onClick) {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "wp-desktop-os-settings__swatch wp-desktop-os-settings__swatch--wallpaper";
-      btn.setAttribute("aria-label", label);
-      btn.setAttribute("aria-pressed", this.state.wallpaper === id ? "true" : "false");
-      btn.dataset.wallpaperId = id;
-      btn.style.background = backgroundValue;
+      btn.setAttribute("aria-label", def.label);
+      btn.setAttribute("aria-pressed", this.state.wallpaper === def.id ? "true" : "false");
+      btn.dataset.wallpaperId = def.id;
+      btn.style.background = def.preview;
       const labelEl = document.createElement("span");
       labelEl.className = "wp-desktop-os-settings__swatch-label";
-      labelEl.textContent = label;
+      labelEl.textContent = def.label;
       btn.appendChild(labelEl);
       btn.addEventListener("click", onClick);
       return btn;
     }
     /**
-     * Mark a wallpaper id as selected and refresh the grid's pressed
-     * state. Separate from the swatch handlers so the image uploader
-     * (which lives outside the grid) can call it too.
+     * Select a wallpaper by id. Updates state, persists, applies to the
+     * shell, and refreshes the grid's aria-pressed attributes.
      */
     selectWallpaper(id, body) {
       this.state.wallpaper = id;
@@ -1606,11 +1807,6 @@ var wpDesktop = function(exports) {
       this.apply();
       this.refreshWallpaperPressedState(body);
     }
-    /**
-     * Update `aria-pressed` on every wallpaper swatch + image tile so the
-     * UI reflects `state.wallpaper`. Cheaper than re-rendering the whole
-     * section and keeps focus on whichever button the user clicked.
-     */
     refreshWallpaperPressedState(body) {
       body.querySelectorAll("[data-wallpaper-id]").forEach((el) => {
         el.setAttribute(
@@ -1620,17 +1816,65 @@ var wpDesktop = function(exports) {
       });
     }
     /**
-     * Inline editor for the custom gradient — two color inputs and an
-     * angle slider. Changing any field updates state live (the
-     * `input` event, not `change`) so the desktop repaints as the user
-     * drags the angle slider or scrubs through the color picker.
+     * Mount the given wallpaper's editor into the editor slot, tearing
+     * down any prior editor first. If the wallpaper has no editor, the
+     * slot collapses.
      */
-    buildCustomGradientEditor(onApply) {
-      const wrap = document.createElement("div");
-      wrap.className = "wp-desktop-os-settings__gradient-editor";
-      wrap.dataset.expanded = "false";
-      const inner = document.createElement("div");
-      inner.className = "wp-desktop-os-settings__gradient-editor-inner";
+    syncEditorSlot(slot, inner, def) {
+      this.teardownEditor();
+      inner.innerHTML = "";
+      if (!def.renderEditor) {
+        slot.dataset.expanded = "false";
+        return;
+      }
+      const ctx = {
+        id: def.id,
+        pluginUrl: "",
+        prefersReducedMotion: typeof window.matchMedia === "function" && window.matchMedia("( prefers-reduced-motion: reduce )").matches,
+        visible: !document.hidden
+      };
+      try {
+        const result = def.renderEditor(inner, ctx);
+        if (isPromise(result)) {
+          result.then((teardown) => {
+            this.activeEditorTeardown = teardown;
+          });
+        } else {
+          this.activeEditorTeardown = result;
+        }
+      } catch (err) {
+        if (typeof console !== "undefined") {
+          console.error(
+            `[wp-desktop-mode] Wallpaper "${def.id}" renderEditor threw:`,
+            err
+          );
+        }
+      }
+      slot.dataset.expanded = "true";
+    }
+    teardownEditor() {
+      if (this.activeEditorTeardown) {
+        try {
+          this.activeEditorTeardown();
+        } catch (err) {
+          if (typeof console !== "undefined") {
+            console.error(
+              "[wp-desktop-mode] Wallpaper editor teardown threw:",
+              err
+            );
+          }
+        }
+        this.activeEditorTeardown = null;
+      }
+    }
+    // ------------------------------------------------------------------
+    // Custom gradient editor — implements `renderEditor` for the
+    // built-in custom-gradient wallpaper. Color + angle inputs write
+    // to state; every change updates the swatch preview and re-applies.
+    // ------------------------------------------------------------------
+    renderCustomGradientEditor(container) {
+      container.classList.add("wp-desktop-os-settings__gradient-editor-inner");
+      container.innerHTML = "";
       const row = document.createElement("div");
       row.className = "wp-desktop-os-settings__gradient-row";
       const buildColorField = (label, initialValue, onInput) => {
@@ -1648,23 +1892,24 @@ var wpDesktop = function(exports) {
         field.appendChild(input);
         return field;
       };
+      const onGradientChange = () => {
+        this.save();
+        this.apply();
+        this.syncGradientPreviewSwatch(container);
+      };
       row.appendChild(
         buildColorField("From", this.state.customGradient.from, (value) => {
           this.state.customGradient.from = value;
-          this.save();
-          onApply();
-          this.syncGradientPreviewSwatch(wrap);
+          onGradientChange();
         })
       );
       row.appendChild(
         buildColorField("To", this.state.customGradient.to, (value) => {
           this.state.customGradient.to = value;
-          this.save();
-          onApply();
-          this.syncGradientPreviewSwatch(wrap);
+          onGradientChange();
         })
       );
-      inner.appendChild(row);
+      container.appendChild(row);
       const angleField = document.createElement("label");
       angleField.className = "wp-desktop-os-settings__gradient-angle";
       const angleLabel = document.createElement("span");
@@ -1689,27 +1934,16 @@ var wpDesktop = function(exports) {
         }
         this.state.customGradient.angle = n;
         angleValue.textContent = `${n}°`;
-        this.save();
-        onApply();
-        this.syncGradientPreviewSwatch(wrap);
+        onGradientChange();
       });
-      inner.appendChild(angleField);
-      wrap.appendChild(inner);
-      return wrap;
+      container.appendChild(angleField);
+      return () => {
+      };
     }
-    /**
-     * Keep the "Custom gradient" swatch's preview background in sync with
-     * the live-edited gradient. Called from each color/angle input so the
-     * user sees the same swatch they'll be selecting from.
-     *
-     * Walks up from the editor element to find its enclosing section so
-     * the lookup stays local to this panel — important because the same
-     * class names could appear elsewhere if a plugin ever embeds us.
-     */
     syncGradientPreviewSwatch(editorEl) {
       const section = editorEl.closest(".wp-desktop-os-settings__section");
       const preview = section?.querySelector(
-        '[data-wallpaper-id="custom-gradient"]'
+        `[data-wallpaper-id="${CUSTOM_GRADIENT_ID}"]`
       );
       if (preview) {
         preview.style.background = this.customGradientCss();
@@ -1719,15 +1953,9 @@ var wpDesktop = function(exports) {
       const { from, to, angle } = this.state.customGradient;
       return `linear-gradient(${angle}deg, ${from}, ${to})`;
     }
-    /**
-     * Build the custom-image section: a tabbed widget that lets the user
-     * either upload a new image or pick one from the Media Library.
-     *
-     * The "Upload new" tab is only offered when the user holds the
-     * `upload_files` capability; "Media Library" is always available
-     * because browsing media only requires the standard `read` cap plus
-     * whatever Core enforces on individual attachments.
-     */
+    // ------------------------------------------------------------------
+    // Custom-image section — upload + library tabs (unchanged from v0.5)
+    // ------------------------------------------------------------------
     buildCustomImageSection(body) {
       const wrap = document.createElement("div");
       wrap.className = "wp-desktop-os-settings__uploader";
@@ -1783,18 +2011,14 @@ var wpDesktop = function(exports) {
       activateTab(activeTab);
       return wrap;
     }
-    /**
-     * Render the "Upload new" pane into the given container. Replaces
-     * any prior contents so tab switching stays cheap.
-     */
     renderUploadPane(pane, body) {
       pane.innerHTML = "";
       const tile = document.createElement("div");
       tile.className = "wp-desktop-os-settings__upload-tile";
-      tile.dataset.wallpaperId = "custom-image";
+      tile.dataset.wallpaperId = CUSTOM_IMAGE_ID;
       tile.setAttribute(
         "aria-pressed",
-        this.state.wallpaper === "custom-image" ? "true" : "false"
+        this.state.wallpaper === CUSTOM_IMAGE_ID ? "true" : "false"
       );
       const fileInput = document.createElement("input");
       fileInput.type = "file";
@@ -1811,14 +2035,6 @@ var wpDesktop = function(exports) {
       this.renderUploadTile(tile, fileInput, body);
       pane.appendChild(tile);
     }
-    /**
-     * Render the "Media Library" pane into the given container.
-     *
-     * Owns its own in-pane state (search query, HD toggle live value,
-     * current page, loaded items) via closure. Every tab re-activation
-     * starts fresh — simpler than persisting pagination across tab
-     * swaps and the payload is small.
-     */
     renderLibraryPane(pane, body) {
       pane.innerHTML = "";
       const library = document.createElement("div");
@@ -1948,10 +2164,6 @@ var wpDesktop = function(exports) {
       });
       void loadNextPage();
     }
-    /**
-     * Apply the HD filter if it's enabled. Factored out so the toggle
-     * can re-filter without re-fetching.
-     */
     visibleLibraryItems(items) {
       if (!this.state.libraryHdOnly) {
         return items;
@@ -1960,16 +2172,12 @@ var wpDesktop = function(exports) {
         (it) => it.media_details.width >= HD_MIN_WIDTH && it.media_details.height >= HD_MIN_HEIGHT
       );
     }
-    /**
-     * Build one thumbnail tile for a REST media item. Clicking selects
-     * the image as the custom wallpaper.
-     */
     buildLibraryTile(item, body) {
       const tile = document.createElement("button");
       tile.type = "button";
       tile.className = "wp-desktop-os-settings__library-tile";
       tile.dataset.mediaId = String(item.id);
-      const isSelected = this.state.wallpaper === "custom-image" && this.state.customImage?.id === item.id;
+      const isSelected = this.state.wallpaper === CUSTOM_IMAGE_ID && this.state.customImage?.id === item.id;
       tile.setAttribute("aria-pressed", isSelected ? "true" : "false");
       if (isSelected) {
         tile.classList.add("wp-desktop-os-settings__library-tile--selected");
@@ -1986,7 +2194,8 @@ var wpDesktop = function(exports) {
       tile.title = altOrTitle;
       tile.addEventListener("click", () => {
         this.state.customImage = { id: item.id, url: item.source_url };
-        this.state.wallpaper = "custom-image";
+        this.state.wallpaper = CUSTOM_IMAGE_ID;
+        this.registerCustomImageIfPresent();
         this.save();
         this.apply();
         this.refreshWallpaperPressedState(body);
@@ -2004,16 +2213,6 @@ var wpDesktop = function(exports) {
       });
       return tile;
     }
-    /**
-     * Fetch one page of image attachments from the REST API. Filters
-     * `_fields` down to the data we actually render, sorts newest-first,
-     * and reads `X-WP-TotalPages` to drive the Load more button.
-     *
-     * Dimension filtering is intentionally client-side: Core's REST
-     * doesn't let us filter by `media_details.width` without a custom
-     * query var, and we'd rather not force each install to register
-     * one.
-     */
     async fetchMediaPage(page, search) {
       const url = new URL(this.config.mediaUrl);
       url.searchParams.set("media_type", "image");
@@ -2052,11 +2251,6 @@ var wpDesktop = function(exports) {
       const items = await response.json();
       return { items: items.filter(isUsableImage), totalPages: totalPages || 1 };
     }
-    /**
-     * Paint the image uploader tile based on `state.customImage`. Also
-     * wires the click / drag listeners — factored into its own method so
-     * swapping empty ↔ filled states is a single call.
-     */
     renderUploadTile(tile, fileInput, body) {
       tile.innerHTML = "";
       tile.classList.remove("wp-desktop-os-settings__upload-tile--filled");
@@ -2075,9 +2269,10 @@ var wpDesktop = function(exports) {
         remove.addEventListener("click", (e) => {
           e.stopPropagation();
           this.state.customImage = null;
-          if (this.state.wallpaper === "custom-image") {
-            this.state.wallpaper = WALLPAPER_PRESETS[0].id;
+          if (this.state.wallpaper === CUSTOM_IMAGE_ID) {
+            this.state.wallpaper = DEFAULT_WALLPAPER_ID;
           }
+          this.registerCustomImageIfPresent();
           this.save();
           this.apply();
           this.renderUploadTile(tile, fileInput, body);
@@ -2101,7 +2296,7 @@ var wpDesktop = function(exports) {
           return;
         }
         if (this.state.customImage) {
-          this.selectWallpaper("custom-image", body);
+          this.selectWallpaper(CUSTOM_IMAGE_ID, body);
           return;
         }
         fileInput.click();
@@ -2122,11 +2317,6 @@ var wpDesktop = function(exports) {
         }
       };
     }
-    /**
-     * Validate + upload one dropped/chosen file. Errors surface as
-     * transient text inside the tile so the user never has to open
-     * DevTools to learn why their upload didn't stick.
-     */
     async handleImageFile(file, tile, body) {
       if (!file.type.startsWith("image/")) {
         this.showUploadError(tile, "That file isn’t an image.");
@@ -2138,7 +2328,8 @@ var wpDesktop = function(exports) {
       try {
         const media = await this.uploadImage(file);
         this.state.customImage = { id: media.id, url: media.url };
-        this.state.wallpaper = "custom-image";
+        this.state.wallpaper = CUSTOM_IMAGE_ID;
+        this.registerCustomImageIfPresent();
         this.save();
         this.apply();
         const fileInput = tile.parentElement?.querySelector(
@@ -2155,10 +2346,6 @@ var wpDesktop = function(exports) {
         this.showUploadError(tile, message);
       }
     }
-    /**
-     * Floats a temporary error message inside the tile. Auto-clears
-     * after a few seconds so it doesn't linger past the user's attention.
-     */
     showUploadError(tile, message) {
       let err = tile.querySelector(".wp-desktop-os-settings__upload-error");
       if (!err) {
@@ -2172,18 +2359,6 @@ var wpDesktop = function(exports) {
         err?.remove();
       }, 4e3);
     }
-    /**
-     * POST a single image to the WP REST media endpoint.
-     *
-     * Using the raw-binary (Content-Disposition header) variant rather
-     * than multipart so we don't need a FormData boundary or depend on
-     * the server parsing multipart uploads — the REST media endpoint
-     * accepts both, and raw-binary is simpler to reason about.
-     *
-     * Returns the attachment's id and source URL; throws on HTTP error
-     * with the server's `message` field preserved so the tile can show
-     * the real reason (size, mime, cap) instead of a generic "Failed".
-     */
     async uploadImage(file) {
       const response = await fetch(this.config.mediaUrl, {
         method: "POST",
@@ -2209,6 +2384,9 @@ var wpDesktop = function(exports) {
       const data = await response.json();
       return { id: data.id, url: data.source_url };
     }
+    // ------------------------------------------------------------------
+    // Accent + dock-size sections (unchanged)
+    // ------------------------------------------------------------------
     buildAccentSection() {
       const section = this.buildSection(
         "Accent color",
@@ -2269,9 +2447,6 @@ var wpDesktop = function(exports) {
       section.appendChild(group);
       return section;
     }
-    /**
-     * Helper: builds a `<section>` wrapper with a heading + description.
-     */
     buildSection(title, description) {
       const section = document.createElement("section");
       section.className = "wp-desktop-os-settings__section";
@@ -2285,20 +2460,14 @@ var wpDesktop = function(exports) {
       section.appendChild(desc);
       return section;
     }
-    /**
-     * Flip the pressed state on whichever button in the group matches the
-     * given id. Extracted so each picker can stay terse.
-     */
     refreshSelected(container, id, attr = "aria-pressed") {
       container.querySelectorAll("[data-id]").forEach((el) => {
         el.setAttribute(attr, el.dataset.id === id ? "true" : "false");
       });
     }
-    /**
-     * Read state from localStorage, merged over defaults. Invalid or
-     * unknown values fall back silently — a user editing their storage
-     * by hand shouldn't brick the panel.
-     */
+    // ------------------------------------------------------------------
+    // Persistence
+    // ------------------------------------------------------------------
     load() {
       try {
         const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -2307,7 +2476,11 @@ var wpDesktop = function(exports) {
         }
         const parsed = JSON.parse(raw);
         return {
-          wallpaper: typeof parsed.wallpaper === "string" && ALL_WALLPAPER_IDS.includes(parsed.wallpaper) ? parsed.wallpaper : DEFAULTS.wallpaper,
+          // `wallpaper` is now any non-empty string — registry
+          // membership is validated at apply time rather than
+          // here, so a plugin that gets enqueued late still
+          // delivers its persisted selection.
+          wallpaper: typeof parsed.wallpaper === "string" && parsed.wallpaper !== "" ? parsed.wallpaper : DEFAULTS.wallpaper,
           accent: ACCENTS.some((a) => a.id === parsed.accent) ? parsed.accent : DEFAULTS.accent,
           dockSize: DOCK_SIZES.some((d) => d.id === parsed.dockSize) ? parsed.dockSize : DEFAULTS.dockSize,
           customGradient: sanitizeCustomGradient(parsed.customGradient),
@@ -2378,6 +2551,567 @@ var wpDesktop = function(exports) {
     el.innerHTML = html;
     return el.textContent?.trim() || "";
   }
+  function isPromise(value) {
+    return !!value && typeof value === "object" && typeof value.then === "function";
+  }
+  const pending = /* @__PURE__ */ new Map();
+  function loadVendorScript(url) {
+    const existing = pending.get(url);
+    if (existing) {
+      return existing;
+    }
+    const promise = new Promise((resolve, reject) => {
+      const selector = `script[data-wp-desktop-vendor="${cssEscape(url)}"]`;
+      const preexisting = document.querySelector(selector);
+      if (preexisting) {
+        if (preexisting.dataset.loaded === "1") {
+          resolve();
+          return;
+        }
+        preexisting.addEventListener("load", () => resolve(), { once: true });
+        preexisting.addEventListener(
+          "error",
+          () => reject(new Error(`Failed to load ${url}`)),
+          { once: true }
+        );
+        return;
+      }
+      const script = document.createElement("script");
+      script.src = url;
+      script.async = true;
+      script.dataset.wpDesktopVendor = url;
+      script.addEventListener(
+        "load",
+        () => {
+          script.dataset.loaded = "1";
+          resolve();
+        },
+        { once: true }
+      );
+      script.addEventListener(
+        "error",
+        () => {
+          pending.delete(url);
+          script.remove();
+          reject(new Error(`Failed to load ${url}`));
+        },
+        { once: true }
+      );
+      document.head.appendChild(script);
+    });
+    pending.set(url, promise);
+    return promise;
+  }
+  function cssEscape(value) {
+    if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+      return CSS.escape(value);
+    }
+    return value.replace(/["\\]/g, "\\$&");
+  }
+  const registry = /* @__PURE__ */ new Map();
+  function registerModule(def) {
+    if (!def || typeof def.id !== "string" || def.id === "") {
+      if (typeof console !== "undefined") {
+        console.warn("[wp-desktop-mode] Ignored invalid module registration:", def);
+      }
+      return;
+    }
+    if (typeof def.url !== "string" || def.url === "") {
+      if (typeof console !== "undefined") {
+        console.warn(
+          `[wp-desktop-mode] Module "${def.id}" has no url; ignored.`
+        );
+      }
+      return;
+    }
+    registry.set(def.id, def);
+  }
+  function moduleIds() {
+    return Array.from(registry.keys());
+  }
+  async function loadModules(ids) {
+    if (!ids || ids.length === 0) {
+      return;
+    }
+    const unknown = ids.filter((id) => !registry.has(id));
+    if (unknown.length > 0) {
+      throw new Error(
+        `[wp-desktop-mode] Unknown module(s) in needs: ${unknown.map((id) => `"${id}"`).join(", ")}. Known modules: ${moduleIds().join(", ") || "(none)"}.`
+      );
+    }
+    await Promise.all(
+      ids.map((id) => {
+        const def = registry.get(id);
+        if (!def) {
+          return Promise.resolve();
+        }
+        if (def.isReady && def.isReady()) {
+          return Promise.resolve();
+        }
+        return loadVendorScript(def.url);
+      })
+    );
+  }
+  function createContext(id, pluginUrl) {
+    return {
+      id,
+      pluginUrl,
+      prefersReducedMotion: prefersReducedMotion(),
+      visible: !document.hidden
+    };
+  }
+  function prefersReducedMotion() {
+    if (typeof window.matchMedia !== "function") {
+      return false;
+    }
+    return window.matchMedia("( prefers-reduced-motion: reduce )").matches;
+  }
+  class WallpaperLayer {
+    constructor(element, pluginUrl) {
+      this.generation = 0;
+      this.active = null;
+      this.boundVisibilityChange = () => {
+        if (!this.active) {
+          return;
+        }
+        doAction(HOOKS.WALLPAPER_VISIBILITY, {
+          id: this.active.id,
+          state: document.hidden ? "hidden" : "visible"
+        });
+      };
+      this.element = element;
+      this.pluginUrl = pluginUrl;
+      document.addEventListener("visibilitychange", this.boundVisibilityChange);
+    }
+    /**
+     * Apply a wallpaper definition. Safe to call from any event
+     * handler — handles type dispatch, teardown of the prior active
+     * canvas, and race-safe async mounts.
+     */
+    apply(def) {
+      const gen = ++this.generation;
+      this.teardownActive();
+      if (def.type === "css") {
+        this.applyCss(def);
+        return;
+      }
+      this.applyCanvas(def, gen);
+    }
+    /**
+     * Imperative teardown entry point — called from desktop.ts on
+     * `pagehide` so a canvas wallpaper's ticker doesn't compete with
+     * the session-beacon flush at unload.
+     */
+    teardownActive() {
+      if (!this.active) {
+        return;
+      }
+      const { id, teardown } = this.active;
+      this.active = null;
+      doAction(HOOKS.WALLPAPER_UNMOUNTING, { id });
+      try {
+        teardown();
+      } catch (err) {
+        if (typeof console !== "undefined") {
+          console.error(
+            `[wp-desktop-mode] Wallpaper "${id}" teardown threw:`,
+            err
+          );
+        }
+      }
+      this.element.innerHTML = "";
+    }
+    /** Remove listeners. Not called in normal flow — reserved for tests. */
+    dispose() {
+      this.teardownActive();
+      document.removeEventListener("visibilitychange", this.boundVisibilityChange);
+    }
+    applyCss(def) {
+      const value = def.resolveValue ? def.resolveValue(createContext(def.id, this.pluginUrl)) : def.value;
+      if (typeof value === "string") {
+        this.element.style.setProperty("--wp-desktop-bg", value);
+        const shell = document.getElementById("wp-desktop-shell");
+        shell?.style.setProperty("--wp-desktop-bg", value);
+      }
+    }
+    applyCanvas(def, gen) {
+      const ctx = createContext(def.id, this.pluginUrl);
+      doAction(HOOKS.WALLPAPER_MOUNTING, { id: def.id, container: this.element, ctx });
+      const depsReady = def.needs && def.needs.length > 0 ? loadModules(def.needs) : Promise.resolve();
+      const onResolve = (teardown) => {
+        if (gen !== this.generation) {
+          try {
+            teardown();
+          } catch {
+          }
+          return;
+        }
+        this.active = { id: def.id, teardown };
+        doAction(HOOKS.WALLPAPER_MOUNTED, { id: def.id, container: this.element, ctx });
+      };
+      depsReady.then(
+        () => {
+          if (gen !== this.generation) {
+            return;
+          }
+          let result;
+          try {
+            result = def.mount(this.element, ctx);
+          } catch (err) {
+            this.handleMountFailure(def.id, err);
+            return;
+          }
+          if (isThenable(result)) {
+            result.then(onResolve, (err) => {
+              if (gen !== this.generation) {
+                return;
+              }
+              this.handleMountFailure(def.id, err);
+            });
+            return;
+          }
+          onResolve(result);
+        },
+        (err) => {
+          if (gen !== this.generation) {
+            return;
+          }
+          this.handleMountFailure(def.id, err);
+        }
+      );
+    }
+    handleMountFailure(id, err) {
+      this.element.innerHTML = "";
+      doAction(HOOKS.WALLPAPER_MOUNT_FAILED, { id, error: err });
+      if (typeof console !== "undefined") {
+        console.error(
+          `[wp-desktop-mode] Wallpaper "${id}" failed to mount:`,
+          err
+        );
+      }
+    }
+  }
+  function isThenable(value) {
+    return !!value && typeof value === "object" && typeof value.then === "function";
+  }
+  const PRESETS = [
+    {
+      id: "dark",
+      label: "Graphite",
+      value: "linear-gradient(135deg, #1d2327 0%, #2c3338 50%, #1d2327 100%)"
+    },
+    {
+      id: "aurora",
+      label: "Aurora",
+      value: "linear-gradient(135deg, #1a2980 0%, #26d0ce 100%)"
+    },
+    {
+      id: "sunset",
+      label: "Sunset",
+      value: "linear-gradient(135deg, #ff512f 0%, #dd2476 100%)"
+    },
+    {
+      id: "forest",
+      label: "Forest",
+      value: "linear-gradient(135deg, #134e5e 0%, #71b280 100%)"
+    },
+    {
+      id: "mono",
+      label: "Mono",
+      value: "#1d2327"
+    }
+  ];
+  function registerBuiltInWallpapers() {
+    for (const p of PRESETS) {
+      register({
+        id: p.id,
+        label: p.label,
+        type: "css",
+        value: p.value,
+        preview: p.value
+      });
+    }
+  }
+  const CONFIG = {
+    /** Grid stride when sampling the logo PNG. Smaller → denser particle field → heavier frame cost. */
+    sampleStride: 7,
+    /** Alpha threshold (0–255) for "this pixel is part of the logo." */
+    alphaThreshold: 128,
+    /**
+     * Target logo rendering width in CSS pixels. Capped at this value
+     * on huge screens; on normal screens we take 72% of the smaller
+     * shell axis so the logo reads as "hero-sized" without cropping.
+     */
+    targetLogoWidth: 820,
+    /** Fraction of the smaller shell dimension the logo is allowed to occupy. */
+    logoShellFraction: 0.72,
+    /** Spring stiffness — how hard a particle pulls back to its home. */
+    springK: 0.055,
+    /** Velocity damping per tick. 1 = no damping, 0 = instant stop. */
+    damping: 0.86,
+    /**
+     * Velocity floor below which a particle is considered at rest —
+     * its position snaps to its home and its velocity zeroes out. Kills
+     * the subpixel jitter that made the resting logo flicker.
+     */
+    restVelocityEpsilon: 0.02,
+    /** Pointer repulsion radius in CSS pixels. Beyond this, no effect. */
+    repelRadius: 160,
+    /**
+     * Repulsion strength. Combined with the (1 − distance/radius)^2
+     * falloff, this is the acceleration per tick at the pointer's
+     * dead-center position.
+     */
+    repelStrength: 2.6,
+    /** Particle render radius (CSS pixels). */
+    particleRadius: 1.8,
+    /** Second outer-glow circle radius — painted first, softer. */
+    particleHaloRadius: 3.4
+  };
+  const BACKDROP_CSS = "radial-gradient(circle at 50% 50%, #1e40af 0%, #152a6b 45%, #0a1024 100%)";
+  async function mountScene({ container, logoUrl, prefersReducedMotion: prefersReducedMotion2 }) {
+    const pixi = window.PIXI;
+    if (!pixi) {
+      throw new Error(
+        "[animated-logo-wallpaper] window.PIXI is undefined; declare `needs: ['pixijs']` on the wallpaper def so the shell loads it before mount."
+      );
+    }
+    const homes = await sampleLogoHomes(logoUrl);
+    const priorBackground = container.style.background;
+    container.style.background = BACKDROP_CSS;
+    const app = new pixi.Application();
+    await app.init({
+      resizeTo: container,
+      backgroundAlpha: 0,
+      antialias: true,
+      autoDensity: true,
+      resolution: Math.min(window.devicePixelRatio || 1, 2)
+    });
+    container.appendChild(app.canvas);
+    applyCanvasLayout(app.canvas);
+    const particleLayer = new pixi.Graphics();
+    app.stage.addChild(particleLayer);
+    const n = homes.length;
+    const homeX = new Float32Array(n);
+    const homeY = new Float32Array(n);
+    const x = new Float32Array(n);
+    const y = new Float32Array(n);
+    const vx = new Float32Array(n);
+    const vy = new Float32Array(n);
+    let logoScale = 1;
+    let logoOffsetX = 0;
+    let logoOffsetY = 0;
+    const computeLayout = () => {
+      const w = app.canvas.clientWidth;
+      const h = app.canvas.clientHeight;
+      const target = Math.min(
+        CONFIG.targetLogoWidth,
+        Math.min(w, h) * CONFIG.logoShellFraction
+      );
+      logoScale = target;
+      logoOffsetX = (w - target) / 2;
+      logoOffsetY = (h - target) / 2;
+      for (let i = 0; i < n; i++) {
+        homeX[i] = logoOffsetX + homes[i][0] * logoScale;
+        homeY[i] = logoOffsetY + homes[i][1] * logoScale;
+        if (x[i] === 0 && y[i] === 0) {
+          x[i] = homeX[i];
+          y[i] = homeY[i];
+        }
+      }
+    };
+    computeLayout();
+    const resizeObserver = new ResizeObserver(() => computeLayout());
+    resizeObserver.observe(container);
+    let pointerX = -1e6;
+    let pointerY = -1e6;
+    const onPointerMove = (e) => {
+      const rect = app.canvas.getBoundingClientRect();
+      pointerX = e.clientX - rect.left;
+      pointerY = e.clientY - rect.top;
+    };
+    const onPointerLeave = () => {
+      pointerX = -1e6;
+      pointerY = -1e6;
+    };
+    window.addEventListener("pointermove", onPointerMove, { passive: true });
+    window.addEventListener("pointerleave", onPointerLeave);
+    let animating = !prefersReducedMotion2;
+    const tick = () => {
+      if (animating) {
+        step(n, homeX, homeY, x, y, vx, vy, pointerX, pointerY);
+      }
+      paintParticles(particleLayer, n, x, y);
+    };
+    app.ticker.add(tick);
+    tick();
+    if (!animating) {
+      app.ticker.stop();
+    }
+    return {
+      destroy() {
+        resizeObserver.disconnect();
+        window.removeEventListener("pointermove", onPointerMove);
+        window.removeEventListener("pointerleave", onPointerLeave);
+        app.destroy(true, {
+          children: true,
+          texture: true,
+          textureSource: true,
+          context: true
+        });
+        container.style.background = priorBackground;
+      },
+      setAnimating(playing) {
+        animating = playing && !prefersReducedMotion2;
+        if (animating) {
+          app.ticker.start();
+        } else {
+          app.ticker.stop();
+        }
+      }
+    };
+  }
+  function step(n, homeX, homeY, x, y, vx, vy, pointerX, pointerY) {
+    const { springK, damping, repelRadius, repelStrength, restVelocityEpsilon } = CONFIG;
+    const repelRadiusSq = repelRadius * repelRadius;
+    const restEpsSq = restVelocityEpsilon * restVelocityEpsilon;
+    const restPosEps = 0.25;
+    const restPosEpsSq = restPosEps * restPosEps;
+    for (let i = 0; i < n; i++) {
+      const dhx = homeX[i] - x[i];
+      const dhy = homeY[i] - y[i];
+      let fx = dhx * springK;
+      let fy = dhy * springK;
+      const dx = x[i] - pointerX;
+      const dy = y[i] - pointerY;
+      const distSq = dx * dx + dy * dy;
+      let disturbed = false;
+      if (distSq < repelRadiusSq && distSq > 1e-4) {
+        const dist = Math.sqrt(distSq);
+        const t = 1 - dist / repelRadius;
+        const mag = t * t * repelStrength / dist;
+        fx += dx * mag;
+        fy += dy * mag;
+        disturbed = true;
+      }
+      const nvx = (vx[i] + fx) * damping;
+      const nvy = (vy[i] + fy) * damping;
+      if (!disturbed && nvx * nvx + nvy * nvy < restEpsSq && dhx * dhx + dhy * dhy < restPosEpsSq) {
+        x[i] = homeX[i];
+        y[i] = homeY[i];
+        vx[i] = 0;
+        vy[i] = 0;
+        continue;
+      }
+      vx[i] = nvx;
+      vy[i] = nvy;
+      x[i] += nvx;
+      y[i] += nvy;
+    }
+  }
+  function paintParticles(g, n, x, y) {
+    g.clear();
+    for (let i = 0; i < n; i++) {
+      g.circle(x[i], y[i], CONFIG.particleHaloRadius);
+    }
+    g.fill({ color: 16777215, alpha: 0.14 });
+    for (let i = 0; i < n; i++) {
+      g.circle(x[i], y[i], CONFIG.particleRadius);
+    }
+    g.fill({ color: 16777215, alpha: 0.85 });
+  }
+  async function sampleLogoHomes(url) {
+    const img = await loadImage(url);
+    const maxSide = 400;
+    const ratio = img.naturalWidth / img.naturalHeight;
+    const sampleWidth = ratio >= 1 ? maxSide : Math.round(maxSide * ratio);
+    const sampleHeight = ratio >= 1 ? Math.round(maxSide / ratio) : maxSide;
+    const off = document.createElement("canvas");
+    off.width = sampleWidth;
+    off.height = sampleHeight;
+    const ctx = off.getContext("2d", { willReadFrequently: true });
+    if (!ctx) {
+      return [];
+    }
+    ctx.drawImage(img, 0, 0, sampleWidth, sampleHeight);
+    const data = ctx.getImageData(0, 0, sampleWidth, sampleHeight).data;
+    const homes = [];
+    const stride = CONFIG.sampleStride;
+    const threshold = CONFIG.alphaThreshold;
+    for (let row = 0; row < sampleHeight; row += stride) {
+      const rowOffset = row / stride % 2 === 0 ? 0 : stride / 2;
+      for (let col = 0; col < sampleWidth; col += stride) {
+        const px = Math.min(sampleWidth - 1, Math.round(col + rowOffset));
+        const py = row;
+        const alpha = data[(py * sampleWidth + px) * 4 + 3];
+        if (alpha > threshold) {
+          homes.push([px / sampleWidth, py / sampleHeight]);
+        }
+      }
+    }
+    return homes;
+  }
+  function loadImage(url) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error(`Failed to load logo: ${url}`));
+      img.src = url;
+    });
+  }
+  function applyCanvasLayout(canvas) {
+    canvas.style.display = "block";
+    canvas.style.width = "100%";
+    canvas.style.height = "100%";
+  }
+  const WALLPAPER_ID = "wp-animated-logo";
+  const NAMESPACE = "wp-desktop-mode/animated-logo";
+  const PREVIEW = "radial-gradient(circle at 50% 50%, #1e3a8a 0%, #0b0f25 100%)";
+  addAction(
+    HOOKS.INIT,
+    NAMESPACE,
+    () => {
+      const api = window.wp?.desktop;
+      if (!api || typeof api.registerWallpaper !== "function") {
+        return;
+      }
+      api.registerWallpaper({
+        id: WALLPAPER_ID,
+        label: "Animated WordPress Logo",
+        type: "canvas",
+        preview: PREVIEW,
+        needs: ["pixijs"],
+        mount: async (container, ctx) => {
+          const logoUrl = `${ctx.pluginUrl}/assets/images/wp-logo.png`;
+          const scene = await mountScene({
+            container,
+            logoUrl,
+            prefersReducedMotion: ctx.prefersReducedMotion
+          });
+          const visibilityHandler = (...args) => {
+            const detail = args[0];
+            if (!detail || detail.id !== WALLPAPER_ID) {
+              return;
+            }
+            scene.setAnimating(detail.state === "visible");
+          };
+          api.hooks.addAction(
+            HOOKS.WALLPAPER_VISIBILITY,
+            `${NAMESPACE}/visibility`,
+            visibilityHandler
+          );
+          return () => {
+            api.hooks.removeAction(
+              HOOKS.WALLPAPER_VISIBILITY,
+              `${NAMESPACE}/visibility`
+            );
+            scene.destroy();
+          };
+        }
+      });
+    }
+  );
   const OS_SETTINGS_WINDOW_ID = "wp-desktop-os-settings";
   const SESSION_SAVE_DEBOUNCE_MS = 500;
   const VIEWPORT_CLAMP_MARGIN = 12;
@@ -2391,11 +3125,26 @@ var wpDesktop = function(exports) {
       return;
     }
     const manager = new WindowManager(desktopArea);
-    const osSettings = new OsSettings({
-      mediaUrl: config.mediaUrl,
-      restNonce: config.restNonce,
-      canUpload: !!config.canUpload
+    const wallpaperEl = document.getElementById("wp-desktop-wallpaper");
+    const pluginUrl = config.pluginUrl || "";
+    let wallpaperLayer = null;
+    if (wallpaperEl) {
+      wallpaperLayer = new WallpaperLayer(wallpaperEl, pluginUrl);
+    }
+    registerBuiltInWallpapers();
+    registerModule({
+      id: "pixijs",
+      url: `${pluginUrl}/assets/vendor/pixi.min.js`,
+      isReady: () => typeof window.PIXI !== "undefined"
     });
+    const osSettings = new OsSettings(
+      {
+        mediaUrl: config.mediaUrl,
+        restNonce: config.restNonce,
+        canUpload: !!config.canUpload
+      },
+      wallpaperLayer ?? new WallpaperLayer(document.createElement("div"), pluginUrl)
+    );
     osSettings.apply();
     const dockEl = document.getElementById("wp-desktop-dock");
     let dock = null;
@@ -2439,8 +3188,24 @@ var wpDesktop = function(exports) {
     window.wp.desktop = {
       windowManager: manager,
       dock,
-      saveSession
+      saveSession,
+      hooks: rawHooks(),
+      registerWallpaper: (def) => {
+        register(def);
+        osSettings.apply();
+      },
+      loadVendorScript,
+      registerModule,
+      loadModules,
+      whenReady,
+      config
     };
+    doAction(HOOKS.INIT, { config });
+    osSettings.apply();
+    window.addEventListener("pagehide", () => {
+      wallpaperLayer?.teardownActive();
+    });
+    bindShellLifecycle();
     bindTopWindowLinkInterceptor(manager, config);
     desktopArea.addEventListener("click", (e) => {
       if (e.target !== desktopArea) {
@@ -2673,6 +3438,30 @@ var wpDesktop = function(exports) {
       window.history.replaceState(window.history.state, "", config.portalUrl);
     } catch {
     }
+  }
+  const SHELL_RESIZE_DEBOUNCE_MS = 120;
+  function bindShellLifecycle() {
+    const shellEl = document.getElementById("wp-desktop-shell");
+    let resizeTimer = null;
+    const fireShellResize = () => {
+      resizeTimer = null;
+      const rect = shellEl ? shellEl.getBoundingClientRect() : null;
+      doAction(HOOKS.SHELL_RESIZED, {
+        width: rect ? Math.round(rect.width) : window.innerWidth,
+        height: rect ? Math.round(rect.height) : window.innerHeight
+      });
+    };
+    window.addEventListener("resize", () => {
+      if (resizeTimer !== null) {
+        window.clearTimeout(resizeTimer);
+      }
+      resizeTimer = window.setTimeout(fireShellResize, SHELL_RESIZE_DEBOUNCE_MS);
+    });
+    document.addEventListener("visibilitychange", () => {
+      doAction(HOOKS.SHELL_VISIBILITY, {
+        state: document.hidden ? "hidden" : "visible"
+      });
+    });
   }
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", init);

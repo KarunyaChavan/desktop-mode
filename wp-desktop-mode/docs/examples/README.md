@@ -17,5 +17,6 @@ defined( 'ABSPATH' ) || exit;
 - [React to window events](./react-to-window-events.md)
 - [Style a specific admin page inside the iframe](./chromeless-style-override.md)
 - [Inject data into `wpDesktopConfig`](./inject-shell-config.md)
+- [Register a wallpaper (CSS + canvas)](./register-wallpaper.md)
 
 If your use case isn't here, check [Hooks Reference](../hooks-reference.md) and [JavaScript Reference](../javascript-reference.md) — everything we fire is documented there.

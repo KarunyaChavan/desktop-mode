@@ -79,6 +79,40 @@ body.wp-desktop-active #wpcontent {
 	z-index: var(--wp-desktop-z-base);
 }
 
+/*
+ * Wallpaper layer — first child of the shell, sits behind the dock
+ * and desktop area so a translucent dock shows through to the
+ * background (macOS pattern). CSS wallpapers paint via the
+ * `--wp-desktop-bg` custom property; canvas wallpapers mount their
+ * own DOM (typically a <canvas>) into this element via JS.
+ *
+ * z-index: 0 keeps it below the shell body flex row which has no
+ * explicit z-index of its own but establishes its own local
+ * stacking context via `position: relative`, so the dock + windows
+ * always render above the wallpaper regardless of DOM order.
+ */
+.wp-desktop-wallpaper {
+	position: absolute;
+	inset: 0;
+	z-index: 0;
+	background: var(--wp-desktop-bg);
+	overflow: hidden;
+	pointer-events: none;
+}
+
+/*
+ * Canvas children fill the layer and ignore pointer events by
+ * default — a wallpaper is presentational chrome, not an interactive
+ * element. Plugins that genuinely need a clickable wallpaper can
+ * override `pointer-events` on their own mounted node.
+ */
+.wp-desktop-wallpaper > canvas,
+.wp-desktop-wallpaper > * {
+	width: 100%;
+	height: 100%;
+	display: block;
+}
+
 /* Below 783px WP collapses the admin bar to 46px. */
 @media screen and (max-width: 782px) {
 	.wp-desktop-shell {
@@ -114,12 +148,17 @@ body.wp-desktop-has-fullscreen-window .wp-desktop-shell {
 	position: relative;
 }
 
-/* The desktop area where windows float. */
+/*
+ * Desktop area — where windows float. Background is now transparent
+ * because the wallpaper renders in the shell-level layer behind
+ * both this area and the dock. Stacking context via position: relative
+ * ensures children (windows) sit above the wallpaper.
+ */
 .wp-desktop-area {
 	flex: 1;
 	position: relative;
 	overflow: hidden;
-	background: var(--wp-desktop-bg);
+	background: transparent;
 }
 
 /**

@@ -177,6 +177,13 @@ export interface DesktopConfig {
 	mediaUrl: string;
 	/** Whether the user has the `upload_files` capability. */
 	canUpload: boolean;
+	/**
+	 * Plugin base URL without trailing slash. Used by the shell to
+	 * locate vendor assets (e.g. `${pluginUrl}/assets/vendor/pixi.min.js`)
+	 * and by third-party plugin authors who want to build asset URLs
+	 * relative to the wp-desktop-mode install.
+	 */
+	pluginUrl: string;
 	/** Nonce for the REST endpoint (X-WP-Nonce header). */
 	restNonce: string;
 	/** Canonical `/wp-desktop/` URL — used for history.replaceState. */

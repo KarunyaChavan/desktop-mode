@@ -7,6 +7,7 @@
  */
 
 import { Window } from './window';
+import { HOOKS, doAction } from './hooks';
 import type { Session, SessionWindow, WindowConfig } from './types';
 
 /** Base z-index for desktop windows. */
@@ -130,9 +131,18 @@ export class WindowManager {
 		this.desktop.appendChild( win.element );
 		this.focus( win );
 
-		document.dispatchEvent( new CustomEvent( 'wp-desktop-window-opened', {
-			detail: { windowId: win.id, page: config.url, title: config.title },
-		} ) );
+		const openedDetail = {
+			windowId: win.id,
+			page: config.url,
+			title: config.title,
+			url: config.url,
+		};
+		document.dispatchEvent(
+			new CustomEvent( 'wp-desktop-window-opened', { detail: openedDetail } )
+		);
+		// Fan out to the hook bus so plugins using wp.hooks.addAction()
+		// stay in their idiomatic API rather than juggling CustomEvents.
+		doAction( HOOKS.WINDOW_OPENED, openedDetail );
 
 		return win;
 	}
@@ -171,10 +181,12 @@ export class WindowManager {
 			w.setFocused( i === this.stack.length - 1 );
 		} );
 
-		// Dispatch custom event.
-		document.dispatchEvent( new CustomEvent( 'wp-desktop-window-focused', {
-			detail: { windowId: win.id },
-		} ) );
+		// Dispatch custom event + action.
+		const focusedDetail = { windowId: win.id };
+		document.dispatchEvent(
+			new CustomEvent( 'wp-desktop-window-focused', { detail: focusedDetail } )
+		);
+		doAction( HOOKS.WINDOW_FOCUSED, focusedDetail );
 	}
 
 	/**
@@ -191,10 +203,12 @@ export class WindowManager {
 			this.focus( this.stack[ this.stack.length - 1 ] );
 		}
 
-		// Dispatch custom event.
-		document.dispatchEvent( new CustomEvent( 'wp-desktop-window-closed', {
-			detail: { windowId: win.id },
-		} ) );
+		// Dispatch custom event + action.
+		const closedDetail = { windowId: win.id };
+		document.dispatchEvent(
+			new CustomEvent( 'wp-desktop-window-closed', { detail: closedDetail } )
+		);
+		doAction( HOOKS.WINDOW_CLOSED, closedDetail );
 	}
 
 	/**

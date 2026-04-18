@@ -128,6 +128,7 @@ function wpdm_enqueue_assets() {
 	 *     @type string $sessionUrl   REST endpoint for saving the session.
 	 *     @type string $mediaUrl     REST endpoint for media uploads (wp/v2/media).
 	 *     @type bool   $canUpload    Whether the user holds the `upload_files` capability.
+	 *     @type string $pluginUrl    Plugin base URL (no trailing slash). Used by the shell to locate vendor assets and by plugins to build asset URLs.
 	 *     @type string $restNonce    Nonce for the session REST endpoint.
 	 *     @type string $portalUrl    Canonical `/wp-desktop/` URL.
 	 *     @type bool   $fromPortal   Whether the shell was reached via the portal.
@@ -146,6 +147,7 @@ function wpdm_enqueue_assets() {
 			'sessionUrl'   => esc_url_raw( rest_url( 'wp-desktop/v1/session' ) ),
 			'mediaUrl'     => esc_url_raw( rest_url( 'wp/v2/media' ) ),
 			'canUpload'    => current_user_can( 'upload_files' ),
+			'pluginUrl'    => esc_url_raw( untrailingslashit( WPDM_URL ) ),
 			'restNonce'    => wp_create_nonce( 'wp_rest' ),
 			'portalUrl'    => esc_url( wpdm_portal_url() ),
 			'fromPortal'   => $from_portal,
@@ -193,6 +195,17 @@ function wpdm_render_shell() {
 	$scheme = sanitize_html_class( get_user_option( 'admin_color' ), 'fresh' );
 	?>
 	<div id="wp-desktop-shell" class="wp-desktop-shell" data-wp-desktop-scheme="<?php echo esc_attr( $scheme ); ?>" role="application" aria-label="<?php esc_attr_e( 'Desktop shell', 'wp-desktop-mode' ); ?>">
+		<?php
+		/*
+		 * Wallpaper layer — sits behind both the dock and the desktop
+		 * area so a translucent dock bleeds through to the wallpaper
+		 * (macOS pattern). Canvas-driven wallpapers mount their own
+		 * DOM into this element; static CSS wallpapers just inherit
+		 * the `--wp-desktop-bg` custom property the shell sets at
+		 * boot. Presentational only.
+		 */
+		?>
+		<div id="wp-desktop-wallpaper" class="wp-desktop-wallpaper" aria-hidden="true"></div>
 		<div class="wp-desktop-shell__body">
 			<nav id="wp-desktop-dock" class="wp-desktop-dock" role="toolbar" aria-label="<?php esc_attr_e( 'Admin navigation', 'wp-desktop-mode' ); ?>"></nav>
 			<div id="wp-desktop-area" class="wp-desktop-area wp-desktop-area--with-dock"></div>

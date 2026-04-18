@@ -14,21 +14,63 @@ import { WindowManager } from './window-manager';
 import { Dock } from './dock';
 import { OsSettings } from './settings';
 import { deriveWindowId } from './utils';
+import { HOOKS, doAction, rawHooks, whenReady } from './hooks';
+import type { WpHooks } from './hooks';
+import * as registry from './wallpapers/registry';
+import { WallpaperLayer } from './wallpapers/layer';
+import { registerBuiltInWallpapers } from './wallpapers/built-in';
+import { loadVendorScript } from './wallpapers/vendor-loader';
+import { registerModule, loadModules } from './modules/registry';
+import type { ModuleDef } from './modules/registry';
+import type { WallpaperDef } from './wallpapers/types';
+import './plugins';
 import type { DesktopConfig, SessionWindow } from './types';
 
 /** Stable id for the OS Settings native window. */
 const OS_SETTINGS_WINDOW_ID = 'wp-desktop-os-settings';
 
+/**
+ * Public surface exposed on `window.wp.desktop`. Third-party plugins
+ * rely on these members being stable — new fields may be added over
+ * time, but nothing here is removed without a major-version bump.
+ */
+export interface WpDesktopPublicApi {
+	windowManager: WindowManager;
+	dock: Dock | null;
+	saveSession: () => void;
+	/** Raw `@wordpress/hooks` bridge. Alias of `window.wp.hooks`. */
+	hooks: WpHooks;
+	/** Convenience: register a wallpaper via `wp-desktop.wallpapers` filter. */
+	registerWallpaper: ( def: WallpaperDef ) => void;
+	/** Load a vendor script once, memoized. See `src/wallpapers/vendor-loader.ts`. */
+	loadVendorScript: ( url: string ) => Promise<void>;
+	/**
+	 * Register a shared vendor module so other plugins can `needs:` it
+	 * by id. Built-in ids (`pixijs`, …) are pre-registered by the shell.
+	 */
+	registerModule: ( def: ModuleDef ) => void;
+	/** Imperatively load one or more registered modules. Usually unnecessary — canvas wallpapers declare `needs[]` and the shell resolves automatically. */
+	loadModules: ( ids: string[] ) => Promise<void>;
+	/** Run `cb` after `wp-desktop.init` has fired (immediately if already fired). */
+	whenReady: ( cb: () => void ) => void;
+	/**
+	 * The `DesktopConfig` that booted this shell. Read-only for plugins
+	 * — useful for picking up `pluginUrl` and other PHP-sourced bits.
+	 */
+	config: DesktopConfig;
+}
+
 declare global {
 	interface Window {
 		wpDesktopConfig?: DesktopConfig;
-		wp?: {
-			desktop?: {
-				windowManager: WindowManager;
-				dock: Dock | null;
-				saveSession: () => void;
-			};
-		};
+	}
+	/**
+	 * Contribute `desktop` to the merged `window.wp` namespace. The
+	 * `hooks` slot is contributed by `src/hooks.ts`; a single `Window.wp`
+	 * declaration (there) stitches them together.
+	 */
+	interface WpGlobal {
+		desktop?: WpDesktopPublicApi;
 	}
 }
 
@@ -54,14 +96,41 @@ function init(): void {
 
 	const manager = new WindowManager( desktopArea );
 
-	// OS Settings — shell-level preferences. Apply saved values before
-	// the first window paints so the user never sees the default palette
-	// when their saved accent differs.
-	const osSettings = new OsSettings( {
-		mediaUrl: config.mediaUrl,
-		restNonce: config.restNonce,
-		canUpload: !! config.canUpload,
+	// Wallpaper layer + registry. Built-in presets register immediately
+	// (synchronously, before `wp-desktop.init` fires) so the filter chain
+	// third-party plugins hook into already carries the full seed list.
+	// The layer owns the wallpaper DOM element the shell markup reserves
+	// as the first child of `#wp-desktop-shell`.
+	const wallpaperEl = document.getElementById( 'wp-desktop-wallpaper' );
+	const pluginUrl = config.pluginUrl || '';
+	let wallpaperLayer: WallpaperLayer | null = null;
+	if ( wallpaperEl ) {
+		wallpaperLayer = new WallpaperLayer( wallpaperEl, pluginUrl );
+	}
+	registerBuiltInWallpapers();
+
+	// Built-in modules: PixiJS is bundled in `assets/vendor/`. Plugins
+	// that want to use it declare `needs: ['pixijs']` on their wallpaper
+	// and the shell loads the script before mount fires — no URL lookup
+	// for the plugin author to get wrong.
+	registerModule( {
+		id: 'pixijs',
+		url: `${ pluginUrl }/assets/vendor/pixi.min.js`,
+		isReady: () => typeof ( window as { PIXI?: unknown } ).PIXI !== 'undefined',
 	} );
+
+	// OS Settings — shell-level preferences. Takes the wallpaper layer
+	// so it can delegate apply() through the registry-driven path.
+	// Falls back to a stub layer when the shell markup somehow lacks
+	// the wallpaper element (defensive; shouldn't happen in practice).
+	const osSettings = new OsSettings(
+		{
+			mediaUrl: config.mediaUrl,
+			restNonce: config.restNonce,
+			canUpload: !! config.canUpload,
+		},
+		wallpaperLayer ?? new WallpaperLayer( document.createElement( 'div' ), pluginUrl )
+	);
 	osSettings.apply();
 
 	// Dock.
@@ -120,13 +189,52 @@ function init(): void {
 	const saveSession = createSessionSaver( manager, config );
 	wireSessionEvents( saveSession );
 
-	// Expose for plugins + tests.
+	// Expose the public API on `window.wp.desktop`. The `hooks` field
+	// aliases `window.wp.hooks` so plugins have one idiomatic entry
+	// point for both the window manager and the filter/action bus.
 	window.wp = window.wp || {};
 	window.wp.desktop = {
 		windowManager: manager,
 		dock,
 		saveSession,
+		hooks: rawHooks(),
+		registerWallpaper: ( def: WallpaperDef ) => {
+			registry.register( def );
+			// Re-apply so a plugin that registers its own wallpaper and
+			// sets the user's selection to it in the same breath sees an
+			// immediate repaint rather than having to wait for the next
+			// OS Settings open.
+			osSettings.apply();
+		},
+		loadVendorScript,
+		registerModule,
+		loadModules,
+		whenReady,
+		config,
 	};
+
+	// Fire `wp-desktop.init` — plugins can now register wallpapers
+	// and hook other surfaces. Fired AFTER `window.wp.desktop` is
+	// populated so subscribers see the full public API. Subscribers
+	// that later re-apply the wallpaper pick up their own
+	// registrations via registry re-read.
+	doAction( HOOKS.INIT, { config } );
+
+	// Re-apply the wallpaper once init subscribers have had a chance
+	// to register — if the user's saved selection belongs to a plugin
+	// that just registered, this is when it becomes visible.
+	osSettings.apply();
+
+	// Tear down any active canvas wallpaper on page unload. Canvas
+	// wallpapers typically hold tickers / WebGL contexts / rAF loops
+	// that would otherwise compete with the session-beacon flush.
+	window.addEventListener( 'pagehide', () => {
+		wallpaperLayer?.teardownActive();
+	} );
+
+	// Shell-level lifecycle actions — fired once the public API exists
+	// so plugin authors can subscribe from `wp-desktop.init`.
+	bindShellLifecycle();
 
 	// Intercept top-window clicks on /wp-admin/ links so they route into
 	// the window manager instead of reloading the whole page. Without this,
@@ -507,6 +615,41 @@ function normalizeBrowserUrl( config: DesktopConfig ): void {
 		/* Some browser security contexts refuse replaceState across paths —
 		 * fall through silently; the URL just remains as-is. */
 	}
+}
+
+/** Debounce window for the shell-resized action. Trailing-edge only. */
+const SHELL_RESIZE_DEBOUNCE_MS = 120;
+
+/**
+ * Wire browser-resize and document-visibility into `wp-desktop.shell.*`
+ * actions. Resize is debounced so a drag-to-resize storm collapses to a
+ * single hook fire; visibility is edge-triggered (fires exactly once per
+ * state change).
+ */
+function bindShellLifecycle(): void {
+	const shellEl = document.getElementById( 'wp-desktop-shell' );
+
+	let resizeTimer: number | null = null;
+	const fireShellResize = (): void => {
+		resizeTimer = null;
+		const rect = shellEl ? shellEl.getBoundingClientRect() : null;
+		doAction( HOOKS.SHELL_RESIZED, {
+			width: rect ? Math.round( rect.width ) : window.innerWidth,
+			height: rect ? Math.round( rect.height ) : window.innerHeight,
+		} );
+	};
+	window.addEventListener( 'resize', () => {
+		if ( resizeTimer !== null ) {
+			window.clearTimeout( resizeTimer );
+		}
+		resizeTimer = window.setTimeout( fireShellResize, SHELL_RESIZE_DEBOUNCE_MS ) as unknown as number;
+	} );
+
+	document.addEventListener( 'visibilitychange', () => {
+		doAction( HOOKS.SHELL_VISIBILITY, {
+			state: document.hidden ? 'hidden' : 'visible',
+		} );
+	} );
 }
 
 // Initialize when DOM is ready.

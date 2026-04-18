@@ -8,6 +8,7 @@
 
 import type { WindowConfig, WindowState } from './types';
 import { sanitizeClassName } from './utils';
+import { HOOKS, doAction } from './hooks';
 
 /** Minimum distance from viewport edges when dragging. */
 const EDGE_MARGIN = 8;
@@ -691,6 +692,7 @@ export class Window {
 
 		// Add an overlay to prevent iframe from eating pointer events during drag.
 		this.element.classList.add( 'wp-desktop-window--dragging' );
+		doAction( HOOKS.WINDOW_DRAG_START, { windowId: this.id } );
 
 		const onDragMove = ( ev: PointerEvent ): void => {
 			if ( ! this.isDragging ) {
@@ -721,6 +723,13 @@ export class Window {
 			this.titleBar.removeEventListener( 'pointercancel', onDragEnd );
 			this.titleBar.removeEventListener( 'lostpointercapture', onDragEnd );
 			this.emitChange( 'moved' );
+			const payload = {
+				windowId: this.id,
+				x: this.element.offsetLeft,
+				y: this.element.offsetTop,
+			};
+			doAction( HOOKS.WINDOW_DRAG_END, payload );
+			doAction( HOOKS.WINDOW_MOVED, payload );
 		};
 
 		this.titleBar.addEventListener( 'pointermove', onDragMove );
@@ -748,6 +757,7 @@ export class Window {
 
 		( e.target as HTMLElement ).setPointerCapture( e.pointerId );
 		this.element.classList.add( 'wp-desktop-window--resizing' );
+		doAction( HOOKS.WINDOW_RESIZE_START, { windowId: this.id } );
 
 		const onResizeMove = ( ev: PointerEvent ): void => {
 			if ( ! this.isResizing ) {
@@ -771,6 +781,13 @@ export class Window {
 			handle.removeEventListener( 'pointercancel', onResizeEnd );
 			handle.removeEventListener( 'lostpointercapture', onResizeEnd );
 			this.emitChange( 'resized' );
+			const payload = {
+				windowId: this.id,
+				width: this.element.offsetWidth,
+				height: this.element.offsetHeight,
+			};
+			doAction( HOOKS.WINDOW_RESIZE_END, payload );
+			doAction( HOOKS.WINDOW_RESIZED, payload );
 		};
 
 		const handle = e.target as HTMLElement;
@@ -799,6 +816,7 @@ export class Window {
 	 */
 	public setTitle( title: string ): void {
 		this.titleEl.textContent = title;
+		doAction( HOOKS.WINDOW_TITLE_CHANGED, { windowId: this.id, title } );
 	}
 
 	/**
@@ -822,6 +840,7 @@ export class Window {
 
 		this.onMinimize?.( this );
 		this.emitChange( 'state' );
+		doAction( HOOKS.WINDOW_MINIMIZED, { windowId: this.id } );
 	}
 
 	/**
@@ -833,12 +852,16 @@ export class Window {
 			this.iframe.style.visibility = '';
 		}
 
+		const wasMinimized = this.state === 'minimized';
 		this.element.classList.remove( 'wp-desktop-window--minimized' );
-		if ( this.state === 'minimized' ) {
+		if ( wasMinimized ) {
 			this.state = 'normal';
 		}
 		this.onFocusRequest?.( this );
 		this.emitChange( 'state' );
+		if ( wasMinimized ) {
+			doAction( HOOKS.WINDOW_RESTORED, { windowId: this.id } );
+		}
 	}
 
 	/**
@@ -861,6 +884,8 @@ export class Window {
 				this.element.style.height = `${ this.savedGeometry.height }px`;
 			}
 			this.state = 'normal';
+			this.emitChange( 'state' );
+			doAction( HOOKS.WINDOW_UNMAXIMIZED, { windowId: this.id } );
 		} else {
 			// Save current geometry, then animate to the desktop area's bounds.
 			this.savedGeometry = {
@@ -875,8 +900,9 @@ export class Window {
 			this.element.style.width = `${ parent.clientWidth }px`;
 			this.element.style.height = `${ parent.clientHeight }px`;
 			this.state = 'maximized';
+			this.emitChange( 'state' );
+			doAction( HOOKS.WINDOW_MAXIMIZED, { windowId: this.id } );
 		}
-		this.emitChange( 'state' );
 	}
 
 	/**
@@ -920,6 +946,12 @@ export class Window {
 		updateFullscreenBodyClass();
 		this.updateFocusButtonState();
 		this.emitChange( 'state' );
+		doAction(
+			this.state === 'fullscreen'
+				? HOOKS.WINDOW_FULLSCREEN_ENTERED
+				: HOOKS.WINDOW_FULLSCREEN_EXITED,
+			{ windowId: this.id }
+		);
 	}
 
 	/**
@@ -976,6 +1008,7 @@ export class Window {
 		// reach back into window.opener), and it also lets the browser
 		// move the new tab to its own process.
 		window.open( url.toString(), '_blank', 'noopener' );
+		doAction( HOOKS.WINDOW_DETACHED, { windowId: this.id, url: url.toString() } );
 	}
 
 	/**

@@ -6,12 +6,16 @@
 	"description": "WordPress admin as a desktop OS — draggable, resizable windows on a desktop with a dock.",
 	"license": "GPL-2.0-or-later",
 	"scripts": {
-		"build": "vite build --mode development && vite build --mode production",
+		"build": "npm run vendor:pixi && vite build --mode development && vite build --mode production",
 		"dev": "vite build --mode development --watch",
+		"vendor:pixi": "node -e \"require('fs').cpSync('node_modules/pixi.js/dist/pixi.min.js', 'assets/vendor/pixi.min.js')\"",
 		"test:php": "phpunit --configuration tests/phpunit/phpunit.xml.dist"
 	},
 	"devDependencies": {
 		"typescript": "5.9.3",
 		"vite": "^5.4.10"
+	},
+	"dependencies": {
+		"pixi.js": "^8.18.1"
 	}
 }

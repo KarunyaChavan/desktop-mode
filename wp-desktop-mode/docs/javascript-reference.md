@@ -1,10 +1,11 @@
 # JavaScript Reference
 
-The browser-side contract. Three layers:
+The browser-side contract. Four layers:
 
-1. **CustomEvents** dispatched on `document` in the parent shell — for shell-side plugins.
-2. **`window.wp.desktop`** — the in-tree JS API for the WindowManager and Dock.
-3. **`postMessage`** bridge — typed messages between the parent shell and iframe windows.
+1. **WordPress-style hooks** via `window.wp.hooks` — the primary extension surface.
+2. **CustomEvents** dispatched on `document` in the parent shell — for shell-side plugins.
+3. **`window.wp.desktop`** — the in-tree JS API for the WindowManager, Dock, and hook helpers.
+4. **`postMessage`** bridge — typed messages between the parent shell and iframe windows.
 
 Status labels match the [Hooks Reference](./hooks-reference.md): **Stable / Experimental / Planned**.
 
@@ -264,8 +265,236 @@ Asks the iframe to toggle a named screen-meta panel. The iframe is the authority
 
 ---
 
+## 4. Hooks — `wp-desktop.*`
+
+Desktop Mode exposes WordPress-style filters and actions via the standard `@wordpress/hooks` package. The plugin declares `wp-hooks` as a script dependency so `window.wp.hooks` is always available before the shell boots, and all hook names live in the `wp-desktop.` namespace to avoid collisions with Core or Gutenberg.
+
+If you've used `addFilter` / `addAction` in Gutenberg, you already know how these work — there's nothing new to learn.
+
+### Bootstrap
+
+Plugins typically register everything inside a `wp-desktop.init` action callback so the `window.wp.desktop` public API is guaranteed to be populated when they fire. Late-enqueued scripts can call `wp.desktop.whenReady(cb)` — it runs immediately if init has already fired, otherwise it queues.
+
+```javascript
+wp.hooks.addAction( 'wp-desktop.init', 'my-plugin/boot', () => {
+    // wp.desktop is fully populated; register away.
+    wp.desktop.registerWallpaper( myWallpaper );
+} );
+```
+
+### Hooks catalog
+
+#### Shell & wallpapers
+
+| Hook | Kind | Status | Payload |
+|---|---|---|---|
+| `wp-desktop.init` | action | Stable | `{ config: DesktopConfig }` |
+| `wp-desktop.shell.resized` | action | Stable | `{ width, height }` — debounced ~120 ms after the browser stops resizing |
+| `wp-desktop.shell.visibility` | action | Stable | `{ state: 'visible' \| 'hidden' }` — mirrors `document.visibilitychange` |
+| `wp-desktop.wallpapers` | filter | Stable | `WallpaperDef[] → WallpaperDef[]` |
+| `wp-desktop.wallpaper.mounting` | action | Stable | `{ id, container, ctx }` |
+| `wp-desktop.wallpaper.mounted` | action | Stable | `{ id, container, ctx }` |
+| `wp-desktop.wallpaper.unmounting` | action | Stable | `{ id }` |
+| `wp-desktop.wallpaper.mount-failed` | action | Stable | `{ id, error }` |
+| `wp-desktop.wallpaper.visibility` | action | Stable | `{ id, state: 'visible' \| 'hidden' }` |
+
+#### Window lifecycle
+
+All window actions include at minimum `{ windowId: string }` — additional fields called out in the payload column.
+
+| Hook | Kind | Status | Payload |
+|---|---|---|---|
+| `wp-desktop.window.opened` | action | Stable | `{ windowId, page, title, url }` |
+| `wp-desktop.window.closed` | action | Stable | `{ windowId }` |
+| `wp-desktop.window.focused` | action | Stable | `{ windowId }` — fires on focus changes |
+| `wp-desktop.window.title-changed` | action | Stable | `{ windowId, title }` — iframe-sourced title updates |
+| `wp-desktop.window.minimized` | action | Stable | `{ windowId }` |
+| `wp-desktop.window.restored` | action | Stable | `{ windowId }` — restored from minimized |
+| `wp-desktop.window.maximized` | action | Stable | `{ windowId }` |
+| `wp-desktop.window.unmaximized` | action | Stable | `{ windowId }` |
+| `wp-desktop.window.fullscreen-entered` | action | Stable | `{ windowId }` |
+| `wp-desktop.window.fullscreen-exited` | action | Stable | `{ windowId }` |
+| `wp-desktop.window.drag-start` | action | Stable | `{ windowId }` |
+| `wp-desktop.window.drag-end` | action | Stable | `{ windowId, x, y }` |
+| `wp-desktop.window.moved` | action | Stable | `{ windowId, x, y }` — fires with drag-end |
+| `wp-desktop.window.resize-start` | action | Stable | `{ windowId }` |
+| `wp-desktop.window.resize-end` | action | Stable | `{ windowId, width, height }` |
+| `wp-desktop.window.resized` | action | Stable | `{ windowId, width, height }` — fires with resize-end |
+| `wp-desktop.window.detached` | action | Stable | `{ windowId, url }` — user opened in a classic-admin tab |
+
+The window hooks fan out alongside the existing `wp-desktop-window-*` CustomEvents (see section 2) — both APIs fire for every state change. New code should prefer the hook bus.
+
+All hooks can be listed via `wp.hooks.hasAction()` / `hasFilter()` for defensive checks.
+
+### Filter: `wp-desktop.wallpapers`
+
+Receives the registered wallpaper list. Plugins can add entries, remove entries, or reorder — callback returns the (possibly modified) array.
+
+```javascript
+// Remove the 'aurora' preset from the picker grid.
+wp.hooks.addFilter(
+    'wp-desktop.wallpapers',
+    'my-plugin/hide-aurora',
+    ( list ) => list.filter( ( w ) => w.id !== 'aurora' )
+);
+```
+
+In practice most plugins use the `wp.desktop.registerWallpaper()` convenience — internally it adds a filter callback under a namespace the shell generates for you, so the raw filter API is only needed for non-additive operations.
+
+---
+
+## 5. Wallpaper registration API
+
+The shell ships a registry-driven wallpaper picker: every entry in the registry becomes a swatch in the OS Settings panel, and the WallpaperLayer resolves whichever is currently selected onto the desktop. Plugins register their own via `wp.desktop.registerWallpaper()` (or the `wp-desktop.wallpapers` filter).
+
+Two shapes ship today: `css` (a static CSS background value) and `canvas` (a plugin-managed DOM subtree, typically a WebGL/2D canvas).
+
+### Shape
+
+```typescript
+type WallpaperDef =
+    | {
+          type: 'css';
+          id: string;
+          label: string;
+          preview: string;            // CSS `background` value for the swatch
+          value?: string;             // Applied to --wp-desktop-bg
+          resolveValue?: ( ctx: WallpaperContext ) => string;  // Dynamic alternative
+          renderEditor?: WallpaperEditor;
+      }
+    | {
+          type: 'canvas';
+          id: string;
+          label: string;
+          preview: string;            // CSS `background` for the swatch (pre-mount)
+          mount: ( container: HTMLElement, ctx: WallpaperContext ) =>
+                  ( () => void ) | Promise<() => void>;
+          renderEditor?: WallpaperEditor;
+      };
+
+interface WallpaperContext {
+    id: string;
+    pluginUrl: string;                // no trailing slash
+    prefersReducedMotion: boolean;
+    visible: boolean;                 // current document visibility
+}
+```
+
+### Minimal CSS wallpaper
+
+```javascript
+wp.hooks.addAction( 'wp-desktop.init', 'my-plugin/boot', () => {
+    wp.desktop.registerWallpaper( {
+        id: 'my-plugin/ocean',
+        label: 'Ocean',
+        type: 'css',
+        value: 'linear-gradient(180deg, #0ea5e9, #1e3a8a)',
+        preview: 'linear-gradient(180deg, #0ea5e9, #1e3a8a)',
+    } );
+} );
+```
+
+### Canvas wallpaper with a declared dependency
+
+Don't hardcode URLs to vendor libraries — declare them by module id. The shell pre-registers common modules (`pixijs` today), and plugins can register their own. When the wallpaper activates, the shell loads every listed module before `mount` fires; concurrent activations dedupe through the memoized script loader.
+
+```javascript
+wp.hooks.addAction( 'wp-desktop.init', 'my-plugin/boot', () => {
+    wp.desktop.registerWallpaper( {
+        id: 'my-plugin/spinner',
+        label: 'Spinner',
+        type: 'canvas',
+        preview: '#0a0a1a',
+        needs: [ 'pixijs' ],        // ← shell loads this before mount
+        mount: async ( container, ctx ) => {
+            // window.PIXI is guaranteed defined at this point.
+            const app = new window.PIXI.Application();
+            await app.init( { resizeTo: container } );
+            container.appendChild( app.canvas );
+
+            if ( ctx.prefersReducedMotion ) {
+                // Render a still frame; never start the ticker.
+                app.ticker.stop();
+            }
+
+            return () => app.destroy( true );
+        },
+    } );
+} );
+```
+
+Unknown module ids fail loudly via `wp-desktop.wallpaper.mount-failed` — no silent non-activations.
+
+### Registering your own module
+
+If your plugin ships a library other plugins might want to share, register it once and let them `needs:` it by id.
+
+```javascript
+wp.desktop.registerModule( {
+    id: 'three-js',
+    url: `${ wp.desktop.config.pluginUrl }/vendor/three.min.js`,
+    // Optional: skip re-loading if already present (e.g. Core shipped it).
+    isReady: () => typeof window.THREE !== 'undefined',
+} );
+```
+
+### Lifecycle guarantees
+
+The shell protects against mount/unmount races with a monotonic generation counter. Rapid wallpaper switching is safe — a mount that resolves after the user has already picked something else tears itself down immediately and doesn't pollute the DOM.
+
+Canvas wallpapers receive `ctx.prefersReducedMotion` and should render a single static frame rather than starting an animation loop when it's true. The shell also fires `wp-desktop.wallpaper.visibility` on every `document.visibilitychange` so wallpapers can pause their tickers when the tab is backgrounded.
+
+### `renderEditor` — in-panel controls
+
+Any wallpaper can ship a `renderEditor` callback — when that wallpaper is the selected swatch in OS Settings, a collapsible panel opens below the grid and the editor is rendered into it. Same animation as the built-in custom-gradient editor.
+
+```javascript
+wp.desktop.registerWallpaper( {
+    id: 'my-plugin/tunable',
+    label: 'Tunable',
+    type: 'css',
+    preview: '#334155',
+    resolveValue: () => myState.currentColor,
+    renderEditor: ( container, ctx ) => {
+        const picker = makeColorPicker( myState.currentColor );
+        picker.onChange = ( v ) => {
+            myState.currentColor = v;
+            // Registered with resolveValue, so the shell re-reads it
+            // on the next apply — just re-apply to repaint.
+            // (A future API may add a helper for this pattern.)
+        };
+        container.appendChild( picker.el );
+        return () => picker.destroy();
+    },
+} );
+```
+
+### `window.wp.desktop` members
+
+| Member | Status | Notes |
+|---|---|---|
+| `windowManager` | Stable | WindowManager instance |
+| `dock` | Stable | Dock instance (null if no dock element) |
+| `saveSession()` | Stable | Force a session write |
+| `hooks` | Stable | Alias of `window.wp.hooks` |
+| `registerWallpaper( def )` | Stable | Add a wallpaper to the registry + re-apply |
+| `loadVendorScript( url )` | Stable | Memoized `<script>` injector. Low-level; most plugins use `needs` instead. |
+| `registerModule( def )` | Stable | Register a shared vendor library under a stable id. |
+| `loadModules( ids )` | Stable | Imperatively load registered modules. Usually unnecessary — canvas wallpapers declare `needs[]` and the shell resolves. |
+| `whenReady( cb )` | Stable | Run `cb` after `wp-desktop.init` has fired |
+| `config` | Stable | The `DesktopConfig` that booted the shell |
+
+### Pre-registered modules
+
+| id | ships from | global |
+|---|---|---|
+| `pixijs` | `assets/vendor/pixi.min.js` (PixiJS v8) | `window.PIXI` |
+
+---
+
 ## See also
 
 - [Hooks Reference](./hooks-reference.md) — the PHP side of the API.
 - [Examples — React to window events](./examples/react-to-window-events.md)
 - [Examples — Add a dock badge](./examples/dock-badge.md)
+- [Examples — Register a wallpaper](./examples/register-wallpaper.md)

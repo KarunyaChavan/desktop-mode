@@ -1568,17 +1568,16 @@ var wpDesktop = function(exports) {
     }
     /**
      * Listen to window events to update active/focused indicators on dock items.
+     *
+     * The event detail isn't used — we just need to re-query the
+     * window manager on every change — so the handlers take no
+     * argument and the type cast is gone with it.
      */
     bindWindowEvents() {
-      document.addEventListener("wp-desktop-window-opened", (e) => {
-        this.updateActiveStates();
-      });
-      document.addEventListener("wp-desktop-window-closed", (e) => {
-        this.updateActiveStates();
-      });
-      document.addEventListener("wp-desktop-window-focused", (e) => {
-        this.updateActiveStates();
-      });
+      const refresh = () => this.updateActiveStates();
+      document.addEventListener("wp-desktop-window-opened", refresh);
+      document.addEventListener("wp-desktop-window-closed", refresh);
+      document.addEventListener("wp-desktop-window-focused", refresh);
     }
     /**
      * Update the active/focused classes and multi-instance rail on every

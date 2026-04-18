@@ -195,9 +195,16 @@ export class OsSettings {
 		const accent = ACCENTS.find( ( a ) => a.id === this.state.accent ) ?? ACCENTS[ 0 ];
 		const dockSize = DOCK_SIZES.find( ( d ) => d.id === this.state.dockSize ) ?? DOCK_SIZES[ 1 ];
 
-		shell.style.setProperty( '--wp-admin-theme-color', accent.value );
-		shell.style.setProperty( '--wp-desktop-dock-width', `${ dockSize.width }px` );
-		shell.style.setProperty( '--wp-desktop-dock-icon-size', `${ dockSize.icon }px` );
+		// Set on <html> rather than the shell so the cascade reaches
+		// siblings of #wp-desktop-shell — specifically the WordPress
+		// admin bar, which needs --wp-desktop-dock-width to size its
+		// leftmost (W-logo) slot in visual alignment with the dock
+		// below it. Shell-scoped variables cascade to shell children
+		// only; :root-scoped variables cascade everywhere.
+		const root = document.documentElement;
+		root.style.setProperty( '--wp-admin-theme-color', accent.value );
+		root.style.setProperty( '--wp-desktop-dock-width', `${ dockSize.width }px` );
+		root.style.setProperty( '--wp-desktop-dock-icon-size', `${ dockSize.icon }px` );
 	}
 
 	/**

@@ -402,7 +402,7 @@ function restoreSession(
 		const clamped = clampGeometryToViewport( win, rect );
 		const dockEntry = findDockEntryForUrl( win.url, config );
 
-		manager.open( {
+		const opened = manager.open( {
 			id: win.id,
 			baseId: win.baseId || win.id,
 			multi: !! dockEntry?.multi,
@@ -416,6 +416,23 @@ function restoreSession(
 			initialState: win.state,
 			submenu: dockEntry?.submenu,
 		} );
+
+		// Rehydrate any external sub-tabs the user had open on this
+		// window at save time. Each becomes a fresh closeable tab with
+		// its own iframe, ordered left-to-right in the order they
+		// were added originally.
+		if ( Array.isArray( win.externalTabs ) ) {
+			for ( const ext of win.externalTabs ) {
+				if ( ext && typeof ext.url === 'string' && ext.url !== '' ) {
+					opened.addExternalTab(
+						ext.url,
+						typeof ext.label === 'string' && ext.label !== ''
+							? ext.label
+							: ext.url,
+					);
+				}
+			}
+		}
 	}
 
 	// Restore focus to whichever window the user left focused. If that id

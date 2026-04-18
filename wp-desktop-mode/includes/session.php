@@ -170,7 +170,7 @@ function wpdm_sanitize_session( $session ) {
 				$state = 'normal';
 			}
 
-			$clean['windows'][] = array(
+			$entry = array(
 				'id'     => $id,
 				'baseId' => $base_id,
 				'url'    => $url,
@@ -182,6 +182,43 @@ function wpdm_sanitize_session( $session ) {
 				'width'  => wpdm_sanitize_session_dimension( $win['width'] ?? 800, 0, 20000 ),
 				'height' => wpdm_sanitize_session_dimension( $win['height'] ?? 600, 0, 20000 ),
 			);
+
+			// Sanitize external sub-tabs. Each entry carries a URL
+			// (any http/https — external tabs are explicitly for links
+			// OUT of wp-admin, so we don't restrict to same-origin
+			// here) and a label. Capped at a reasonable per-window
+			// limit so a runaway client can't balloon user meta.
+			if ( isset( $win['externalTabs'] ) && is_array( $win['externalTabs'] ) ) {
+				$tabs = array();
+				foreach ( $win['externalTabs'] as $tab ) {
+					if ( ! is_array( $tab ) ) {
+						continue;
+					}
+					$tab_url = isset( $tab['url'] ) ? esc_url_raw( (string) $tab['url'], array( 'http', 'https' ) ) : '';
+					if ( '' === $tab_url ) {
+						continue;
+					}
+					$label = isset( $tab['label'] ) ? wp_strip_all_tags( (string) $tab['label'] ) : '';
+					// Trim long labels server-side too, mirroring the
+					// client-side 80-char slice in the chromeless
+					// bridge. Keeps meta size predictable.
+					if ( strlen( $label ) > 80 ) {
+						$label = substr( $label, 0, 80 );
+					}
+					$tabs[] = array(
+						'url'   => $tab_url,
+						'label' => $label,
+					);
+					if ( count( $tabs ) >= 16 ) {
+						break;
+					}
+				}
+				if ( ! empty( $tabs ) ) {
+					$entry['externalTabs'] = $tabs;
+				}
+			}
+
+			$clean['windows'][] = $entry;
 
 			if ( count( $clean['windows'] ) >= WPDM_SESSION_MAX_WINDOWS ) {
 				break;

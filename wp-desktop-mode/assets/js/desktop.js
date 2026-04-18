@@ -153,7 +153,70 @@ var wpDesktop = function(exports) {
     }
     addAction(HOOKS.INIT, "wp-desktop-mode/when-ready", cb);
   }
+  const CONTAINER_CLASS = "wp-desktop-toast-container";
+  const DEFAULT_DURATION_MS = 4e3;
+  const FADE_OUT_MS = 200;
+  function showToast(options) {
+    const container = ensureContainer();
+    const toast = document.createElement("div");
+    toast.className = "wp-desktop-toast";
+    toast.setAttribute("role", "status");
+    const label = document.createElement("span");
+    label.className = "wp-desktop-toast__label";
+    label.textContent = options.message;
+    toast.appendChild(label);
+    if (options.action) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "wp-desktop-toast__action";
+      btn.textContent = options.action.label;
+      btn.addEventListener("click", () => {
+        options.action?.onClick();
+        dismiss();
+      });
+      toast.appendChild(btn);
+    }
+    container.appendChild(toast);
+    let dismissed = false;
+    let dismissTimer = null;
+    const dismiss = () => {
+      if (dismissed) {
+        return;
+      }
+      dismissed = true;
+      if (dismissTimer !== null) {
+        window.clearTimeout(dismissTimer);
+        dismissTimer = null;
+      }
+      toast.classList.add("wp-desktop-toast--out");
+      window.setTimeout(() => {
+        toast.remove();
+      }, FADE_OUT_MS);
+    };
+    requestAnimationFrame(() => {
+      toast.classList.add("wp-desktop-toast--in");
+    });
+    dismissTimer = window.setTimeout(
+      dismiss,
+      options.duration ?? DEFAULT_DURATION_MS
+    );
+    return dismiss;
+  }
+  function ensureContainer() {
+    const existing = document.querySelector(
+      `.${CONTAINER_CLASS}`
+    );
+    if (existing) {
+      return existing;
+    }
+    const el = document.createElement("div");
+    el.className = CONTAINER_CLASS;
+    el.setAttribute("aria-live", "polite");
+    document.body.appendChild(el);
+    return el;
+  }
   const EDGE_MARGIN = 8;
+  const EXTERNAL_IFRAME_READY_TIMEOUT_MS = 3e3;
   function withChromelessParam(url) {
     const parsed = new URL(url, window.location.origin);
     if (parsed.origin !== window.location.origin) {
@@ -285,26 +348,29 @@ var wpDesktop = function(exports) {
     const resizeHandle = document.createElement("div");
     resizeHandle.className = "wp-desktop-window__resize-handle";
     el.appendChild(titleBar);
-    if (config.submenu && config.submenu.length > 0) {
+    if (!config.native) {
       const tabs = document.createElement("nav");
       tabs.className = "wp-desktop-window__tabs";
       tabs.setAttribute("role", "tablist");
       tabs.setAttribute("aria-label", `${config.title} sub-pages`);
-      const initialKey = urlMatchKey(config.url);
-      for (const sub of config.submenu) {
-        const tab = document.createElement("button");
-        tab.className = "wp-desktop-window__tab";
-        tab.setAttribute("type", "button");
-        tab.setAttribute("role", "tab");
-        tab.dataset.url = sub.url;
-        tab.textContent = sub.title;
-        if (urlMatchKey(sub.url) === initialKey) {
-          tab.classList.add("wp-desktop-window__tab--active");
-          tab.setAttribute("aria-selected", "true");
-        } else {
-          tab.setAttribute("aria-selected", "false");
+      if (config.submenu && config.submenu.length > 0) {
+        const initialKey = urlMatchKey(config.url);
+        for (const sub of config.submenu) {
+          const tab = document.createElement("button");
+          tab.className = "wp-desktop-window__tab";
+          tab.dataset.kind = "submenu";
+          tab.setAttribute("type", "button");
+          tab.setAttribute("role", "tab");
+          tab.dataset.url = sub.url;
+          tab.textContent = sub.title;
+          if (urlMatchKey(sub.url) === initialKey) {
+            tab.classList.add("wp-desktop-window__tab--active");
+            tab.setAttribute("aria-selected", "true");
+          } else {
+            tab.setAttribute("aria-selected", "false");
+          }
+          tabs.appendChild(tab);
         }
-        tabs.appendChild(tab);
       }
       el.appendChild(tabs);
     }
@@ -326,6 +392,9 @@ var wpDesktop = function(exports) {
       this.resizeStartH = 0;
       this.savedGeometry = null;
       this.savedFullscreenState = null;
+      this.externalTabs = /* @__PURE__ */ new Map();
+      this.externalTabSeq = 0;
+      this.activeTabId = "primary";
       this.onFocusRequest = null;
       this.onClose = null;
       this.onMinimize = null;
@@ -501,14 +570,43 @@ var wpDesktop = function(exports) {
         const tabs = this.element.querySelector(".wp-desktop-window__tabs");
         if (tabs) {
           tabs.addEventListener("click", (e) => {
-            const target = e.target.closest(".wp-desktop-window__tab");
-            if (!target || !target.dataset.url) {
+            const target = e.target;
+            const chip = target.closest("[data-tab-action]");
+            if (chip) {
+              e.stopPropagation();
+              const action = chip.dataset.tabAction;
+              const tabId2 = chip.dataset.tabId;
+              if (!tabId2) {
+                return;
+              }
+              if (action === "close") {
+                this.closeExternalTab(tabId2);
+              } else if (action === "detach") {
+                this.detachExternalTab(tabId2);
+              }
+              return;
+            }
+            const tab = target.closest(".wp-desktop-window__tab");
+            if (!tab) {
               return;
             }
             e.stopPropagation();
-            const next = withChromelessParam(target.dataset.url);
-            if (next) {
-              iframe.src = next;
+            const kind = tab.dataset.kind;
+            const tabId = tab.dataset.tabId;
+            if (kind === "external" && tabId) {
+              this.switchToTab(tabId);
+              return;
+            }
+            if (kind === "main") {
+              this.switchToTab("primary");
+              return;
+            }
+            if (tab.dataset.url) {
+              const next = withChromelessParam(tab.dataset.url);
+              if (next) {
+                iframe.src = next;
+              }
+              this.switchToTab("primary");
             }
           });
         }
@@ -527,19 +625,253 @@ var wpDesktop = function(exports) {
     /**
      * Update the active tab to whichever submenu URL matches the iframe's
      * current location. Called after every iframe navigation.
+     *
+     * Only submenu tabs participate in URL-based matching. External
+     * sub-tabs and the injected "main" tab manage their own active
+     * state through `switchToTab`, since their notion of "active"
+     * isn't a URL comparison — it's which iframe is foregrounded.
      */
     syncActiveTab(currentUrl) {
-      const tabs = this.element.querySelectorAll(".wp-desktop-window__tab");
-      if (!tabs.length) {
+      const submenuTabs = this.element.querySelectorAll(
+        '.wp-desktop-window__tab[data-kind="submenu"]'
+      );
+      if (!submenuTabs.length) {
+        return;
+      }
+      if (this.activeTabId !== "primary") {
+        for (const tab of submenuTabs) {
+          tab.classList.remove("wp-desktop-window__tab--active");
+          tab.setAttribute("aria-selected", "false");
+        }
         return;
       }
       const activeKey = urlMatchKey(currentUrl);
-      for (const tab of tabs) {
+      for (const tab of submenuTabs) {
         const tabUrl = tab.dataset.url;
         const isActive = !!tabUrl && urlMatchKey(tabUrl) === activeKey;
         tab.classList.toggle("wp-desktop-window__tab--active", isActive);
         tab.setAttribute("aria-selected", isActive ? "true" : "false");
       }
+    }
+    /**
+     * Add a closeable+detachable sub-tab hosting an external URL.
+     *
+     * Flow:
+     *   1. Lazily create a "Main" tab if this is the first external
+     *      tab on a window that has no submenu (otherwise the user
+     *      would have no way to get back to the admin page).
+     *   2. Create an iframe for the external URL, hidden by default.
+     *   3. Append a tab to the strip with label + detach + close chips.
+     *   4. Switch to the new tab.
+     *   5. Start a 2s readiness probe — if the iframe's `load` event
+     *      doesn't fire in that window (network failure, hard block),
+     *      auto-dismiss the tab and open the URL in a real browser
+     *      tab with an explanatory toast. For subtler blocks
+     *      (X-Frame-Options showing the browser's error page *inside*
+     *      the iframe, which does fire `load`), the user sees the
+     *      error and can hit the detach button themselves.
+     */
+    addExternalTab(url, label) {
+      if (!this.iframe) {
+        return;
+      }
+      const tabStrip = this.element.querySelector(
+        ".wp-desktop-window__tabs"
+      );
+      const body = this.element.querySelector(
+        ".wp-desktop-window__body"
+      );
+      if (!tabStrip || !body) {
+        return;
+      }
+      this.ensureMainTab(tabStrip);
+      const tabId = `ext-${++this.externalTabSeq}`;
+      const tabEl = document.createElement("button");
+      tabEl.className = "wp-desktop-window__tab wp-desktop-window__tab--external";
+      tabEl.dataset.kind = "external";
+      tabEl.dataset.tabId = tabId;
+      tabEl.setAttribute("type", "button");
+      tabEl.setAttribute("role", "tab");
+      tabEl.setAttribute("aria-selected", "false");
+      tabEl.title = url;
+      const labelEl = document.createElement("span");
+      labelEl.className = "wp-desktop-window__tab-label";
+      labelEl.textContent = label;
+      tabEl.appendChild(labelEl);
+      const detachBtn = document.createElement("span");
+      detachBtn.className = "wp-desktop-window__tab-chip wp-desktop-window__tab-chip--detach";
+      detachBtn.dataset.tabAction = "detach";
+      detachBtn.dataset.tabId = tabId;
+      detachBtn.setAttribute("role", "button");
+      detachBtn.setAttribute("aria-label", "Open in a new browser tab");
+      detachBtn.title = "Open in a new browser tab";
+      detachBtn.innerHTML = '<svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M5 2H2.5v7.5H10V7M6.5 2H10v3.5M10 2L5.5 6.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>';
+      tabEl.appendChild(detachBtn);
+      const closeBtn = document.createElement("span");
+      closeBtn.className = "wp-desktop-window__tab-chip wp-desktop-window__tab-chip--close";
+      closeBtn.dataset.tabAction = "close";
+      closeBtn.dataset.tabId = tabId;
+      closeBtn.setAttribute("role", "button");
+      closeBtn.setAttribute("aria-label", "Close tab");
+      closeBtn.title = "Close tab";
+      closeBtn.innerHTML = '<svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M3.25 3.25l5.5 5.5M3.25 8.75l5.5-5.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/></svg>';
+      tabEl.appendChild(closeBtn);
+      tabStrip.appendChild(tabEl);
+      const iframe = document.createElement("iframe");
+      iframe.className = "wp-desktop-window__iframe wp-desktop-window__iframe--external";
+      iframe.dataset.tabId = tabId;
+      iframe.style.display = "none";
+      iframe.src = url;
+      body.appendChild(iframe);
+      let loaded = false;
+      const onLoad = () => {
+        loaded = true;
+      };
+      iframe.addEventListener("load", onLoad, { once: true });
+      const probeTimer = window.setTimeout(() => {
+        if (loaded) {
+          return;
+        }
+        iframe.removeEventListener("load", onLoad);
+        this.fallbackToBrowserTab(tabId);
+      }, EXTERNAL_IFRAME_READY_TIMEOUT_MS);
+      const cancelProbe = () => {
+        iframe.removeEventListener("load", onLoad);
+        window.clearTimeout(probeTimer);
+      };
+      this.externalTabs.set(tabId, {
+        tabEl,
+        iframe,
+        url,
+        label,
+        cancelProbe
+      });
+      this.switchToTab(tabId);
+      tabEl.scrollIntoView({ behavior: "smooth", inline: "end", block: "nearest" });
+      this.emitChange("state");
+    }
+    /**
+     * Injects a "Main" tab at the start of the strip once external
+     * tabs exist. For windows that already have a submenu, no main
+     * tab is injected — submenu tabs already act as the return path
+     * to primary content. Idempotent.
+     */
+    ensureMainTab(tabStrip) {
+      if (tabStrip.querySelector('[data-kind="main"]')) {
+        return;
+      }
+      if (tabStrip.querySelector('[data-kind="submenu"]')) {
+        return;
+      }
+      const main = document.createElement("button");
+      main.className = "wp-desktop-window__tab wp-desktop-window__tab--main wp-desktop-window__tab--active";
+      main.dataset.kind = "main";
+      main.setAttribute("type", "button");
+      main.setAttribute("role", "tab");
+      main.setAttribute("aria-selected", "true");
+      main.textContent = this.config.title || "Main";
+      tabStrip.prepend(main);
+    }
+    /**
+     * Foreground a tab — either the primary iframe (tabId='primary')
+     * or one of the external sub-tabs. Updates visibility across all
+     * iframes and active state across all tabs.
+     */
+    switchToTab(tabId) {
+      if (this.activeTabId === tabId) {
+        return;
+      }
+      this.activeTabId = tabId;
+      if (this.iframe) {
+        this.iframe.style.display = tabId === "primary" ? "" : "none";
+      }
+      for (const [id, entry] of this.externalTabs) {
+        entry.iframe.style.display = tabId === id ? "" : "none";
+      }
+      const tabEls = this.element.querySelectorAll(
+        ".wp-desktop-window__tab"
+      );
+      tabEls.forEach((t) => {
+        let isActive;
+        if (t.dataset.kind === "main") {
+          isActive = tabId === "primary";
+        } else if (t.dataset.kind === "external") {
+          isActive = t.dataset.tabId === tabId;
+        } else {
+          isActive = tabId === "primary" && t.classList.contains(
+            "wp-desktop-window__tab--active"
+          );
+        }
+        t.classList.toggle("wp-desktop-window__tab--active", isActive);
+        t.setAttribute("aria-selected", isActive ? "true" : "false");
+      });
+    }
+    /** Remove an external sub-tab + its iframe. */
+    closeExternalTab(tabId) {
+      const entry = this.externalTabs.get(tabId);
+      if (!entry) {
+        return;
+      }
+      entry.cancelProbe();
+      entry.tabEl.remove();
+      entry.iframe.remove();
+      this.externalTabs.delete(tabId);
+      if (this.activeTabId === tabId) {
+        this.switchToTab("primary");
+      }
+      if (this.externalTabs.size === 0) {
+        const main = this.element.querySelector(
+          ".wp-desktop-window__tab--main"
+        );
+        main?.remove();
+      }
+      this.emitChange("state");
+    }
+    /**
+     * Open an external sub-tab's current URL in a real browser tab and
+     * close the sub-tab. The iframe's `contentWindow.location` may have
+     * navigated beyond the original URL; we prefer that live URL so a
+     * user who drilled 3 pages deep into an external site gets taken
+     * to the right spot.
+     */
+    detachExternalTab(tabId) {
+      const entry = this.externalTabs.get(tabId);
+      if (!entry) {
+        return;
+      }
+      let url = entry.url;
+      try {
+        const href = entry.iframe.contentWindow?.location.href;
+        if (href && href !== "about:blank") {
+          url = href;
+        }
+      } catch {
+      }
+      window.open(url, "_blank", "noopener");
+      this.closeExternalTab(tabId);
+    }
+    /**
+     * Fallback for sub-tabs that fail to load within the probe window.
+     * Dismisses the sub-tab, opens the URL as a real browser tab, and
+     * flashes a toast explaining why the shell gave up on embedding.
+     */
+    fallbackToBrowserTab(tabId) {
+      const entry = this.externalTabs.get(tabId);
+      if (!entry) {
+        return;
+      }
+      const { url, label } = entry;
+      this.closeExternalTab(tabId);
+      showToast({
+        message: `Opened "${label}" in a new browser tab — this site doesn't allow embedding.`,
+        action: {
+          label: "Open",
+          onClick: () => {
+            window.open(url, "_blank", "noopener");
+          }
+        }
+      });
+      window.open(url, "_blank", "noopener");
     }
     /**
      * Handle postMessage events from the iframe.
@@ -565,6 +897,10 @@ var wpDesktop = function(exports) {
         this.setActiveScreenMetaPanel(
           typeof data.open === "string" ? data.open : null
         );
+      }
+      if (data.type === "wp-desktop-external-link" && typeof data.url === "string" && data.url !== "") {
+        const label = typeof data.label === "string" && data.label !== "" ? data.label : data.url;
+        this.addExternalTab(data.url, label);
       }
     }
     /**
@@ -1095,6 +1431,27 @@ var wpDesktop = function(exports) {
         state: this.state
       };
     }
+    /**
+     * Serializable snapshot of this window's external sub-tabs.
+     * Iteration order follows the `Map`'s insertion order, which
+     * matches the tab strip's left-to-right order — so restoring
+     * preserves the visual layout.
+     */
+    getExternalTabsSnapshot() {
+      const out = [];
+      for (const entry of this.externalTabs.values()) {
+        let url = entry.url;
+        try {
+          const href = entry.iframe.contentWindow?.location.href;
+          if (href && href !== "about:blank") {
+            url = href;
+          }
+        } catch {
+        }
+        out.push({ url, label: entry.label });
+      }
+      return out;
+    }
   }
   const BASE_Z_INDEX = 100;
   const CASCADE_OFFSET = 30;
@@ -1323,6 +1680,7 @@ var wpDesktop = function(exports) {
       const persistable = this.stack.filter((w) => !w.config.native);
       const windows = persistable.map((w) => {
         const snap = w.getSnapshot();
+        const externalTabs = w.getExternalTabsSnapshot();
         return {
           id: w.id,
           baseId: w.config.baseId || w.id,
@@ -1333,7 +1691,8 @@ var wpDesktop = function(exports) {
           x: snap.x,
           y: snap.y,
           width: snap.width,
-          height: snap.height
+          height: snap.height,
+          ...externalTabs.length > 0 ? { externalTabs } : {}
         };
       });
       const focusedId = focused && !focused.config.native ? focused.id : "";
@@ -1745,9 +2104,10 @@ var wpDesktop = function(exports) {
       }
       const accent = ACCENTS.find((a) => a.id === this.state.accent) ?? ACCENTS[0];
       const dockSize = DOCK_SIZES.find((d) => d.id === this.state.dockSize) ?? DOCK_SIZES[1];
-      shell.style.setProperty("--wp-admin-theme-color", accent.value);
-      shell.style.setProperty("--wp-desktop-dock-width", `${dockSize.width}px`);
-      shell.style.setProperty("--wp-desktop-dock-icon-size", `${dockSize.icon}px`);
+      const root = document.documentElement;
+      root.style.setProperty("--wp-admin-theme-color", accent.value);
+      root.style.setProperty("--wp-desktop-dock-width", `${dockSize.width}px`);
+      root.style.setProperty("--wp-desktop-dock-icon-size", `${dockSize.icon}px`);
     }
     /**
      * Render the settings panel into the given native-window body.
@@ -3503,7 +3863,7 @@ var wpDesktop = function(exports) {
     for (const win of config.session.windows) {
       const clamped = clampGeometryToViewport(win, rect);
       const dockEntry = findDockEntryForUrl(win.url, config);
-      manager.open({
+      const opened = manager.open({
         id: win.id,
         baseId: win.baseId || win.id,
         multi: !!dockEntry?.multi,
@@ -3517,6 +3877,16 @@ var wpDesktop = function(exports) {
         initialState: win.state,
         submenu: dockEntry?.submenu
       });
+      if (Array.isArray(win.externalTabs)) {
+        for (const ext of win.externalTabs) {
+          if (ext && typeof ext.url === "string" && ext.url !== "") {
+            opened.addExternalTab(
+              ext.url,
+              typeof ext.label === "string" && ext.label !== "" ? ext.label : ext.url
+            );
+          }
+        }
+      }
     }
     if (config.session.focused) {
       const focused = manager.getById(config.session.focused);

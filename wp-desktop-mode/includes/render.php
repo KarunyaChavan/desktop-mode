@@ -424,6 +424,46 @@ function wpdm_chromeless_bridge_script() {
 		return url.toString();
 	}
 
+	/*
+	 * Classify a link so we know whether to rewrite it (admin),
+	 * escalate it to the parent shell (external / non-admin), or let
+	 * the browser navigate naturally (mailto, anchor, download, etc.).
+	 *
+	 *   'admin'       — same-origin /wp-admin/ URL we rewrite in place.
+	 *   'external'    — http(s) URL we want the parent shell to open
+	 *                   as a sub-tab instead of navigating the iframe
+	 *                   out of wp-admin. Covers both cross-origin
+	 *                   links (plugin author sites, external docs) AND
+	 *                   same-origin non-admin links (the site's own
+	 *                   front-end pages).
+	 *   'passthrough' — anything else (mailto, tel, javascript, data,
+	 *                   anchors, unparseable). The browser handles it.
+	 */
+	function classifyLink( href, base ) {
+		if ( ! href || href.charAt( 0 ) === '#' ) {
+			return 'passthrough';
+		}
+		if ( /^(mailto:|tel:|javascript:|data:)/i.test( href ) ) {
+			return 'passthrough';
+		}
+		var url;
+		try {
+			url = new URL( href, base );
+		} catch ( err ) {
+			return 'passthrough';
+		}
+		if ( url.protocol !== 'http:' && url.protocol !== 'https:' ) {
+			return 'passthrough';
+		}
+		if (
+			url.origin === window.location.origin &&
+			url.pathname.indexOf( '/wp-admin/' ) !== -1
+		) {
+			return 'admin';
+		}
+		return 'external';
+	}
+
 	document.addEventListener( 'click', function ( e ) {
 		if ( e.defaultPrevented ) {
 			return;
@@ -441,9 +481,45 @@ function wpdm_chromeless_bridge_script() {
 		if ( link.hasAttribute( 'download' ) ) {
 			return;
 		}
-		var rewritten = rewriteAdminUrl( link.getAttribute( 'href' ), window.location.href );
-		if ( rewritten ) {
-			link.setAttribute( 'href', rewritten );
+		var href = link.getAttribute( 'href' );
+		var kind = classifyLink( href, window.location.href );
+		if ( kind === 'admin' ) {
+			var rewritten = rewriteAdminUrl( href, window.location.href );
+			if ( rewritten ) {
+				link.setAttribute( 'href', rewritten );
+			}
+			return;
+		}
+		if ( kind === 'external' ) {
+			/*
+			 * External navigation inside an admin iframe would leave
+			 * the user stranded in a chrome-free version of whatever
+			 * site the link points at. Escalate to the parent shell
+			 * so it opens the URL as a closeable sub-tab (with a
+			 * detach button) alongside the admin tab — the user
+			 * stays inside the desktop shell.
+			 *
+			 * Resolving the href against the document base gives the
+			 * parent an absolute URL it doesn't have to re-resolve.
+			 */
+			e.preventDefault();
+			var absolute;
+			try {
+				absolute = new URL( href, window.location.href ).toString();
+			} catch ( err ) {
+				return;
+			}
+			var label = ( link.textContent || '' ).trim() ||
+				link.getAttribute( 'title' ) ||
+				absolute;
+			window.parent.postMessage(
+				{
+					type: 'wp-desktop-external-link',
+					url: absolute,
+					label: label.slice( 0, 80 )
+				},
+				window.location.origin
+			);
 		}
 	}, true );
 

@@ -306,6 +306,7 @@ export class WindowManager {
 		const persistable = this.stack.filter( ( w ) => ! w.config.native );
 		const windows: SessionWindow[] = persistable.map( ( w ) => {
 			const snap = w.getSnapshot();
+			const externalTabs = w.getExternalTabsSnapshot();
 			return {
 				id: w.id,
 				baseId: w.config.baseId || w.id,
@@ -317,6 +318,7 @@ export class WindowManager {
 				y: snap.y,
 				width: snap.width,
 				height: snap.height,
+				...( externalTabs.length > 0 ? { externalTabs } : {} ),
 			};
 		} );
 		const focusedId = focused && ! focused.config.native ? focused.id : '';

@@ -52,6 +52,40 @@ body.wp-desktop-active #wpadminbar {
 }
 
 /*
+ * Align the admin-bar W logo with the dock below it.
+ *
+ * Without this rule the admin bar's leftmost item (the WordPress W)
+ * renders at its Core-dictated ~44 px width, while the dock below it
+ * can be 48, 56, or 72 px wide depending on the user's OS-Settings
+ * preference. The misalignment reads as "two disconnected left
+ * regions" — visually scruffy on an otherwise tight shell.
+ *
+ * We size the logo's <li> to match the dock's width and center the
+ * W inside, so the two columns share an axis. `--wp-desktop-dock-width`
+ * is now set on :root (see settings.ts → apply()) so it reaches
+ * siblings of #wp-desktop-shell like the admin bar.
+ */
+body.wp-desktop-active #wpadminbar #wp-admin-bar-wp-logo {
+	width: var( --wp-desktop-dock-width, 56px );
+}
+
+body.wp-desktop-active #wpadminbar #wp-admin-bar-wp-logo > .ab-item {
+	display: flex !important;
+	align-items: center;
+	justify-content: center;
+	padding-inline: 0 !important;
+}
+
+/*
+ * The W glyph is painted via a ::before pseudo on `.ab-icon`. Center
+ * it within the flex cell so varying dock widths don't leave it
+ * visually offset.
+ */
+body.wp-desktop-active #wpadminbar #wp-admin-bar-wp-logo > .ab-item > .ab-icon {
+	margin: 0;
+}
+
+/*
  * Classic wpcontent carries a `margin-left: 160px` for the sidebar. With
  * the sidebar hidden we let wpcontent fall back to flush — the shell is
  * fixed-positioned anyway so this doesn't change the shell's layout, it

@@ -9,9 +9,20 @@
 import type { WindowConfig, WindowState } from './types';
 import { sanitizeClassName, urlMatchKey } from './utils';
 import { HOOKS, doAction } from './hooks';
+import { showToast } from './toast';
 
 /** Minimum distance from viewport edges when dragging. */
 const EDGE_MARGIN = 8;
+
+/**
+ * How long an external sub-tab's iframe gets to fire its initial
+ * `load` event before we assume the request failed and fall back to
+ * opening the URL in a real browser tab. Bumped up from 2 s to 3 s
+ * so slow connections + heavy third-party sites (e.g., someone's
+ * self-hosted blog on a cold cache) have headroom to respond before
+ * we give up on embedding.
+ */
+const EXTERNAL_IFRAME_READY_TIMEOUT_MS = 3000;
 
 /**
  * Returns the URL with the chromeless query parameter set, so the iframe
@@ -240,27 +251,37 @@ function createWindowElement( config: WindowConfig ): HTMLElement {
 
 	el.appendChild( titleBar );
 
-	// Tab strip — submenu items navigate the iframe within the same window.
-	if ( config.submenu && config.submenu.length > 0 ) {
+	// Tab strip — initialized whenever the window has a submenu OR
+	// supports external-link sub-tabs (which iframe windows grow at
+	// runtime via `addExternalTab`). For windows with no submenu, we
+	// still create the strip but hide it via CSS `:empty` when empty.
+	// Each submenu tab is marked `data-kind="submenu"` so the
+	// runtime tab-switching code can tell submenu tabs apart from
+	// closeable external tabs.
+	if ( ! config.native ) {
 		const tabs = document.createElement( 'nav' );
 		tabs.className = 'wp-desktop-window__tabs';
 		tabs.setAttribute( 'role', 'tablist' );
 		tabs.setAttribute( 'aria-label', `${ config.title } sub-pages` );
-		const initialKey = urlMatchKey( config.url );
-		for ( const sub of config.submenu ) {
-			const tab = document.createElement( 'button' );
-			tab.className = 'wp-desktop-window__tab';
-			tab.setAttribute( 'type', 'button' );
-			tab.setAttribute( 'role', 'tab' );
-			tab.dataset.url = sub.url;
-			tab.textContent = sub.title;
-			if ( urlMatchKey( sub.url ) === initialKey ) {
-				tab.classList.add( 'wp-desktop-window__tab--active' );
-				tab.setAttribute( 'aria-selected', 'true' );
-			} else {
-				tab.setAttribute( 'aria-selected', 'false' );
+
+		if ( config.submenu && config.submenu.length > 0 ) {
+			const initialKey = urlMatchKey( config.url );
+			for ( const sub of config.submenu ) {
+				const tab = document.createElement( 'button' );
+				tab.className = 'wp-desktop-window__tab';
+				tab.dataset.kind = 'submenu';
+				tab.setAttribute( 'type', 'button' );
+				tab.setAttribute( 'role', 'tab' );
+				tab.dataset.url = sub.url;
+				tab.textContent = sub.title;
+				if ( urlMatchKey( sub.url ) === initialKey ) {
+					tab.classList.add( 'wp-desktop-window__tab--active' );
+					tab.setAttribute( 'aria-selected', 'true' );
+				} else {
+					tab.setAttribute( 'aria-selected', 'false' );
+				}
+				tabs.appendChild( tab );
 			}
-			tabs.appendChild( tab );
 		}
 		el.appendChild( tabs );
 	}
@@ -314,6 +335,29 @@ export class Window {
 		width: number;
 		height: number;
 	} | null = null;
+
+	/**
+	 * External-link sub-tabs keyed by a generated tab id. Each carries
+	 * its own iframe, its label, and a cleanup hook for the readiness
+	 * probe. Exists only for iframe windows — native windows skip the
+	 * whole code path.
+	 */
+	private externalTabs: Map<
+		string,
+		{
+			tabEl: HTMLElement;
+			iframe: HTMLIFrameElement;
+			url: string;
+			label: string;
+			cancelProbe: () => void;
+		}
+	> = new Map();
+
+	/** Monotonic id generator for external tabs. */
+	private externalTabSeq = 0;
+
+	/** Which tab is currently foregrounded: 'primary' or a tab id. */
+	private activeTabId: 'primary' | string = 'primary';
 
 	/** Callbacks for external events. */
 	public onFocusRequest: ( ( win: Window ) => void ) | null = null;
@@ -569,18 +613,67 @@ export class Window {
 		if ( this.iframe ) {
 			const iframe = this.iframe;
 
-			// Tab strip — clicks navigate the iframe in place.
+			// Tab strip — delegates to per-tab handlers. Three kinds of
+			// clicks live here:
+			//
+			//   - Submenu tab        → navigate primary iframe to the
+			//                          tab's URL, activate primary.
+			//   - Main tab (injected  → switch back to primary iframe.
+			//      when external tabs
+			//      exist without a
+			//      submenu)
+			//   - External tab       → switch visibility to that tab's
+			//                          iframe. Clicks on the ×/↗ chips
+			//                          are caught here too and routed
+			//                          to close() / detach() below.
 			const tabs = this.element.querySelector( '.wp-desktop-window__tabs' );
 			if ( tabs ) {
 				tabs.addEventListener( 'click', ( e: Event ) => {
-					const target = ( e.target as HTMLElement ).closest( '.wp-desktop-window__tab' ) as HTMLElement | null;
-					if ( ! target || ! target.dataset.url ) {
+					const target = e.target as HTMLElement;
+					// Closeable-tab chips. `data-tab-action` distinguishes
+					// them from the tab body so the "switch tab" branch
+					// below doesn't fire for chip clicks.
+					const chip = target.closest<HTMLElement>( '[data-tab-action]' );
+					if ( chip ) {
+						e.stopPropagation();
+						const action = chip.dataset.tabAction;
+						const tabId = chip.dataset.tabId;
+						if ( ! tabId ) {
+							return;
+						}
+						if ( action === 'close' ) {
+							this.closeExternalTab( tabId );
+						} else if ( action === 'detach' ) {
+							this.detachExternalTab( tabId );
+						}
+						return;
+					}
+
+					const tab = target.closest<HTMLElement>( '.wp-desktop-window__tab' );
+					if ( ! tab ) {
 						return;
 					}
 					e.stopPropagation();
-					const next = withChromelessParam( target.dataset.url );
-					if ( next ) {
-						iframe.src = next;
+
+					const kind = tab.dataset.kind;
+					const tabId = tab.dataset.tabId;
+					if ( kind === 'external' && tabId ) {
+						this.switchToTab( tabId );
+						return;
+					}
+					if ( kind === 'main' ) {
+						this.switchToTab( 'primary' );
+						return;
+					}
+					// Submenu tab — navigate primary iframe in place
+					// and bring it forward. The load listener below
+					// syncs the active-tab highlight.
+					if ( tab.dataset.url ) {
+						const next = withChromelessParam( tab.dataset.url );
+						if ( next ) {
+							iframe.src = next;
+						}
+						this.switchToTab( 'primary' );
 					}
 				} );
 			}
@@ -607,19 +700,318 @@ export class Window {
 	/**
 	 * Update the active tab to whichever submenu URL matches the iframe's
 	 * current location. Called after every iframe navigation.
+	 *
+	 * Only submenu tabs participate in URL-based matching. External
+	 * sub-tabs and the injected "main" tab manage their own active
+	 * state through `switchToTab`, since their notion of "active"
+	 * isn't a URL comparison — it's which iframe is foregrounded.
 	 */
 	private syncActiveTab( currentUrl: string ): void {
-		const tabs = this.element.querySelectorAll<HTMLElement>( '.wp-desktop-window__tab' );
-		if ( ! tabs.length ) {
+		const submenuTabs = this.element.querySelectorAll<HTMLElement>(
+			'.wp-desktop-window__tab[data-kind="submenu"]',
+		);
+		if ( ! submenuTabs.length ) {
+			return;
+		}
+		// If an external tab is currently foregrounded, submenu tabs
+		// are all inactive — the primary iframe's URL isn't what the
+		// user is looking at.
+		if ( this.activeTabId !== 'primary' ) {
+			for ( const tab of submenuTabs ) {
+				tab.classList.remove( 'wp-desktop-window__tab--active' );
+				tab.setAttribute( 'aria-selected', 'false' );
+			}
 			return;
 		}
 		const activeKey = urlMatchKey( currentUrl );
-		for ( const tab of tabs ) {
+		for ( const tab of submenuTabs ) {
 			const tabUrl = tab.dataset.url;
 			const isActive = !! tabUrl && urlMatchKey( tabUrl ) === activeKey;
 			tab.classList.toggle( 'wp-desktop-window__tab--active', isActive );
 			tab.setAttribute( 'aria-selected', isActive ? 'true' : 'false' );
 		}
+	}
+
+	/**
+	 * Add a closeable+detachable sub-tab hosting an external URL.
+	 *
+	 * Flow:
+	 *   1. Lazily create a "Main" tab if this is the first external
+	 *      tab on a window that has no submenu (otherwise the user
+	 *      would have no way to get back to the admin page).
+	 *   2. Create an iframe for the external URL, hidden by default.
+	 *   3. Append a tab to the strip with label + detach + close chips.
+	 *   4. Switch to the new tab.
+	 *   5. Start a 2s readiness probe — if the iframe's `load` event
+	 *      doesn't fire in that window (network failure, hard block),
+	 *      auto-dismiss the tab and open the URL in a real browser
+	 *      tab with an explanatory toast. For subtler blocks
+	 *      (X-Frame-Options showing the browser's error page *inside*
+	 *      the iframe, which does fire `load`), the user sees the
+	 *      error and can hit the detach button themselves.
+	 */
+	public addExternalTab( url: string, label: string ): void {
+		if ( ! this.iframe ) {
+			// Native windows don't host iframes — no tab strip exists.
+			return;
+		}
+		const tabStrip = this.element.querySelector<HTMLElement>(
+			'.wp-desktop-window__tabs',
+		);
+		const body = this.element.querySelector<HTMLElement>(
+			'.wp-desktop-window__body',
+		);
+		if ( ! tabStrip || ! body ) {
+			return;
+		}
+
+		this.ensureMainTab( tabStrip );
+
+		const tabId = `ext-${ ++this.externalTabSeq }`;
+
+		// Build the tab element with label + detach + close chips.
+		const tabEl = document.createElement( 'button' );
+		tabEl.className = 'wp-desktop-window__tab wp-desktop-window__tab--external';
+		tabEl.dataset.kind = 'external';
+		tabEl.dataset.tabId = tabId;
+		tabEl.setAttribute( 'type', 'button' );
+		tabEl.setAttribute( 'role', 'tab' );
+		tabEl.setAttribute( 'aria-selected', 'false' );
+		tabEl.title = url;
+
+		const labelEl = document.createElement( 'span' );
+		labelEl.className = 'wp-desktop-window__tab-label';
+		labelEl.textContent = label;
+		tabEl.appendChild( labelEl );
+
+		const detachBtn = document.createElement( 'span' );
+		detachBtn.className = 'wp-desktop-window__tab-chip wp-desktop-window__tab-chip--detach';
+		detachBtn.dataset.tabAction = 'detach';
+		detachBtn.dataset.tabId = tabId;
+		detachBtn.setAttribute( 'role', 'button' );
+		detachBtn.setAttribute( 'aria-label', 'Open in a new browser tab' );
+		detachBtn.title = 'Open in a new browser tab';
+		detachBtn.innerHTML =
+			'<svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true" focusable="false">' +
+			'<path d="M5 2H2.5v7.5H10V7M6.5 2H10v3.5M10 2L5.5 6.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none"/>' +
+			'</svg>';
+		tabEl.appendChild( detachBtn );
+
+		const closeBtn = document.createElement( 'span' );
+		closeBtn.className = 'wp-desktop-window__tab-chip wp-desktop-window__tab-chip--close';
+		closeBtn.dataset.tabAction = 'close';
+		closeBtn.dataset.tabId = tabId;
+		closeBtn.setAttribute( 'role', 'button' );
+		closeBtn.setAttribute( 'aria-label', 'Close tab' );
+		closeBtn.title = 'Close tab';
+		closeBtn.innerHTML =
+			'<svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true" focusable="false">' +
+			'<path d="M3.25 3.25l5.5 5.5M3.25 8.75l5.5-5.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>' +
+			'</svg>';
+		tabEl.appendChild( closeBtn );
+
+		tabStrip.appendChild( tabEl );
+
+		// Build the iframe. Hidden until we switch to it. `sandbox`
+		// intentionally omitted — external sites often need scripts,
+		// forms, and same-origin cookies to function. The iframe is
+		// cross-origin anyway so the site can't reach our shell DOM.
+		const iframe = document.createElement( 'iframe' );
+		iframe.className = 'wp-desktop-window__iframe wp-desktop-window__iframe--external';
+		iframe.dataset.tabId = tabId;
+		iframe.style.display = 'none';
+		iframe.src = url;
+		body.appendChild( iframe );
+
+		// Readiness probe. If `load` never fires within
+		// `EXTERNAL_IFRAME_READY_TIMEOUT_MS`, we assume the request
+		// failed at the network layer (DNS, offline, connection
+		// refused) and fall back to a real browser tab. When `load`
+		// does fire — even for X-Frame-Options-blocked requests that
+		// render the browser's error page inside the iframe — we keep
+		// the tab; the user can see the failure and hit the detach
+		// button themselves.
+		let loaded = false;
+		const onLoad = (): void => {
+			loaded = true;
+		};
+		iframe.addEventListener( 'load', onLoad, { once: true } );
+		const probeTimer = window.setTimeout( () => {
+			if ( loaded ) {
+				return;
+			}
+			iframe.removeEventListener( 'load', onLoad );
+			this.fallbackToBrowserTab( tabId );
+		}, EXTERNAL_IFRAME_READY_TIMEOUT_MS ) as unknown as number;
+
+		const cancelProbe = (): void => {
+			iframe.removeEventListener( 'load', onLoad );
+			window.clearTimeout( probeTimer );
+		};
+
+		this.externalTabs.set( tabId, {
+			tabEl,
+			iframe,
+			url,
+			label,
+			cancelProbe,
+		} );
+
+		this.switchToTab( tabId );
+		tabEl.scrollIntoView( { behavior: 'smooth', inline: 'end', block: 'nearest' } );
+		// Trigger the session saver so this tab survives a reload.
+		// The saver subscribes to `wp-desktop-window-changed`, which
+		// emitChange already dispatches for the debounce layer; we
+		// reuse the 'state' reason — the tab list is part of window
+		// state as far as persistence is concerned.
+		this.emitChange( 'state' );
+	}
+
+	/**
+	 * Injects a "Main" tab at the start of the strip once external
+	 * tabs exist. For windows that already have a submenu, no main
+	 * tab is injected — submenu tabs already act as the return path
+	 * to primary content. Idempotent.
+	 */
+	private ensureMainTab( tabStrip: HTMLElement ): void {
+		if ( tabStrip.querySelector( '[data-kind="main"]' ) ) {
+			return;
+		}
+		if ( tabStrip.querySelector( '[data-kind="submenu"]' ) ) {
+			// Submenu tabs already serve as the primary-anchor.
+			return;
+		}
+		const main = document.createElement( 'button' );
+		main.className = 'wp-desktop-window__tab wp-desktop-window__tab--main wp-desktop-window__tab--active';
+		main.dataset.kind = 'main';
+		main.setAttribute( 'type', 'button' );
+		main.setAttribute( 'role', 'tab' );
+		main.setAttribute( 'aria-selected', 'true' );
+		main.textContent = this.config.title || 'Main';
+		tabStrip.prepend( main );
+	}
+
+	/**
+	 * Foreground a tab — either the primary iframe (tabId='primary')
+	 * or one of the external sub-tabs. Updates visibility across all
+	 * iframes and active state across all tabs.
+	 */
+	private switchToTab( tabId: 'primary' | string ): void {
+		if ( this.activeTabId === tabId ) {
+			return;
+		}
+		this.activeTabId = tabId;
+
+		// Primary iframe visibility.
+		if ( this.iframe ) {
+			this.iframe.style.display = tabId === 'primary' ? '' : 'none';
+		}
+
+		// External iframes.
+		for ( const [ id, entry ] of this.externalTabs ) {
+			entry.iframe.style.display = tabId === id ? '' : 'none';
+		}
+
+		// Tab active-state.
+		const tabEls = this.element.querySelectorAll<HTMLElement>(
+			'.wp-desktop-window__tab',
+		);
+		tabEls.forEach( ( t ) => {
+			let isActive: boolean;
+			if ( t.dataset.kind === 'main' ) {
+				isActive = tabId === 'primary';
+			} else if ( t.dataset.kind === 'external' ) {
+				isActive = t.dataset.tabId === tabId;
+			} else {
+				// Submenu tab — only "active" when primary is
+				// foregrounded AND the tab's URL matches the iframe's
+				// current URL. `syncActiveTab` handles the URL match
+				// after navigation; here we just make sure switching
+				// AWAY to an external tab deactivates all submenu tabs.
+				isActive =
+					tabId === 'primary' &&
+					t.classList.contains(
+						'wp-desktop-window__tab--active',
+					);
+			}
+			t.classList.toggle( 'wp-desktop-window__tab--active', isActive );
+			t.setAttribute( 'aria-selected', isActive ? 'true' : 'false' );
+		} );
+	}
+
+	/** Remove an external sub-tab + its iframe. */
+	private closeExternalTab( tabId: string ): void {
+		const entry = this.externalTabs.get( tabId );
+		if ( ! entry ) {
+			return;
+		}
+		entry.cancelProbe();
+		entry.tabEl.remove();
+		entry.iframe.remove();
+		this.externalTabs.delete( tabId );
+		if ( this.activeTabId === tabId ) {
+			this.switchToTab( 'primary' );
+		}
+		// If the last external tab closed AND we injected a main tab,
+		// remove it — returning the window to its pre-external state.
+		if ( this.externalTabs.size === 0 ) {
+			const main = this.element.querySelector(
+				'.wp-desktop-window__tab--main',
+			);
+			main?.remove();
+		}
+		// Poke the session saver so the closed tab doesn't resurrect
+		// on reload.
+		this.emitChange( 'state' );
+	}
+
+	/**
+	 * Open an external sub-tab's current URL in a real browser tab and
+	 * close the sub-tab. The iframe's `contentWindow.location` may have
+	 * navigated beyond the original URL; we prefer that live URL so a
+	 * user who drilled 3 pages deep into an external site gets taken
+	 * to the right spot.
+	 */
+	private detachExternalTab( tabId: string ): void {
+		const entry = this.externalTabs.get( tabId );
+		if ( ! entry ) {
+			return;
+		}
+		let url = entry.url;
+		try {
+			const href = entry.iframe.contentWindow?.location.href;
+			if ( href && href !== 'about:blank' ) {
+				url = href;
+			}
+		} catch {
+			/* Cross-origin — we can't read it; stick with the original URL. */
+		}
+		window.open( url, '_blank', 'noopener' );
+		this.closeExternalTab( tabId );
+	}
+
+	/**
+	 * Fallback for sub-tabs that fail to load within the probe window.
+	 * Dismisses the sub-tab, opens the URL as a real browser tab, and
+	 * flashes a toast explaining why the shell gave up on embedding.
+	 */
+	private fallbackToBrowserTab( tabId: string ): void {
+		const entry = this.externalTabs.get( tabId );
+		if ( ! entry ) {
+			return;
+		}
+		const { url, label } = entry;
+		this.closeExternalTab( tabId );
+		showToast( {
+			message: `Opened "${ label }" in a new browser tab — this site doesn't allow embedding.`,
+			action: {
+				label: 'Open',
+				onClick: () => {
+					window.open( url, '_blank', 'noopener' );
+				},
+			},
+		} );
+		window.open( url, '_blank', 'noopener' );
 	}
 
 	/**
@@ -651,6 +1043,17 @@ export class Window {
 			this.setActiveScreenMetaPanel(
 				typeof data.open === 'string' ? data.open : null,
 			);
+		}
+
+		if (
+			data.type === 'wp-desktop-external-link' &&
+			typeof data.url === 'string' &&
+			data.url !== ''
+		) {
+			const label = typeof data.label === 'string' && data.label !== ''
+				? data.label
+				: data.url;
+			this.addExternalTab( data.url, label );
 		}
 	}
 
@@ -1270,5 +1673,31 @@ export class Window {
 			height: this.element.offsetHeight,
 			state: this.state,
 		};
+	}
+
+	/**
+	 * Serializable snapshot of this window's external sub-tabs.
+	 * Iteration order follows the `Map`'s insertion order, which
+	 * matches the tab strip's left-to-right order — so restoring
+	 * preserves the visual layout.
+	 */
+	public getExternalTabsSnapshot(): { url: string; label: string }[] {
+		const out: { url: string; label: string }[] = [];
+		for ( const entry of this.externalTabs.values() ) {
+			// Prefer the iframe's live URL (navigation within the
+			// sub-tab may have moved beyond the original) but fall
+			// back to the initial URL when cross-origin locks us out.
+			let url = entry.url;
+			try {
+				const href = entry.iframe.contentWindow?.location.href;
+				if ( href && href !== 'about:blank' ) {
+					url = href;
+				}
+			} catch {
+				/* Cross-origin — keep the original URL. */
+			}
+			out.push( { url, label: entry.label } );
+		}
+		return out;
 	}
 }

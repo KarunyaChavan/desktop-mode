@@ -398,7 +398,38 @@
 	overflow-x: auto;
 	overflow-y: hidden;
 	scrollbar-width: thin;
+	/*
+	 * Soft edge fades so overflowing tabs tell the user "scroll for
+	 * more." The mask is always applied — when the strip doesn't
+	 * overflow, the faded ends are empty area beyond the last tab so
+	 * the cosmetic is invisible. When it DOES overflow, the last-
+	 * visible tab fades under the mask, creating the affordance.
+	 * `overscroll-behavior-x: contain` keeps horizontal trackpad
+	 * swipes inside the strip instead of triggering browser back.
+	 */
+	mask-image: linear-gradient(
+		to right,
+		transparent 0,
+		#000 16px,
+		#000 calc(100% - 16px),
+		transparent 100%
+	);
+	-webkit-mask-image: linear-gradient(
+		to right,
+		transparent 0,
+		#000 16px,
+		#000 calc(100% - 16px),
+		transparent 100%
+	);
+	overscroll-behavior-x: contain;
 }
+
+/*
+ * When JS assigns the --has-overflow marker (future enhancement), the
+ * mask is stronger. For now the CSS-only mask is subtle enough to be
+ * invisible on non-overflowing strips — mask cut-offs land outside the
+ * flex content.
+ */
 
 .wp-desktop-window__tab {
 	flex-shrink: 0;
@@ -435,6 +466,107 @@
 	font-weight: 600;
 }
 
+/*
+ * External sub-tab. Same shape as a submenu tab, plus two inline
+ * chips: detach (↗) and close (×). Chips are painted as spans
+ * (rather than nested buttons — nested interactive elements are a
+ * pain for a11y). The tab's click handler routes chip clicks via
+ * the `data-tab-action` dataset attribute.
+ */
+.wp-desktop-window__tab--external {
+	/* Slightly wider gap between the label and the chip cluster, and
+	 * more breathing room at the trailing edge so the chips aren't
+	 * flush against the tab boundary. */
+	gap: 10px;
+	padding-inline-end: 4px;
+}
+
+.wp-desktop-window__tab-label {
+	max-width: 180px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/*
+ * Chips sized at 24×24 to match WCAG 2.2 interactive-target minimum.
+ * Spacing via dedicated margin (not the parent's `gap`) so the two
+ * chips sit as a visually-grouped pair with a tighter spacing than
+ * either has with the label.
+ */
+.wp-desktop-window__tab-chip {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 24px;
+	height: 24px;
+	border-radius: 4px;
+	color: rgba( 0, 0, 0, 0.45 );
+	cursor: pointer;
+	transition: background-color 0.15s ease, color 0.15s ease, transform 0.12s ease;
+}
+
+.wp-desktop-window__tab-chip + .wp-desktop-window__tab-chip {
+	margin-inline-start: 4px;
+}
+
+/*
+ * Detach hover — a soft accent-tinted wash, plus a subtle upward
+ * nudge so it reads as "lifts off". Matches the window title-bar
+ * detach button's visual language without being identical (the
+ * title-bar variant lives in a colored title bar; these chips live
+ * in the light tab strip).
+ */
+.wp-desktop-window__tab-chip--detach:hover {
+	color: var( --wp-admin-theme-color, #2271b1 );
+	background: rgba( 34, 113, 177, 0.12 );
+	transform: translateY( -1px );
+}
+
+.wp-desktop-window__tab-chip--detach:focus-visible {
+	outline: 2px solid var( --wp-admin-theme-color, #2271b1 );
+	outline-offset: 1px;
+}
+
+/*
+ * Close hover — destructive red wash matching the main-window close
+ * button treatment. Reserves color for semantic signal: the chip is
+ * neutral-gray at rest and only turns red under the cursor.
+ */
+.wp-desktop-window__tab-chip--close:hover {
+	color: #fff;
+	background: #d63638;
+}
+
+.wp-desktop-window__tab-chip--close:focus-visible {
+	color: #fff;
+	background: #d63638;
+	outline: 2px solid rgba( 214, 54, 56, 0.6 );
+	outline-offset: 1px;
+}
+
+.wp-desktop-window__tab-chip svg {
+	display: block;
+	pointer-events: none;
+	/*
+	 * Stroke gets heavier on hover so the glyph reads crisply
+	 * against the wash. The chip hover transition handles the
+	 * color/background swap; stroke-width has to be on the SVG
+	 * itself but inherits the parent's currentColor.
+	 */
+	width: 12px;
+	height: 12px;
+}
+
+@media ( prefers-reduced-motion: reduce ) {
+	.wp-desktop-window__tab-chip {
+		transition-duration: 0.01ms;
+	}
+	.wp-desktop-window__tab-chip--detach:hover {
+		transform: none;
+	}
+}
+
 /* Window body: contains the iframe. */
 .wp-desktop-window__body {
 	flex: 1;
@@ -449,6 +581,18 @@
 	border: none;
 	display: block;
 	background: var(--wp-desktop-window-bg);
+}
+
+/*
+ * External sub-tab iframes stack in the same body as the primary
+ * iframe. Only one is visible at a time (managed by `switchToTab`
+ * via `style.display`). Absolute positioning so they don't push the
+ * primary iframe around when added to the DOM; `display: none` on
+ * inactive iframes is set inline by the JS.
+ */
+.wp-desktop-window__iframe--external {
+	position: absolute;
+	inset: 0;
 }
 
 /*
@@ -1277,4 +1421,85 @@
 /* RTL: flip the resize cursor direction. */
 [dir="rtl"] .wp-desktop-window__resize-handle {
 	cursor: nesw-resize;
+}
+
+/* ---------------------------------------------------------------
+ * Toast — transient top-of-shell notification.
+ *
+ * Container lives under <body>; toasts stack vertically at the
+ * top-right of the viewport. Each toast fades in on its first
+ * paint (via the --in class added on rAF), sits for its duration,
+ * then fades out (--out class triggers the transition).
+ * --------------------------------------------------------------- */
+.wp-desktop-toast-container {
+	position: fixed;
+	top: calc( var( --wp-admin--admin-bar--height, 32px ) + 16px );
+	inset-inline-end: 16px;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	z-index: calc( var( --wp-desktop-z-fullscreen, 99999 ) + 10 );
+	pointer-events: none;
+}
+
+.wp-desktop-toast {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	min-width: 280px;
+	max-width: 420px;
+	padding: 10px 14px;
+	background: #1d2327;
+	color: #fff;
+	border-radius: 8px;
+	box-shadow: 0 8px 24px rgba( 0, 0, 0, 0.2 ), 0 2px 6px rgba( 0, 0, 0, 0.1 );
+	font-size: 13px;
+	line-height: 1.4;
+	opacity: 0;
+	transform: translateY( -8px );
+	transition: opacity 0.18s ease, transform 0.18s ease;
+	pointer-events: auto;
+}
+
+.wp-desktop-toast--in {
+	opacity: 1;
+	transform: translateY( 0 );
+}
+
+.wp-desktop-toast--out {
+	opacity: 0;
+	transform: translateY( -8px );
+}
+
+.wp-desktop-toast__label {
+	flex: 1;
+}
+
+.wp-desktop-toast__action {
+	flex-shrink: 0;
+	padding: 4px 10px;
+	border: none;
+	border-radius: 4px;
+	background: rgba( 255, 255, 255, 0.12 );
+	color: #fff;
+	font: inherit;
+	font-size: 12px;
+	font-weight: 500;
+	cursor: pointer;
+	transition: background-color 0.12s ease;
+}
+
+.wp-desktop-toast__action:hover {
+	background: rgba( 255, 255, 255, 0.22 );
+}
+
+.wp-desktop-toast__action:focus-visible {
+	outline: 2px solid rgba( 255, 255, 255, 0.6 );
+	outline-offset: 2px;
+}
+
+@media ( prefers-reduced-motion: reduce ) {
+	.wp-desktop-toast {
+		transition-duration: 0.01ms;
+	}
 }

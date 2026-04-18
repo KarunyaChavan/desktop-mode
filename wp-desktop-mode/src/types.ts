@@ -141,6 +141,13 @@ export interface SessionWindow {
 	y: number;
 	width: number;
 	height: number;
+	/**
+	 * External-link sub-tabs open on this window at save time. Each
+	 * carries the URL and display label so the shell can re-add them
+	 * via `Window.addExternalTab` on restore. Empty or absent when no
+	 * external tabs are open.
+	 */
+	externalTabs?: { url: string; label: string }[];
 }
 
 /**

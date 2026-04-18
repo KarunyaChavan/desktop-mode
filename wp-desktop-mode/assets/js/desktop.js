@@ -2842,11 +2842,11 @@ var wpDesktop = function(exports) {
      * on huge screens; on normal screens we take 72% of the smaller
      * shell axis so the logo reads as "hero-sized" without cropping.
      */
-    targetLogoWidth: 820,
+    targetLogoWidth: 1e3,
     /** Fraction of the smaller shell dimension the logo is allowed to occupy. */
     logoShellFraction: 0.72,
     /** Spring stiffness — how hard a particle pulls back to its home. */
-    springK: 0.055,
+    springK: 0.035,
     /** Velocity damping per tick. 1 = no damping, 0 = instant stop. */
     damping: 0.86,
     /**

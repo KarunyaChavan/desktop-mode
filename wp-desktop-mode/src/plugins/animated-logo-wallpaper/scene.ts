@@ -18,35 +18,27 @@
  */
 
 /**
- * Minimal structural typing for PIXI — we access it via `window.PIXI`
- * which is populated by the shell's module registry before mount. The
- * Pixi API surface we touch is wide (sprites, textures, blend modes,
- * renderer) and Pixi's own .d.ts is too heavy for inline redeclaration,
- * so we fall back to `any` at the runtime boundary. Correctness for
- * this scene is validated by its visual output rather than its types.
+ * PixiJS types. `import type` is compile-time only — the `pixi.js`
+ * package is NOT bundled with our shell; it's loaded lazily via the
+ * module registry (`needs: ['pixijs']`) and attaches a `PIXI` global
+ * from the vendor script. We type that global as the module's full
+ * namespace so every class access (`pixi.Application`, `pixi.Sprite`,
+ * …) is checked against the library's first-party definitions with
+ * zero runtime overhead.
  */
+import type { Application, Container, Sprite, Texture } from 'pixi.js';
+
 declare global {
 	interface Window {
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		PIXI?: any;
+		PIXI?: typeof import( 'pixi.js' );
 	}
 }
-/* eslint-disable @typescript-eslint/no-explicit-any */
 
 export interface SceneHandle {
 	/** Stop the render loop and release WebGL resources. */
 	destroy(): void;
 	/** Temporarily pause / resume animation (e.g. tab backgrounded). */
 	setAnimating( playing: boolean ): void;
-}
-
-/**
- * One render sprite per particle. Collected at mount so the hot tick
- * loop does nothing but array access + property assignment.
- */
-interface ParticleSprite {
-	x: number;
-	y: number;
 }
 
 interface SceneOptions {
@@ -69,11 +61,11 @@ const CONFIG = {
 	 * on huge screens; on normal screens we take 72% of the smaller
 	 * shell axis so the logo reads as "hero-sized" without cropping.
 	 */
-	targetLogoWidth: 820,
+	targetLogoWidth: 1000,
 	/** Fraction of the smaller shell dimension the logo is allowed to occupy. */
 	logoShellFraction: 0.72,
 	/** Spring stiffness — how hard a particle pulls back to its home. */
-	springK: 0.055,
+	springK: 0.035,
 	/** Velocity damping per tick. 1 = no damping, 0 = instant stop. */
 	damping: 0.86,
 	/**
@@ -161,7 +153,7 @@ export async function mountScene(
 	const priorBackground = container.style.background;
 	container.style.background = BACKDROP_CSS;
 
-	const app = new pixi.Application();
+	const app: Application = new pixi.Application();
 	await app.init( {
 		resizeTo: container,
 		backgroundAlpha: 0,
@@ -177,9 +169,9 @@ export async function mountScene(
 	// into a Pixi-owned texture. Every particle is a sprite of this
 	// texture, tinted per-particle and composited with additive blend
 	// so clusters genuinely glow instead of just stacking flat colors.
-	const brushTexture = buildBrushTexture( pixi );
+	const brushTexture: Texture = buildBrushTexture( pixi );
 
-	const particleLayer = new pixi.Container();
+	const particleLayer: Container = new pixi.Container();
 	app.stage.addChild( particleLayer );
 
 	// Particle state — flat typed arrays keep the hot tick loop free
@@ -197,9 +189,9 @@ export async function mountScene(
 	// tint per particle is what sells the "beautiful" read — a uniform
 	// grid of identical dots reads as sterile; a field with subtle
 	// variation reads as organic.
-	const sprites: ParticleSprite[] = new Array( n );
+	const sprites: Sprite[] = new Array( n );
 	for ( let i = 0; i < n; i++ ) {
-		const sprite = new pixi.Sprite( brushTexture );
+		const sprite: Sprite = new pixi.Sprite( brushTexture );
 		sprite.anchor.set( 0.5 );
 		sprite.blendMode = 'add';
 		sprite.tint =
@@ -422,7 +414,7 @@ function step(
  * off aggressively past the core — prevents the entire sprite area
  * from registering as a washed-out square under additive blending.
  */
-function buildBrushTexture( pixi: any ): any {
+function buildBrushTexture( pixi: typeof import( 'pixi.js' ) ): Texture {
 	const size = CONFIG.brushSize;
 	const canvas = document.createElement( 'canvas' );
 	canvas.width = size;

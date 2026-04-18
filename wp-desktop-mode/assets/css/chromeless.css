@@ -276,7 +276,8 @@ html.wp-toolbar:has( body.wp-desktop-chromeless ) {
 
 /* ---------------------------------------------------------------
  * Update nag
- * Same top-border treatment as screen-meta.
+ * Red top border signals a pending WordPress update; keep it so
+ * the nag reads as urgent even without the surrounding admin chrome.
  * --------------------------------------------------------------- */
 .wp-desktop-chromeless .update-nag {
 	border-top: 1px solid #d63638;

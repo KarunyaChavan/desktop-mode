@@ -1,132 +1,1185 @@
-/*
- * ATTENTION: The "eval" devtool has been used (maybe by default in mode: "development").
- * This devtool is neither made for production nor for readable output files.
- * It uses "eval()" calls to create a separate source file in the browser devtools.
- * If you are trying to read the output file, select a different devtool (https://webpack.js.org/configuration/devtool/)
- * or disable the default devtool with "devtool: false".
- * If you are looking for production-ready output files, see mode: "production" (https://webpack.js.org/configuration/mode/).
- */
-/******/ (() => { // webpackBootstrap
-/******/ 	"use strict";
-/******/ 	var __webpack_modules__ = ({
-
-/***/ 637
-/*!************************!*\
-  !*** ./src/desktop.ts ***!
-  \************************/
-(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
-
-eval("{__webpack_require__.r(__webpack_exports__);\n/* harmony export */ __webpack_require__.d(__webpack_exports__, {\n/* harmony export */   clampGeometryToViewport: () => (/* binding */ clampGeometryToViewport)\n/* harmony export */ });\n/* harmony import */ var _window_manager__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./window-manager */ 111);\n/* harmony import */ var _dock__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./dock */ 426);\n/* harmony import */ var _utils__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./utils */ 552);\n/**\n * Desktop Mode — Entry Point.\n *\n * Initializes the desktop shell, restores the user's session if one\n * exists, opens the current admin page otherwise, wires session\n * persistence to change events, and normalizes the browser URL to\n * `/wp-desktop/` so the address bar shows a single stable location\n * regardless of which admin page is open in which window.\n *\n * @since 6.9.0\n */\n\n\n\n/** Debounce window for session writes. 500 ms is short enough to feel immediate and long enough to coalesce drag/resize storms. */\nconst SESSION_SAVE_DEBOUNCE_MS = 500;\n/** Minimum margin between the restored window and the desktop edges when clamping. */\nconst VIEWPORT_CLAMP_MARGIN = 12;\n/**\n * Initialize Desktop Mode.\n */\nfunction init() {\n    const config = window.wpDesktopConfig;\n    if (!config) {\n        return;\n    }\n    const desktopArea = document.getElementById('wp-desktop-area');\n    if (!desktopArea) {\n        return;\n    }\n    const manager = new _window_manager__WEBPACK_IMPORTED_MODULE_0__.WindowManager(desktopArea);\n    // Dock.\n    const dockEl = document.getElementById('wp-desktop-dock');\n    let dock = null;\n    if (dockEl && config.dockItems) {\n        dock = new _dock__WEBPACK_IMPORTED_MODULE_1__.Dock(dockEl, manager, config.dockItems, config.adminUrl);\n        desktopArea.classList.add('wp-desktop-area--with-dock');\n    }\n    // Bootstrap: restore session if one exists; otherwise open the current page.\n    const hasSession = !!(config.session && config.session.windows && config.session.windows.length > 0);\n    if (hasSession) {\n        restoreSession(manager, config, desktopArea);\n    }\n    else {\n        openCurrentPage(manager, config);\n    }\n    // Persistence.\n    const saveSession = createSessionSaver(manager, config);\n    wireSessionEvents(saveSession);\n    // Expose for plugins + tests.\n    window.wp = window.wp || {};\n    window.wp.desktop = {\n        windowManager: manager,\n        dock,\n        saveSession,\n    };\n    // Click on the desktop background to minimize all windows (like macOS \"Show Desktop\").\n    desktopArea.addEventListener('click', (e) => {\n        if (e.target !== desktopArea) {\n            return;\n        }\n        const windows = manager.getAll();\n        const allMinimized = windows.length > 0 && windows.every((w) => w.state === 'minimized');\n        if (allMinimized) {\n            for (const win of windows) {\n                win.restore();\n            }\n        }\n        else {\n            for (const win of windows) {\n                if (win.state !== 'minimized') {\n                    win.minimize();\n                }\n            }\n        }\n    });\n    // Unify the address bar. Whether the user reached us via /wp-desktop,\n    // /wp-admin/, or a deep link like /wp-admin/plugins.php?paged=2, the\n    // parent URL collapses to /wp-desktop/. The iframe URLs retain their\n    // real query strings — this only changes what the browser shows.\n    normalizeBrowserUrl(config);\n    document.dispatchEvent(new CustomEvent('wp-desktop-init', {\n        detail: { config, restored: hasSession },\n    }));\n}\n/**\n * Restores windows from a saved session into the manager.\n *\n * Each window's geometry is clamped to fit the current desktop area\n * before construction — so a layout captured on an ultrawide display\n * lands sanely on a laptop. Stacking order follows the session order\n * (earliest-opened first, focused id brought to the top at the end).\n */\nfunction restoreSession(manager, config, desktopArea) {\n    const rect = desktopArea.getBoundingClientRect();\n    for (const win of config.session.windows) {\n        const clamped = clampGeometryToViewport(win, rect);\n        const submenu = findSubmenuForUrl(win.url, config);\n        manager.open({\n            id: win.id,\n            url: win.url,\n            title: win.title,\n            icon: win.icon || 'dashicons-admin-generic',\n            x: clamped.x,\n            y: clamped.y,\n            width: clamped.width,\n            height: clamped.height,\n            initialState: win.state,\n            submenu,\n        });\n    }\n    // Restore focus to whichever window the user left focused. If that id\n    // is no longer around (e.g., the saved focus pointed at a window we\n    // failed to reconstruct), `getById` returns undefined and we leave\n    // the default — topmost-of-stack — focus in place.\n    if (config.session.focused) {\n        const focused = manager.getById(config.session.focused);\n        if (focused) {\n            manager.focus(focused);\n        }\n    }\n}\n/**\n * Opens the current admin page in a fresh window — the \"no saved session\" path.\n */\nfunction openCurrentPage(manager, config) {\n    const windowId = (0,_utils__WEBPACK_IMPORTED_MODULE_2__.deriveWindowId)(config.currentPage, config.adminUrl);\n    const submenu = findSubmenuForUrl(config.currentPage, config);\n    manager.open({\n        id: windowId,\n        url: config.currentPage,\n        title: config.currentTitle,\n        icon: config.currentIcon,\n        submenu,\n    });\n}\n/**\n * Finds the submenu (if any) for a dock entry whose URL — or whose\n * submenu's URL — resolves to the same window ID as the given URL.\n *\n * Used both on session restore and fresh-page auto-open so a window\n * that lands on a sub-page (e.g., Categories) still gets the parent\n * menu's submenu tabs rendered.\n */\nfunction findSubmenuForUrl(url, config) {\n    const windowId = (0,_utils__WEBPACK_IMPORTED_MODULE_2__.deriveWindowId)(url, config.adminUrl);\n    const item = (config.dockItems || []).find((i) => (0,_utils__WEBPACK_IMPORTED_MODULE_2__.deriveWindowId)(i.url, config.adminUrl) === windowId ||\n        (i.submenu || []).some((s) => (0,_utils__WEBPACK_IMPORTED_MODULE_2__.deriveWindowId)(s.url, config.adminUrl) === windowId));\n    return item?.submenu;\n}\n/**\n * Clamp a persisted window's geometry to fit inside the current desktop\n * area, preserving the window's aspect ratio when the saved size exceeds\n * the area. Handles the ultrawide-to-laptop transition gracefully:\n *\n *   - A window that sat at x=2800 on a 3440px desktop gets pulled back\n *     onto the smaller viewport.\n *   - A window bigger than the viewport is scaled down, not cropped.\n *   - Negative positions (shouldn't happen but defend anyway) become 0.\n *\n * Returns a plain geometry object — caller applies it to the WindowConfig.\n */\nfunction clampGeometryToViewport(win, rect) {\n    const maxW = Math.max(200, rect.width - VIEWPORT_CLAMP_MARGIN * 2);\n    const maxH = Math.max(200, rect.height - VIEWPORT_CLAMP_MARGIN * 2);\n    const width = Math.min(win.width, maxW);\n    const height = Math.min(win.height, maxH);\n    const maxX = Math.max(0, rect.width - width - VIEWPORT_CLAMP_MARGIN);\n    const maxY = Math.max(0, rect.height - height - VIEWPORT_CLAMP_MARGIN);\n    const x = Math.max(VIEWPORT_CLAMP_MARGIN, Math.min(win.x, maxX));\n    const y = Math.max(VIEWPORT_CLAMP_MARGIN, Math.min(win.y, maxY));\n    return { x, y, width, height };\n}\n/**\n * Creates the debounced+immediate session saver. Returns a single\n * function that schedules a debounced REST write on each call. Also\n * exposed on `wp.desktop.saveSession()` for plugins that want to flush.\n */\nfunction createSessionSaver(manager, config) {\n    let debounceTimer = null;\n    let inFlight = false;\n    const doSave = async () => {\n        if (inFlight) {\n            return;\n        }\n        const payload = manager.snapshot();\n        inFlight = true;\n        try {\n            await fetch(config.sessionUrl, {\n                method: 'POST',\n                credentials: 'same-origin',\n                headers: {\n                    'Content-Type': 'application/json',\n                    'X-WP-Nonce': config.restNonce,\n                },\n                body: JSON.stringify({ session: payload }),\n                // Best-effort: we don't block the UI on persistence.\n                keepalive: true,\n            });\n        }\n        catch {\n            /* Network error is non-fatal — next change triggers another save. */\n        }\n        finally {\n            inFlight = false;\n        }\n    };\n    const flushImmediately = () => {\n        if (debounceTimer !== null) {\n            clearTimeout(debounceTimer);\n            debounceTimer = null;\n        }\n        // Use sendBeacon for unload-time saves where fetch may not complete.\n        // sendBeacon accepts a Blob and doesn't need the nonce in a header —\n        // we encode it in the body as _wpnonce instead (WP also reads that).\n        const payload = manager.snapshot();\n        const body = new Blob([JSON.stringify({ session: payload, _wpnonce: config.restNonce })], { type: 'application/json' });\n        if (navigator.sendBeacon && navigator.sendBeacon(config.sessionUrl, body)) {\n            return;\n        }\n        void doSave();\n    };\n    const schedule = () => {\n        if (debounceTimer !== null) {\n            clearTimeout(debounceTimer);\n        }\n        debounceTimer = window.setTimeout(() => {\n            debounceTimer = null;\n            void doSave();\n        }, SESSION_SAVE_DEBOUNCE_MS);\n    };\n    // pagehide is the reliable unload signal across browsers (mobile Safari\n    // in particular never fires beforeunload in the BFCache case).\n    window.addEventListener('pagehide', flushImmediately);\n    // Hidden tabs might never fire pagehide if the user switches away and\n    // kills the browser — save opportunistically on visibility change too.\n    document.addEventListener('visibilitychange', () => {\n        if (document.visibilityState === 'hidden') {\n            flushImmediately();\n        }\n    });\n    return schedule;\n}\n/**\n * Wire the session saver to every window lifecycle event that should\n * end up persisted. Close/focus come from the manager; moved/resized/\n * state come from individual windows via `wp-desktop-window-changed`.\n */\nfunction wireSessionEvents(save) {\n    document.addEventListener('wp-desktop-window-opened', save);\n    document.addEventListener('wp-desktop-window-closed', save);\n    document.addEventListener('wp-desktop-window-focused', save);\n    document.addEventListener('wp-desktop-window-changed', save);\n}\n/**\n * Replace the current browser URL with `/wp-desktop/` so the address\n * bar reads as a single desktop-mode entry regardless of which admin\n * page the shell happens to be loaded under. Purely cosmetic — iframes\n * retain their real URLs; the server still serves the admin page at\n * its canonical URL on refresh unless the user reaches us via the\n * portal.\n *\n * We prefer `replaceState` over `pushState` so the browser Back button\n * behaves the way the user expects (going back to wherever they came\n * from before entering desktop mode), not \"back to desktop mode\".\n */\nfunction normalizeBrowserUrl(config) {\n    if (!config.portalUrl || !window.history || !window.history.replaceState) {\n        return;\n    }\n    try {\n        window.history.replaceState(window.history.state, '', config.portalUrl);\n    }\n    catch {\n        /* Some browser security contexts refuse replaceState across paths —\n         * fall through silently; the URL just remains as-is. */\n    }\n}\n// Initialize when DOM is ready.\nif (document.readyState === 'loading') {\n    document.addEventListener('DOMContentLoaded', init);\n}\nelse {\n    init();\n}\n// Re-export so the bundle can be tested without tight coupling.\n\n\n\n//# sourceURL=webpack://wp-desktop-mode/./src/desktop.ts?\n}");
-
-/***/ },
-
-/***/ 426
-/*!*********************!*\
-  !*** ./src/dock.ts ***!
-  \*********************/
-(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
-
-eval("{__webpack_require__.r(__webpack_exports__);\n/* harmony export */ __webpack_require__.d(__webpack_exports__, {\n/* harmony export */   Dock: () => (/* binding */ Dock)\n/* harmony export */ });\n/* harmony import */ var _utils__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./utils */ 552);\n/**\n * Desktop Mode — Dock.\n *\n * Renders the icon-only dock on the left edge of the desktop.\n * Icons come from the admin menu data passed via wpDesktopConfig.dockItems.\n * The dock always starts with a WordPress logo \"Show Desktop\" button\n * that minimizes all open windows.\n *\n * @since 6.9.0\n */\n\n/**\n * Dock class.\n *\n * Manages the dock element, its icons, tooltips, and interaction with the window manager.\n */\nclass Dock {\n    constructor(container, windowManager, items, adminUrl) {\n        this.itemElements = new Map();\n        this.container = container;\n        this.windowManager = windowManager;\n        this.items = items;\n        this.adminUrl = adminUrl;\n        // Create tooltip element (shared across all items).\n        this.tooltip = document.createElement('div');\n        this.tooltip.className = 'wp-desktop-dock__tooltip';\n        this.tooltip.setAttribute('role', 'tooltip');\n        document.body.appendChild(this.tooltip);\n        this.render();\n        this.bindWindowEvents();\n    }\n    /**\n     * Render the dock contents.\n     */\n    render() {\n        this.container.innerHTML = '';\n        // Dock items from the admin menu.\n        for (const item of this.items) {\n            const btn = this.createItemButton(item);\n            this.itemElements.set(item.id, btn);\n            this.container.appendChild(btn);\n        }\n    }\n    /**\n     * Create a single dock icon button.\n     */\n    createItemButton(item) {\n        const btn = document.createElement('button');\n        btn.className = 'wp-desktop-dock__item';\n        btn.setAttribute('type', 'button');\n        btn.setAttribute('aria-label', item.title);\n        btn.dataset.menuSlug = item.id;\n        // Icon.\n        const iconEl = this.createIcon(item.icon);\n        btn.appendChild(iconEl);\n        // Badge.\n        if (item.badge > 0) {\n            const badge = document.createElement('span');\n            badge.className = 'wp-desktop-dock__badge';\n            badge.textContent = String(item.badge);\n            badge.setAttribute('aria-label', `${item.badge} updates`);\n            btn.appendChild(badge);\n        }\n        // Click → open or focus window.\n        btn.addEventListener('click', () => {\n            this.openPage(item);\n        });\n        // Tooltip.\n        this.bindTooltip(btn, item.title);\n        return btn;\n    }\n    /**\n     * Create the icon element based on the icon type.\n     */\n    createIcon(icon) {\n        if (icon.startsWith('dashicons-')) {\n            // Dashicon.\n            const el = document.createElement('span');\n            el.className = `dashicons ${icon}`;\n            el.setAttribute('aria-hidden', 'true');\n            return el;\n        }\n        if (icon.startsWith('data:image/svg+xml;base64,')) {\n            // Inline SVG data URI — render as a CSS background.\n            // Validate that the base64 payload contains only valid characters.\n            const base64Part = icon.slice('data:image/svg+xml;base64,'.length);\n            if (/^[A-Za-z0-9+/=]+$/.test(base64Part)) {\n                const el = document.createElement('span');\n                el.className = 'wp-desktop-dock__item-svg';\n                el.style.backgroundImage = `url(\"${icon}\")`;\n                el.style.backgroundSize = 'contain';\n                el.style.backgroundRepeat = 'no-repeat';\n                el.style.backgroundPosition = 'center';\n                el.setAttribute('aria-hidden', 'true');\n                return el;\n            }\n            // Invalid base64 — fall through to generic icon.\n        }\n        if (icon && icon !== 'none' && icon !== 'div') {\n            // URL to an image.\n            const img = document.createElement('img');\n            img.className = 'wp-desktop-dock__item-img';\n            img.src = icon;\n            img.alt = '';\n            img.setAttribute('aria-hidden', 'true');\n            return img;\n        }\n        // Fallback: generic admin icon.\n        const el = document.createElement('span');\n        el.className = 'dashicons dashicons-admin-generic';\n        el.setAttribute('aria-hidden', 'true');\n        return el;\n    }\n    /**\n     * Bind tooltip show/hide on hover.\n     */\n    bindTooltip(el, text) {\n        el.addEventListener('pointerenter', () => {\n            const rect = el.getBoundingClientRect();\n            this.tooltip.textContent = text;\n            this.tooltip.style.top = `${rect.top + rect.height / 2 - 14}px`;\n            this.tooltip.classList.add('wp-desktop-dock__tooltip--visible');\n        });\n        el.addEventListener('pointerleave', () => {\n            this.tooltip.classList.remove('wp-desktop-dock__tooltip--visible');\n        });\n    }\n    /**\n     * Open an admin page in a window (or focus if already open).\n     */\n    openPage(item) {\n        // Derive window ID from the menu slug.\n        const windowId = this.deriveWindowId(item.url);\n        this.windowManager.open({\n            id: windowId,\n            url: item.url,\n            title: item.title,\n            icon: item.icon.startsWith('dashicons-') ? item.icon : 'dashicons-admin-generic',\n            submenu: item.submenu,\n        });\n    }\n    /**\n     * Derive a window ID from an admin page URL.\n     */\n    deriveWindowId(url) {\n        return (0,_utils__WEBPACK_IMPORTED_MODULE_0__.deriveWindowId)(url, this.adminUrl);\n    }\n    /**\n     * Listen to window events to update active/focused indicators on dock items.\n     */\n    bindWindowEvents() {\n        document.addEventListener('wp-desktop-window-opened', ((e) => {\n            this.updateActiveStates();\n        }));\n        document.addEventListener('wp-desktop-window-closed', ((e) => {\n            this.updateActiveStates();\n        }));\n        document.addEventListener('wp-desktop-window-focused', ((e) => {\n            this.updateActiveStates();\n        }));\n    }\n    /**\n     * Update the active/focused CSS classes on dock items based on open windows.\n     */\n    updateActiveStates() {\n        const openWindows = this.windowManager.getAll();\n        const focused = this.windowManager.getFocused();\n        // Build a set of open window IDs.\n        const openIds = new Set(openWindows.map((w) => w.id));\n        for (const item of this.items) {\n            const btn = this.itemElements.get(item.id);\n            if (!btn) {\n                continue;\n            }\n            const windowId = this.deriveWindowId(item.url);\n            const isOpen = openIds.has(windowId);\n            const isFocused = focused && focused.id === windowId;\n            btn.classList.toggle('wp-desktop-dock__item--active', isOpen);\n            btn.classList.toggle('wp-desktop-dock__item--focused', !!isFocused);\n        }\n    }\n}\n\n\n//# sourceURL=webpack://wp-desktop-mode/./src/dock.ts?\n}");
-
-/***/ },
-
-/***/ 552
-/*!**********************!*\
-  !*** ./src/utils.ts ***!
-  \**********************/
-(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
-
-eval("{__webpack_require__.r(__webpack_exports__);\n/* harmony export */ __webpack_require__.d(__webpack_exports__, {\n/* harmony export */   deriveWindowId: () => (/* binding */ deriveWindowId),\n/* harmony export */   sanitizeClassName: () => (/* binding */ sanitizeClassName)\n/* harmony export */ });\n/**\n * Desktop Mode — Shared Utilities.\n *\n * @since 6.9.0\n */\n/**\n * Query args that meaningfully differentiate admin pages.\n *\n * `post_type` separates Posts from Pages (both are edit.php). `page` is\n * the plugin-routed admin.php entry point. `taxonomy` distinguishes\n * Categories from Tags (both are edit-tags.php). Everything else —\n * pagination, nonces, action-feedback flags, our internal wp_desktop\n * marker — is considered transient and stripped, so a direct-URL land\n * and a dock click resolve to the same window ID.\n */\nconst IDENTITY_PARAMS = ['post_type', 'page', 'taxonomy'];\n/**\n * Collapse a URL path (plus its significant query params) into a clean\n * slug that is safe to use as a DOM id attribute.\n */\nfunction slugify(path) {\n    return path\n        .replace(/\\.php/g, '-php')\n        .replace(/[?&=]/g, '-')\n        .replace(/[^a-zA-Z0-9_-]/g, '')\n        .replace(/-+/g, '-')\n        .replace(/^-|-$/g, '') || 'index';\n}\n/**\n * Derive a window ID from an admin page URL.\n *\n * The ID is the admin filename plus any query params that distinguish\n * one admin page from another (see IDENTITY_PARAMS). Transient params —\n * wp_desktop, _wpnonce, paged, message — are discarded so the same\n * logical page always maps to the same window, whether reached via\n * direct URL or via the dock.\n *\n * @param url      The full admin page URL.\n * @param adminUrl The base admin URL (e.g., 'http://localhost/wp-admin/').\n * @return A sanitized window ID string.\n */\nfunction deriveWindowId(url, adminUrl) {\n    let parsed = null;\n    try {\n        parsed = new URL(url, adminUrl);\n    }\n    catch (err) {\n        parsed = null;\n    }\n    if (parsed) {\n        const basePath = new URL(adminUrl).pathname;\n        const filename = parsed.pathname.replace(basePath, '').replace(/^\\/+/, '');\n        const significant = new URLSearchParams();\n        for (const key of IDENTITY_PARAMS) {\n            const value = parsed.searchParams.get(key);\n            if (value) {\n                significant.set(key, value);\n            }\n        }\n        const query = significant.toString();\n        return slugify(query ? `${filename}?${query}` : filename);\n    }\n    // Fallback for inputs that don't parse as URLs.\n    let path = url.replace(adminUrl, '');\n    if (path.startsWith('/')) {\n        path = path.substring(1);\n    }\n    return slugify(path);\n}\n/**\n * Sanitize a string for safe use as a CSS class name.\n *\n * Strips any characters that are not alphanumeric, hyphens, or underscores.\n *\n * @param value The raw class name value.\n * @return The sanitized class name.\n */\nfunction sanitizeClassName(value) {\n    return value.replace(/[^a-zA-Z0-9_-]/g, '');\n}\n\n\n//# sourceURL=webpack://wp-desktop-mode/./src/utils.ts?\n}");
-
-/***/ },
-
-/***/ 111
-/*!*******************************!*\
-  !*** ./src/window-manager.ts ***!
-  \*******************************/
-(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
-
-eval("{__webpack_require__.r(__webpack_exports__);\n/* harmony export */ __webpack_require__.d(__webpack_exports__, {\n/* harmony export */   WindowManager: () => (/* binding */ WindowManager)\n/* harmony export */ });\n/* harmony import */ var _window__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./window */ 145);\n/**\n * Desktop Mode — Window Manager.\n *\n * Manages the lifecycle, z-order, and focus of all desktop windows.\n *\n * @since 6.9.0\n */\n\n/** Base z-index for desktop windows. */\nconst BASE_Z_INDEX = 100;\n/** Cascade offset for new windows (pixels). */\nconst CASCADE_OFFSET = 30;\n/**\n * Window Manager class.\n *\n * Controls the window stack: opening, closing, focusing, z-ordering.\n */\nclass WindowManager {\n    constructor(desktop) {\n        /** All open windows, in z-order (last = topmost). */\n        this.stack = [];\n        /** Counter for cascade positioning. */\n        this.cascadeIndex = 0;\n        this.desktop = desktop;\n    }\n    /**\n     * Open a new window or focus an existing one for the given page.\n     */\n    open(config) {\n        // If a window for this page already exists, focus it.\n        const existing = this.getById(config.id);\n        if (existing) {\n            this.focus(existing);\n            if (existing.state === 'minimized') {\n                existing.restore();\n            }\n            return existing;\n        }\n        // Calculate default position and size.\n        const desktopRect = this.desktop.getBoundingClientRect();\n        const defaultWidth = Math.min(Math.round(desktopRect.width * 0.8), 1200);\n        const defaultHeight = Math.min(Math.round(desktopRect.height * 0.8), 800);\n        const cascadeX = 40 + (this.cascadeIndex % 8) * CASCADE_OFFSET;\n        const cascadeY = 40 + (this.cascadeIndex % 8) * CASCADE_OFFSET;\n        const fullConfig = {\n            icon: config.icon || 'dashicons-admin-generic',\n            x: config.x ?? cascadeX,\n            y: config.y ?? cascadeY,\n            width: config.width ?? defaultWidth,\n            height: config.height ?? defaultHeight,\n            minWidth: config.minWidth ?? 320,\n            minHeight: config.minHeight ?? 200,\n            ...config,\n        };\n        this.cascadeIndex++;\n        const win = new _window__WEBPACK_IMPORTED_MODULE_0__.Window(fullConfig);\n        // Wire up callbacks.\n        win.onFocusRequest = (w) => this.focus(w);\n        win.onClose = (w) => this.remove(w);\n        win.onMinimize = () => {\n            // Focus the next window in the stack.\n            const visible = this.stack.filter((w) => w.state !== 'minimized');\n            if (visible.length > 0) {\n                this.focus(visible[visible.length - 1]);\n            }\n        };\n        // Add to stack and DOM.\n        this.stack.push(win);\n        this.desktop.appendChild(win.element);\n        this.focus(win);\n        // Dispatch custom event.\n        document.dispatchEvent(new CustomEvent('wp-desktop-window-opened', {\n            detail: { windowId: win.id, page: config.url, title: config.title },\n        }));\n        return win;\n    }\n    /**\n     * Focus a window: bring it to top of z-stack.\n     */\n    focus(win) {\n        // Remove from current position and push to top.\n        const idx = this.stack.indexOf(win);\n        if (idx > -1) {\n            this.stack.splice(idx, 1);\n        }\n        this.stack.push(win);\n        // Update z-indices and focused state.\n        this.stack.forEach((w, i) => {\n            w.setZIndex(BASE_Z_INDEX + i);\n            w.setFocused(i === this.stack.length - 1);\n        });\n        // Dispatch custom event.\n        document.dispatchEvent(new CustomEvent('wp-desktop-window-focused', {\n            detail: { windowId: win.id },\n        }));\n    }\n    /**\n     * Remove a window from the stack and DOM.\n     */\n    remove(win) {\n        const idx = this.stack.indexOf(win);\n        if (idx > -1) {\n            this.stack.splice(idx, 1);\n        }\n        // Focus the next topmost window.\n        if (this.stack.length > 0) {\n            this.focus(this.stack[this.stack.length - 1]);\n        }\n        // Dispatch custom event.\n        document.dispatchEvent(new CustomEvent('wp-desktop-window-closed', {\n            detail: { windowId: win.id },\n        }));\n    }\n    /**\n     * Get a window by its ID.\n     */\n    getById(id) {\n        return this.stack.find((w) => w.id === id);\n    }\n    /**\n     * Get all open windows.\n     */\n    getAll() {\n        return [...this.stack];\n    }\n    /**\n     * Get the currently focused (topmost) window.\n     */\n    getFocused() {\n        return this.stack.length > 0 ? this.stack[this.stack.length - 1] : undefined;\n    }\n    /**\n     * Serialize the current window stack for session persistence.\n     *\n     * Order in the returned `windows` array mirrors z-order (earliest\n     * opened / lowest-z first, focused last) so restoring preserves the\n     * stacking the user left behind.\n     */\n    snapshot() {\n        const focused = this.getFocused();\n        const windows = this.stack.map((w) => {\n            const snap = w.getSnapshot();\n            return {\n                id: w.id,\n                url: w.getCurrentUrl(),\n                title: w.config.title,\n                icon: w.config.icon,\n                state: snap.state,\n                x: snap.x,\n                y: snap.y,\n                width: snap.width,\n                height: snap.height,\n            };\n        });\n        return {\n            windows,\n            focused: focused ? focused.id : '',\n            updated: Math.floor(Date.now() / 1000),\n        };\n    }\n}\n\n\n//# sourceURL=webpack://wp-desktop-mode/./src/window-manager.ts?\n}");
-
-/***/ },
-
-/***/ 145
-/*!***********************!*\
-  !*** ./src/window.ts ***!
-  \***********************/
-(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
-
-eval("{__webpack_require__.r(__webpack_exports__);\n/* harmony export */ __webpack_require__.d(__webpack_exports__, {\n/* harmony export */   Window: () => (/* binding */ Window)\n/* harmony export */ });\n/* harmony import */ var _utils__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./utils */ 552);\n/**\n * Desktop Mode — Window.\n *\n * A single desktop window: title bar, iframe content, drag, resize, state management.\n *\n * @since 6.9.0\n */\n\n/** Minimum distance from viewport edges when dragging. */\nconst EDGE_MARGIN = 8;\n/**\n * Returns the URL with the chromeless query parameter set, so the iframe\n * keeps rendering without the admin shell. Returns null for cross-origin\n * URLs so the caller can refuse the navigation.\n */\nfunction withChromelessParam(url) {\n    const parsed = new URL(url, window.location.origin);\n    if (parsed.origin !== window.location.origin) {\n        return null;\n    }\n    parsed.searchParams.set('wp_desktop', '1');\n    return parsed.toString();\n}\n/**\n * Returns a comparable key for two URLs so the active tab can be detected\n * regardless of the chromeless flag or trailing slashes.\n */\nfunction urlMatchKey(url) {\n    try {\n        const parsed = new URL(url, window.location.origin);\n        parsed.searchParams.delete('wp_desktop');\n        return parsed.pathname.replace(/\\/+$/, '') + '?' + parsed.searchParams.toString();\n    }\n    catch {\n        return url;\n    }\n}\n/**\n * Toggle `wp-desktop-has-fullscreen-window` on `<body>` based on whether any\n * window is currently in fullscreen state.\n *\n * Why a body class: a fullscreen window lives inside the shell, and the\n * shell creates a stacking context (positioned + z-index), so the window's\n * z-index can never rise above sibling root-level chrome like `#wpadminbar`.\n * Instead of moving the window element out of the shell (fragile — event\n * handlers, focus trap, and size-from-parent logic all assume the parent\n * is the desktop area), we hide the admin bar via CSS while any fullscreen\n * window is open. This matches macOS convention (menu bar auto-hides in\n * fullscreen) and keeps the stacking context intact.\n *\n * Called from toggleFullscreen and after close() removes a window — so a\n * user closing a fullscreen window without exiting fullscreen first doesn't\n * leave the body class stranded.\n */\nfunction updateFullscreenBodyClass() {\n    const hasFullscreen = document.querySelectorAll('.wp-desktop-window--fullscreen').length > 0;\n    document.body.classList.toggle('wp-desktop-has-fullscreen-window', hasFullscreen);\n}\n/**\n * Build a title-bar control button with an inline SVG icon.\n *\n * Using inline SVG (rather than a dashicon font glyph) keeps icons crisp\n * at any size and lets them inherit `currentColor` so they adapt to the\n * focused / unfocused title-bar state without separate CSS rules.\n */\nfunction createControlButton(variant, label, svgInner) {\n    const btn = document.createElement('button');\n    btn.type = 'button';\n    btn.className = `wp-desktop-window__btn wp-desktop-window__btn--${variant}`;\n    btn.setAttribute('aria-label', label);\n    btn.innerHTML = `<svg class=\"wp-desktop-window__btn-icon\" width=\"12\" height=\"12\" viewBox=\"0 0 12 12\" aria-hidden=\"true\" focusable=\"false\">${svgInner}</svg>`;\n    return btn;\n}\n/**\n * Creates the DOM structure for a desktop window.\n */\nfunction createWindowElement(config) {\n    const el = document.createElement('div');\n    el.className = 'wp-desktop-window';\n    el.id = `wp-window-${config.id}`;\n    el.setAttribute('role', 'dialog');\n    el.setAttribute('aria-labelledby', `wp-window-title-${config.id}`);\n    el.style.left = `${config.x}px`;\n    el.style.top = `${config.y}px`;\n    el.style.width = `${config.width}px`;\n    el.style.height = `${config.height}px`;\n    const titleBar = document.createElement('div');\n    titleBar.className = 'wp-desktop-window__titlebar';\n    const iconEl = document.createElement('span');\n    iconEl.className = `wp-desktop-window__icon dashicons ${(0,_utils__WEBPACK_IMPORTED_MODULE_0__.sanitizeClassName)(config.icon)}`;\n    iconEl.setAttribute('aria-hidden', 'true');\n    const titleEl = document.createElement('span');\n    titleEl.className = 'wp-desktop-window__title';\n    titleEl.id = `wp-window-title-${config.id}`;\n    titleEl.textContent = config.title;\n    const controls = document.createElement('div');\n    controls.className = 'wp-desktop-window__controls';\n    const btnMin = createControlButton('minimize', 'Minimize', '<path d=\"M3 6h6\" stroke=\"currentColor\" stroke-width=\"1.25\" stroke-linecap=\"round\"/>');\n    const btnMax = createControlButton('maximize', 'Maximize', '<rect x=\"3\" y=\"3\" width=\"6\" height=\"6\" rx=\"1\" stroke=\"currentColor\" stroke-width=\"1.25\" fill=\"none\"/>');\n    const btnFocus = createControlButton('focus', 'Enter fullscreen', '<path d=\"M4.5 2H2v2.5M10 4.5V2H7.5M4.5 10H2V7.5M10 7.5V10H7.5\" stroke=\"currentColor\" stroke-width=\"1.25\" stroke-linecap=\"round\" stroke-linejoin=\"round\" fill=\"none\"/>');\n    // Detach: open this window's current URL in a new browser tab as\n    // plain classic admin (no desktop shell, no chromeless). Escape hatch\n    // for users who want to work on one page outside the windowed UI\n    // without disabling desktop mode globally. Icon is the conventional\n    // \"open in new window\" box + arrow.\n    const btnDetach = createControlButton('detach', 'Detach to new tab', '<path d=\"M5 2H2.5v7.5H10V7M6.5 2H10v3.5M10 2L5.5 6.5\" stroke=\"currentColor\" stroke-width=\"1.25\" stroke-linecap=\"round\" stroke-linejoin=\"round\" fill=\"none\"/>');\n    const btnClose = createControlButton('close', 'Close', '<path d=\"M3.25 3.25l5.5 5.5M3.25 8.75l5.5-5.5\" stroke=\"currentColor\" stroke-width=\"1.25\" stroke-linecap=\"round\"/>');\n    controls.appendChild(btnMin);\n    controls.appendChild(btnMax);\n    controls.appendChild(btnFocus);\n    controls.appendChild(btnDetach);\n    controls.appendChild(btnClose);\n    // Screen meta buttons container (populated when iframe reports available panels).\n    const screenMeta = document.createElement('div');\n    screenMeta.className = 'wp-desktop-window__screen-meta';\n    titleBar.appendChild(iconEl);\n    titleBar.appendChild(titleEl);\n    titleBar.appendChild(screenMeta);\n    titleBar.appendChild(controls);\n    const body = document.createElement('div');\n    body.className = 'wp-desktop-window__body';\n    const iframe = document.createElement('iframe');\n    iframe.className = 'wp-desktop-window__iframe';\n    iframe.setAttribute('name', `wp-desktop-frame-${config.id}`);\n    const chromelessSrc = withChromelessParam(config.url);\n    iframe.src = chromelessSrc ?? 'about:blank';\n    body.appendChild(iframe);\n    // Resize handle.\n    const resizeHandle = document.createElement('div');\n    resizeHandle.className = 'wp-desktop-window__resize-handle';\n    el.appendChild(titleBar);\n    // Tab strip — submenu items navigate the iframe within the same window.\n    if (config.submenu && config.submenu.length > 0) {\n        const tabs = document.createElement('nav');\n        tabs.className = 'wp-desktop-window__tabs';\n        tabs.setAttribute('role', 'tablist');\n        tabs.setAttribute('aria-label', `${config.title} sub-pages`);\n        const initialKey = urlMatchKey(config.url);\n        for (const sub of config.submenu) {\n            const tab = document.createElement('button');\n            tab.className = 'wp-desktop-window__tab';\n            tab.setAttribute('type', 'button');\n            tab.setAttribute('role', 'tab');\n            tab.dataset.url = sub.url;\n            tab.textContent = sub.title;\n            if (urlMatchKey(sub.url) === initialKey) {\n                tab.classList.add('wp-desktop-window__tab--active');\n                tab.setAttribute('aria-selected', 'true');\n            }\n            else {\n                tab.setAttribute('aria-selected', 'false');\n            }\n            tabs.appendChild(tab);\n        }\n        el.appendChild(tabs);\n    }\n    el.appendChild(body);\n    el.appendChild(resizeHandle);\n    return el;\n}\n/**\n * Desktop Window class.\n *\n * Manages a single window: its DOM element, iframe, drag/resize behavior, and state.\n */\nclass Window {\n    constructor(config) {\n        this.state = 'normal';\n        this.isDragging = false;\n        this.isResizing = false;\n        this.isDestroyed = false;\n        this.dragOffsetX = 0;\n        this.dragOffsetY = 0;\n        this.resizeStartX = 0;\n        this.resizeStartY = 0;\n        this.resizeStartW = 0;\n        this.resizeStartH = 0;\n        /** Stored geometry before maximize/snap, for restore. */\n        this.savedGeometry = null;\n        /**\n         * Snapshot taken before entering fullscreen so we can restore\n         * the caller's previous state (normal or maximized) on exit.\n         */\n        this.savedFullscreenState = null;\n        /** Callbacks for external events. */\n        this.onFocusRequest = null;\n        this.onClose = null;\n        this.onMinimize = null;\n        this.id = config.id;\n        this.config = config;\n        this.element = createWindowElement(config);\n        this.iframe = this.element.querySelector('.wp-desktop-window__iframe');\n        this.titleBar = this.element.querySelector('.wp-desktop-window__titlebar');\n        this.titleEl = this.element.querySelector('.wp-desktop-window__title');\n        this.boundOnMessage = this.onMessage.bind(this);\n        this.bindEvents();\n        // Session-restored minimized windows must paint already-minimized on\n        // the first frame — otherwise the user sees the opening fade-in\n        // followed by the minimize transition (a visible flicker on every\n        // page refresh). Apply the minimized class before the element is in\n        // the DOM so no transition runs, skip the opening animation, hide\n        // the iframe immediately, and bypass the emitChange save the regular\n        // minimize() path would fire for state the server already has.\n        if (config.initialState === 'minimized') {\n            this.state = 'minimized';\n            this.element.classList.add('wp-desktop-window--minimized');\n            this.iframe.style.visibility = 'hidden';\n            return;\n        }\n        // Fresh open (or restored to a visible state). Play the opening\n        // animation, then remove the class.\n        this.element.classList.add('wp-desktop-window--opening');\n        this.element.addEventListener('animationend', () => {\n            this.element.classList.remove('wp-desktop-window--opening');\n        }, { once: true });\n        // Maximized/fullscreen restores go through the class-driven path\n        // after the geometry renders, so the state transition animates.\n        // 'normal' is the default — applying it would echo a redundant save.\n        if (config.initialState && config.initialState !== 'normal') {\n            requestAnimationFrame(() => this.applyInitialState(config.initialState));\n        }\n    }\n    /**\n     * Apply a state restored from the session. Called once, after construction.\n     */\n    applyInitialState(state) {\n        if (state === 'minimized') {\n            this.minimize();\n        }\n        else if (state === 'maximized') {\n            this.toggleMaximize();\n        }\n        else if (state === 'fullscreen') {\n            this.toggleFullscreen();\n        }\n    }\n    /**\n     * Dispatch a `wp-desktop-window-changed` event so the session-save\n     * path can schedule a debounced write. Called after any state change\n     * that should end up persisted: drag end, resize end, minimize,\n     * restore, maximize toggle, fullscreen toggle.\n     */\n    emitChange(reason) {\n        document.dispatchEvent(new CustomEvent('wp-desktop-window-changed', {\n            detail: { windowId: this.id, reason, state: this.state },\n        }));\n    }\n    /**\n     * Returns the current resolved URL of the iframe — preferring the\n     * content window's location (reflects in-window navigation) and\n     * falling back to the iframe's src attribute for cases where the\n     * content document isn't yet reachable (cross-origin edge, early\n     * load).\n     */\n    getCurrentUrl() {\n        try {\n            const href = this.iframe.contentWindow?.location.href;\n            if (href && href !== 'about:blank') {\n                return href;\n            }\n        }\n        catch {\n            /* Cross-origin read rejected — fall through. */\n        }\n        return this.iframe.src;\n    }\n    /**\n     * Bind all DOM event handlers.\n     */\n    bindEvents() {\n        // Focus on click anywhere in the window.\n        this.element.addEventListener('pointerdown', () => {\n            this.onFocusRequest?.(this);\n        });\n        // Title bar drag.\n        this.titleBar.addEventListener('pointerdown', this.onDragStart.bind(this));\n        // Resize handle.\n        const resizeHandle = this.element.querySelector('.wp-desktop-window__resize-handle');\n        resizeHandle.addEventListener('pointerdown', this.onResizeStart.bind(this));\n        // Window control buttons.\n        const btnMin = this.element.querySelector('.wp-desktop-window__btn--minimize');\n        const btnMax = this.element.querySelector('.wp-desktop-window__btn--maximize');\n        const btnFocus = this.element.querySelector('.wp-desktop-window__btn--focus');\n        const btnDetach = this.element.querySelector('.wp-desktop-window__btn--detach');\n        const btnClose = this.element.querySelector('.wp-desktop-window__btn--close');\n        btnMin.addEventListener('click', (e) => {\n            e.stopPropagation();\n            this.minimize();\n        });\n        btnMax.addEventListener('click', (e) => {\n            e.stopPropagation();\n            this.toggleMaximize();\n        });\n        btnFocus.addEventListener('click', (e) => {\n            e.stopPropagation();\n            this.toggleFullscreen();\n        });\n        btnDetach.addEventListener('click', (e) => {\n            e.stopPropagation();\n            this.detach();\n        });\n        btnClose.addEventListener('click', (e) => {\n            e.stopPropagation();\n            this.close();\n        });\n        // Double-click title bar to toggle maximize.\n        this.titleBar.addEventListener('dblclick', () => {\n            this.toggleMaximize();\n        });\n        // Tab strip — clicks navigate the iframe in place.\n        const tabs = this.element.querySelector('.wp-desktop-window__tabs');\n        if (tabs) {\n            tabs.addEventListener('click', (e) => {\n                const target = e.target.closest('.wp-desktop-window__tab');\n                if (!target || !target.dataset.url) {\n                    return;\n                }\n                e.stopPropagation();\n                const next = withChromelessParam(target.dataset.url);\n                if (next) {\n                    this.iframe.src = next;\n                }\n            });\n        }\n        // Sync the active tab whenever the iframe finishes a navigation.\n        // Reading iframe.contentWindow.location is safe because we only\n        // allow same-origin URLs; cross-origin would have thrown earlier.\n        this.iframe.addEventListener('load', () => {\n            try {\n                const href = this.iframe.contentWindow?.location.href;\n                if (href) {\n                    this.syncActiveTab(href);\n                }\n            }\n            catch {\n                /* Cross-origin or detached frame — ignore. */\n            }\n        });\n        // Listen for postMessage from iframe.\n        window.addEventListener('message', this.boundOnMessage);\n    }\n    /**\n     * Update the active tab to whichever submenu URL matches the iframe's\n     * current location. Called after every iframe navigation.\n     */\n    syncActiveTab(currentUrl) {\n        const tabs = this.element.querySelectorAll('.wp-desktop-window__tab');\n        if (!tabs.length) {\n            return;\n        }\n        const activeKey = urlMatchKey(currentUrl);\n        for (const tab of tabs) {\n            const tabUrl = tab.dataset.url;\n            const isActive = !!tabUrl && urlMatchKey(tabUrl) === activeKey;\n            tab.classList.toggle('wp-desktop-window__tab--active', isActive);\n            tab.setAttribute('aria-selected', isActive ? 'true' : 'false');\n        }\n    }\n    /**\n     * Handle postMessage events from the iframe.\n     */\n    onMessage(event) {\n        // Only accept same-origin messages from our own iframe.\n        if (event.origin !== window.location.origin) {\n            return;\n        }\n        if (event.source !== this.iframe.contentWindow) {\n            return;\n        }\n        const data = event.data;\n        if (!data || typeof data.type !== 'string') {\n            return;\n        }\n        if (data.type === 'wp-desktop-title-change' && typeof data.title === 'string') {\n            this.setTitle(data.title);\n        }\n        if (data.type === 'wp-desktop-screen-meta' && Array.isArray(data.panels)) {\n            this.addScreenMetaButtons(data.panels);\n        }\n        if (data.type === 'wp-desktop-screen-meta-state') {\n            this.setActiveScreenMetaPanel(typeof data.open === 'string' ? data.open : null);\n        }\n    }\n    /**\n     * Add Screen Options / Help buttons to the title bar.\n     *\n     * Called when the iframe reports which screen-meta panels are available.\n     * Repopulates on every call — the iframe re-announces on each navigation,\n     * and different pages expose different panels.\n     */\n    addScreenMetaButtons(panels) {\n        const container = this.element.querySelector('.wp-desktop-window__screen-meta');\n        if (!container) {\n            return;\n        }\n        container.innerHTML = '';\n        const panelConfig = {\n            'screen-options': { icon: 'dashicons-admin-generic', label: 'Screen Options' },\n            'help': { icon: 'dashicons-editor-help', label: 'Help' },\n        };\n        for (const panel of panels) {\n            const cfg = panelConfig[panel];\n            if (!cfg) {\n                continue;\n            }\n            const btn = document.createElement('button');\n            btn.className = 'wp-desktop-window__meta-btn';\n            btn.setAttribute('type', 'button');\n            btn.setAttribute('aria-label', cfg.label);\n            btn.setAttribute('aria-pressed', 'false');\n            btn.dataset.panel = panel;\n            btn.innerHTML = `<span class=\"dashicons ${cfg.icon}\" aria-hidden=\"true\"></span>`;\n            // The iframe owns panel state. We request a toggle and wait\n            // for the authoritative state message back before updating\n            // the button's --active class.\n            btn.addEventListener('click', (e) => {\n                e.stopPropagation();\n                this.iframe.contentWindow?.postMessage({ type: 'wp-desktop-toggle-panel', panel }, window.location.origin);\n            });\n            container.appendChild(btn);\n        }\n    }\n    /**\n     * Reflect the iframe's authoritative screen-meta state on the\n     * title-bar buttons. At most one button is active at a time.\n     */\n    setActiveScreenMetaPanel(panel) {\n        const container = this.element.querySelector('.wp-desktop-window__screen-meta');\n        if (!container) {\n            return;\n        }\n        container.querySelectorAll('.wp-desktop-window__meta-btn').forEach((btn) => {\n            const isActive = btn.dataset.panel === panel;\n            btn.classList.toggle('wp-desktop-window__meta-btn--active', isActive);\n            btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');\n        });\n    }\n    /**\n     * Start dragging the window.\n     */\n    onDragStart(e) {\n        // Only drag from the title bar background, not from any buttons.\n        const target = e.target;\n        if (target.closest('.wp-desktop-window__controls') || target.closest('.wp-desktop-window__screen-meta')) {\n            return;\n        }\n        if (this.state === 'maximized') {\n            return;\n        }\n        this.isDragging = true;\n        this.dragOffsetX = e.clientX - this.element.offsetLeft;\n        this.dragOffsetY = e.clientY - this.element.offsetTop;\n        this.titleBar.setPointerCapture(e.pointerId);\n        // Add an overlay to prevent iframe from eating pointer events during drag.\n        this.element.classList.add('wp-desktop-window--dragging');\n        const onDragMove = (ev) => {\n            if (!this.isDragging) {\n                return;\n            }\n            let x = ev.clientX - this.dragOffsetX;\n            let y = ev.clientY - this.dragOffsetY;\n            // Constrain to desktop bounds.\n            const desktop = this.element.parentElement;\n            if (desktop) {\n                x = Math.max(EDGE_MARGIN, Math.min(x, desktop.clientWidth - EDGE_MARGIN));\n                y = Math.max(EDGE_MARGIN, Math.min(y, desktop.clientHeight - EDGE_MARGIN));\n            }\n            this.element.style.left = `${x}px`;\n            this.element.style.top = `${y}px`;\n        };\n        const onDragEnd = () => {\n            if (!this.isDragging) {\n                return;\n            }\n            this.isDragging = false;\n            this.element.classList.remove('wp-desktop-window--dragging');\n            this.titleBar.removeEventListener('pointermove', onDragMove);\n            this.titleBar.removeEventListener('pointerup', onDragEnd);\n            this.titleBar.removeEventListener('pointercancel', onDragEnd);\n            this.titleBar.removeEventListener('lostpointercapture', onDragEnd);\n            this.emitChange('moved');\n        };\n        this.titleBar.addEventListener('pointermove', onDragMove);\n        this.titleBar.addEventListener('pointerup', onDragEnd);\n        this.titleBar.addEventListener('pointercancel', onDragEnd);\n        this.titleBar.addEventListener('lostpointercapture', onDragEnd);\n    }\n    /**\n     * Start resizing the window.\n     */\n    onResizeStart(e) {\n        if (this.state === 'maximized') {\n            return;\n        }\n        e.preventDefault();\n        e.stopPropagation();\n        this.isResizing = true;\n        this.resizeStartX = e.clientX;\n        this.resizeStartY = e.clientY;\n        this.resizeStartW = this.element.offsetWidth;\n        this.resizeStartH = this.element.offsetHeight;\n        e.target.setPointerCapture(e.pointerId);\n        this.element.classList.add('wp-desktop-window--resizing');\n        const onResizeMove = (ev) => {\n            if (!this.isResizing) {\n                return;\n            }\n            const newW = Math.max(this.config.minWidth, this.resizeStartW + (ev.clientX - this.resizeStartX));\n            const newH = Math.max(this.config.minHeight, this.resizeStartH + (ev.clientY - this.resizeStartY));\n            this.element.style.width = `${newW}px`;\n            this.element.style.height = `${newH}px`;\n        };\n        const onResizeEnd = () => {\n            if (!this.isResizing) {\n                return;\n            }\n            this.isResizing = false;\n            this.element.classList.remove('wp-desktop-window--resizing');\n            const handle = this.element.querySelector('.wp-desktop-window__resize-handle');\n            handle.removeEventListener('pointermove', onResizeMove);\n            handle.removeEventListener('pointerup', onResizeEnd);\n            handle.removeEventListener('pointercancel', onResizeEnd);\n            handle.removeEventListener('lostpointercapture', onResizeEnd);\n            this.emitChange('resized');\n        };\n        const handle = e.target;\n        handle.addEventListener('pointermove', onResizeMove);\n        handle.addEventListener('pointerup', onResizeEnd);\n        handle.addEventListener('pointercancel', onResizeEnd);\n        handle.addEventListener('lostpointercapture', onResizeEnd);\n    }\n    /**\n     * Set the z-index of this window.\n     */\n    setZIndex(z) {\n        this.element.style.zIndex = String(z);\n    }\n    /**\n     * Mark this window as focused or unfocused.\n     */\n    setFocused(focused) {\n        this.element.classList.toggle('wp-desktop-window--focused', focused);\n    }\n    /**\n     * Update the window title.\n     */\n    setTitle(title) {\n        this.titleEl.textContent = title;\n    }\n    /**\n     * Minimize the window.\n     */\n    minimize() {\n        this.state = 'minimized';\n        this.element.classList.add('wp-desktop-window--minimized');\n        // After the transition completes, hide the iframe to save resources.\n        this.element.addEventListener('transitionend', (e) => {\n            if (e.propertyName === 'opacity' && this.state === 'minimized') {\n                this.iframe.style.visibility = 'hidden';\n            }\n        }, { once: true });\n        this.onMinimize?.(this);\n        this.emitChange('state');\n    }\n    /**\n     * Restore the window from minimized state.\n     */\n    restore() {\n        // Restore iframe visibility before the animation starts.\n        this.iframe.style.visibility = '';\n        this.element.classList.remove('wp-desktop-window--minimized');\n        if (this.state === 'minimized') {\n            this.state = 'normal';\n        }\n        this.onFocusRequest?.(this);\n        this.emitChange('state');\n    }\n    /**\n     * Toggle between maximized and normal states.\n     */\n    toggleMaximize() {\n        const parent = this.element.parentElement;\n        if (!parent) {\n            return;\n        }\n        if (this.state === 'maximized') {\n            // Restore to saved geometry. The maximized class is removed *after*\n            // the next frame so the class-driven border-radius animates in sync.\n            this.element.classList.remove('wp-desktop-window--maximized');\n            if (this.savedGeometry) {\n                this.element.style.left = `${this.savedGeometry.x}px`;\n                this.element.style.top = `${this.savedGeometry.y}px`;\n                this.element.style.width = `${this.savedGeometry.width}px`;\n                this.element.style.height = `${this.savedGeometry.height}px`;\n            }\n            this.state = 'normal';\n        }\n        else {\n            // Save current geometry, then animate to the desktop area's bounds.\n            this.savedGeometry = {\n                x: this.element.offsetLeft,\n                y: this.element.offsetTop,\n                width: this.element.offsetWidth,\n                height: this.element.offsetHeight,\n            };\n            this.element.classList.add('wp-desktop-window--maximized');\n            this.element.style.left = '0px';\n            this.element.style.top = '0px';\n            this.element.style.width = `${parent.clientWidth}px`;\n            this.element.style.height = `${parent.clientHeight}px`;\n            this.state = 'maximized';\n        }\n        this.emitChange('state');\n    }\n    /**\n     * Toggle fullscreen (\"focus\") mode — the window covers the entire\n     * viewport, hiding the admin bar, dock, and taskbar behind it.\n     *\n     * This is the equivalent of macOS's green zoom-to-fullscreen: an\n     * immersive mode distinct from maximize (which only fills the\n     * desktop area between dock and taskbar).\n     */\n    toggleFullscreen() {\n        if (this.state === 'fullscreen') {\n            // Restore whichever state the window was in before fullscreen.\n            this.element.classList.remove('wp-desktop-window--fullscreen');\n            if (this.savedFullscreenState) {\n                const s = this.savedFullscreenState;\n                this.element.style.left = `${s.x}px`;\n                this.element.style.top = `${s.y}px`;\n                this.element.style.width = `${s.width}px`;\n                this.element.style.height = `${s.height}px`;\n                this.element.classList.toggle('wp-desktop-window--maximized', s.state === 'maximized');\n                this.state = s.state;\n                this.savedFullscreenState = null;\n            }\n            else {\n                this.state = 'normal';\n            }\n        }\n        else {\n            this.savedFullscreenState = {\n                state: this.state,\n                x: this.element.offsetLeft,\n                y: this.element.offsetTop,\n                width: this.element.offsetWidth,\n                height: this.element.offsetHeight,\n            };\n            this.element.classList.add('wp-desktop-window--fullscreen');\n            this.state = 'fullscreen';\n        }\n        updateFullscreenBodyClass();\n        this.updateFocusButtonState();\n        this.emitChange('state');\n    }\n    /**\n     * Reflect fullscreen state on the focus-mode button (active class,\n     * aria-pressed, and label).\n     */\n    updateFocusButtonState() {\n        const btn = this.element.querySelector('.wp-desktop-window__btn--focus');\n        if (!btn) {\n            return;\n        }\n        const isFullscreen = this.state === 'fullscreen';\n        btn.classList.toggle('wp-desktop-window__btn--active', isFullscreen);\n        btn.setAttribute('aria-pressed', isFullscreen ? 'true' : 'false');\n        btn.setAttribute('aria-label', isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen');\n    }\n    /**\n     * Open the window's current URL in a new browser tab as classic\n     * wp-admin.\n     *\n     * Strips the chromeless `wp_desktop` flag and the transient\n     * `wp_desktop_portal` flag, and tags the URL with\n     * `wp_desktop_classic=1` so the server-side admin_init redirect\n     * (which otherwise forwards plain admin URLs to `/wp-desktop/`)\n     * lets the request through. The tag only has to survive the first\n     * request; once the browser renders the page, the user's in-tab\n     * navigation returns to normal admin flow.\n     *\n     * The desktop window itself stays open — detach is a branch, not\n     * a move. If the user wants to close it afterwards, they can.\n     */\n    detach() {\n        const current = this.getCurrentUrl();\n        let url;\n        try {\n            url = new URL(current, window.location.origin);\n        }\n        catch {\n            return;\n        }\n        if (url.origin !== window.location.origin) {\n            return;\n        }\n        url.searchParams.delete('wp_desktop');\n        url.searchParams.delete('wp_desktop_portal');\n        url.searchParams.set('wp_desktop_classic', '1');\n        // `noopener` is required for security (tabs should not be able to\n        // reach back into window.opener), and it also lets the browser\n        // move the new tab to its own process.\n        window.open(url.toString(), '_blank', 'noopener');\n    }\n    /**\n     * Close and destroy the window.\n     *\n     * Plays a subtle closing animation before removing the element.\n     */\n    close() {\n        if (this.isDestroyed) {\n            return;\n        }\n        this.isDestroyed = true;\n        // Fire the callback immediately so the window manager updates its stack.\n        this.onClose?.(this);\n        this.element.classList.add('wp-desktop-window--closing');\n        let removed = false;\n        const onDone = () => {\n            if (removed) {\n                return;\n            }\n            removed = true;\n            window.removeEventListener('message', this.boundOnMessage);\n            this.element.remove();\n            // If this was the last fullscreen window, drop the body class so\n            // the admin bar and shell top-offset come back cleanly.\n            updateFullscreenBodyClass();\n        };\n        const onTransitionEnd = (e) => {\n            if (e.propertyName === 'opacity') {\n                this.element.removeEventListener('transitionend', onTransitionEnd);\n                onDone();\n            }\n        };\n        this.element.addEventListener('transitionend', onTransitionEnd);\n        // Safety net: if transitionend never fires (e.g. reduced-motion or no transition),\n        // remove after a generous timeout so the element doesn't linger.\n        setTimeout(onDone, 300);\n    }\n    /**\n     * Get a snapshot of the window state for persistence.\n     */\n    getSnapshot() {\n        return {\n            id: this.id,\n            x: this.element.offsetLeft,\n            y: this.element.offsetTop,\n            width: this.element.offsetWidth,\n            height: this.element.offsetHeight,\n            state: this.state,\n        };\n    }\n}\n\n\n//# sourceURL=webpack://wp-desktop-mode/./src/window.ts?\n}");
-
-/***/ }
-
-/******/ 	});
-/************************************************************************/
-/******/ 	// The module cache
-/******/ 	var __webpack_module_cache__ = {};
-/******/ 	
-/******/ 	// The require function
-/******/ 	function __webpack_require__(moduleId) {
-/******/ 		// Check if module is in cache
-/******/ 		var cachedModule = __webpack_module_cache__[moduleId];
-/******/ 		if (cachedModule !== undefined) {
-/******/ 			return cachedModule.exports;
-/******/ 		}
-/******/ 		// Create a new module (and put it into the cache)
-/******/ 		var module = __webpack_module_cache__[moduleId] = {
-/******/ 			// no module.id needed
-/******/ 			// no module.loaded needed
-/******/ 			exports: {}
-/******/ 		};
-/******/ 	
-/******/ 		// Execute the module function
-/******/ 		if (!(moduleId in __webpack_modules__)) {
-/******/ 			delete __webpack_module_cache__[moduleId];
-/******/ 			var e = new Error("Cannot find module '" + moduleId + "'");
-/******/ 			e.code = 'MODULE_NOT_FOUND';
-/******/ 			throw e;
-/******/ 		}
-/******/ 		__webpack_modules__[moduleId](module, module.exports, __webpack_require__);
-/******/ 	
-/******/ 		// Return the exports of the module
-/******/ 		return module.exports;
-/******/ 	}
-/******/ 	
-/************************************************************************/
-/******/ 	/* webpack/runtime/define property getters */
-/******/ 	(() => {
-/******/ 		// define getter functions for harmony exports
-/******/ 		__webpack_require__.d = (exports, definition) => {
-/******/ 			for(var key in definition) {
-/******/ 				if(__webpack_require__.o(definition, key) && !__webpack_require__.o(exports, key)) {
-/******/ 					Object.defineProperty(exports, key, { enumerable: true, get: definition[key] });
-/******/ 				}
-/******/ 			}
-/******/ 		};
-/******/ 	})();
-/******/ 	
-/******/ 	/* webpack/runtime/hasOwnProperty shorthand */
-/******/ 	(() => {
-/******/ 		__webpack_require__.o = (obj, prop) => (Object.prototype.hasOwnProperty.call(obj, prop))
-/******/ 	})();
-/******/ 	
-/******/ 	/* webpack/runtime/make namespace object */
-/******/ 	(() => {
-/******/ 		// define __esModule on exports
-/******/ 		__webpack_require__.r = (exports) => {
-/******/ 			if(typeof Symbol !== 'undefined' && Symbol.toStringTag) {
-/******/ 				Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' });
-/******/ 			}
-/******/ 			Object.defineProperty(exports, '__esModule', { value: true });
-/******/ 		};
-/******/ 	})();
-/******/ 	
-/************************************************************************/
-/******/ 	
-/******/ 	// startup
-/******/ 	// Load entry module and return exports
-/******/ 	// This entry module can't be inlined because the eval devtool is used.
-/******/ 	var __webpack_exports__ = __webpack_require__(637);
-/******/ 	
-/******/ })()
-;
+var wpDesktop = function(exports) {
+  "use strict";
+  const IDENTITY_PARAMS = ["post_type", "page", "taxonomy"];
+  function slugify(path) {
+    return path.replace(/\.php/g, "-php").replace(/[?&=]/g, "-").replace(/[^a-zA-Z0-9_-]/g, "").replace(/-+/g, "-").replace(/^-|-$/g, "") || "index";
+  }
+  function deriveWindowId(url, adminUrl) {
+    let parsed = null;
+    try {
+      parsed = new URL(url, adminUrl);
+    } catch (err) {
+      parsed = null;
+    }
+    if (parsed) {
+      const basePath = new URL(adminUrl).pathname;
+      const filename = parsed.pathname.replace(basePath, "").replace(/^\/+/, "");
+      const significant = new URLSearchParams();
+      for (const key of IDENTITY_PARAMS) {
+        const value = parsed.searchParams.get(key);
+        if (value) {
+          significant.set(key, value);
+        }
+      }
+      const query = significant.toString();
+      return slugify(query ? `${filename}?${query}` : filename);
+    }
+    let path = url.replace(adminUrl, "");
+    if (path.startsWith("/")) {
+      path = path.substring(1);
+    }
+    return slugify(path);
+  }
+  function sanitizeClassName(value) {
+    return value.replace(/[^a-zA-Z0-9_-]/g, "");
+  }
+  const EDGE_MARGIN = 8;
+  function withChromelessParam(url) {
+    const parsed = new URL(url, window.location.origin);
+    if (parsed.origin !== window.location.origin) {
+      return null;
+    }
+    parsed.searchParams.set("wp_desktop", "1");
+    return parsed.toString();
+  }
+  function urlMatchKey(url) {
+    try {
+      const parsed = new URL(url, window.location.origin);
+      parsed.searchParams.delete("wp_desktop");
+      return parsed.pathname.replace(/\/+$/, "") + "?" + parsed.searchParams.toString();
+    } catch {
+      return url;
+    }
+  }
+  function updateFullscreenBodyClass() {
+    const hasFullscreen = document.querySelectorAll(".wp-desktop-window--fullscreen").length > 0;
+    document.body.classList.toggle("wp-desktop-has-fullscreen-window", hasFullscreen);
+  }
+  function createControlButton(variant, label, svgInner) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `wp-desktop-window__btn wp-desktop-window__btn--${variant}`;
+    btn.setAttribute("aria-label", label);
+    btn.innerHTML = `<svg class="wp-desktop-window__btn-icon" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" focusable="false">${svgInner}</svg>`;
+    return btn;
+  }
+  function createWindowElement(config) {
+    const el = document.createElement("div");
+    el.className = "wp-desktop-window";
+    el.id = `wp-window-${config.id}`;
+    el.setAttribute("role", "dialog");
+    el.setAttribute("aria-labelledby", `wp-window-title-${config.id}`);
+    el.style.left = `${config.x}px`;
+    el.style.top = `${config.y}px`;
+    el.style.width = `${config.width}px`;
+    el.style.height = `${config.height}px`;
+    const titleBar = document.createElement("div");
+    titleBar.className = "wp-desktop-window__titlebar";
+    const iconEl = document.createElement("span");
+    iconEl.className = `wp-desktop-window__icon dashicons ${sanitizeClassName(config.icon)}`;
+    iconEl.setAttribute("aria-hidden", "true");
+    const titleEl = document.createElement("span");
+    titleEl.className = "wp-desktop-window__title";
+    titleEl.id = `wp-window-title-${config.id}`;
+    titleEl.textContent = config.title;
+    const controls = document.createElement("div");
+    controls.className = "wp-desktop-window__controls";
+    const btnMin = createControlButton(
+      "minimize",
+      "Minimize",
+      '<path d="M3 6h6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>'
+    );
+    const btnMax = createControlButton(
+      "maximize",
+      "Maximize",
+      '<rect x="3" y="3" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.25" fill="none"/>'
+    );
+    const btnFocus = createControlButton(
+      "focus",
+      "Enter fullscreen",
+      '<path d="M4.5 2H2v2.5M10 4.5V2H7.5M4.5 10H2V7.5M10 7.5V10H7.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none"/>'
+    );
+    const btnDetach = createControlButton(
+      "detach",
+      "Detach to new tab",
+      '<path d="M5 2H2.5v7.5H10V7M6.5 2H10v3.5M10 2L5.5 6.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none"/>'
+    );
+    const btnClose = createControlButton(
+      "close",
+      "Close",
+      '<path d="M3.25 3.25l5.5 5.5M3.25 8.75l5.5-5.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>'
+    );
+    controls.appendChild(btnMin);
+    controls.appendChild(btnMax);
+    controls.appendChild(btnFocus);
+    controls.appendChild(btnDetach);
+    controls.appendChild(btnClose);
+    const screenMeta = document.createElement("div");
+    screenMeta.className = "wp-desktop-window__screen-meta";
+    titleBar.appendChild(iconEl);
+    titleBar.appendChild(titleEl);
+    titleBar.appendChild(screenMeta);
+    titleBar.appendChild(controls);
+    const body = document.createElement("div");
+    body.className = "wp-desktop-window__body";
+    const iframe = document.createElement("iframe");
+    iframe.className = "wp-desktop-window__iframe";
+    iframe.setAttribute("name", `wp-desktop-frame-${config.id}`);
+    const chromelessSrc = withChromelessParam(config.url);
+    iframe.src = chromelessSrc ?? "about:blank";
+    body.appendChild(iframe);
+    const resizeHandle = document.createElement("div");
+    resizeHandle.className = "wp-desktop-window__resize-handle";
+    el.appendChild(titleBar);
+    if (config.submenu && config.submenu.length > 0) {
+      const tabs = document.createElement("nav");
+      tabs.className = "wp-desktop-window__tabs";
+      tabs.setAttribute("role", "tablist");
+      tabs.setAttribute("aria-label", `${config.title} sub-pages`);
+      const initialKey = urlMatchKey(config.url);
+      for (const sub of config.submenu) {
+        const tab = document.createElement("button");
+        tab.className = "wp-desktop-window__tab";
+        tab.setAttribute("type", "button");
+        tab.setAttribute("role", "tab");
+        tab.dataset.url = sub.url;
+        tab.textContent = sub.title;
+        if (urlMatchKey(sub.url) === initialKey) {
+          tab.classList.add("wp-desktop-window__tab--active");
+          tab.setAttribute("aria-selected", "true");
+        } else {
+          tab.setAttribute("aria-selected", "false");
+        }
+        tabs.appendChild(tab);
+      }
+      el.appendChild(tabs);
+    }
+    el.appendChild(body);
+    el.appendChild(resizeHandle);
+    return el;
+  }
+  class Window {
+    constructor(config) {
+      this.state = "normal";
+      this.isDragging = false;
+      this.isResizing = false;
+      this.isDestroyed = false;
+      this.dragOffsetX = 0;
+      this.dragOffsetY = 0;
+      this.resizeStartX = 0;
+      this.resizeStartY = 0;
+      this.resizeStartW = 0;
+      this.resizeStartH = 0;
+      this.savedGeometry = null;
+      this.savedFullscreenState = null;
+      this.onFocusRequest = null;
+      this.onClose = null;
+      this.onMinimize = null;
+      this.id = config.id;
+      this.config = config;
+      this.element = createWindowElement(config);
+      this.iframe = this.element.querySelector(".wp-desktop-window__iframe");
+      this.titleBar = this.element.querySelector(".wp-desktop-window__titlebar");
+      this.titleEl = this.element.querySelector(".wp-desktop-window__title");
+      this.boundOnMessage = this.onMessage.bind(this);
+      this.bindEvents();
+      if (config.initialState === "minimized") {
+        this.state = "minimized";
+        this.element.classList.add("wp-desktop-window--minimized");
+        this.iframe.style.visibility = "hidden";
+        return;
+      }
+      this.element.classList.add("wp-desktop-window--opening");
+      this.element.addEventListener("animationend", () => {
+        this.element.classList.remove("wp-desktop-window--opening");
+      }, { once: true });
+      if (config.initialState && config.initialState !== "normal") {
+        requestAnimationFrame(() => this.applyInitialState(config.initialState));
+      }
+    }
+    /**
+     * Apply a state restored from the session. Called once, after construction.
+     */
+    applyInitialState(state) {
+      if (state === "minimized") {
+        this.minimize();
+      } else if (state === "maximized") {
+        this.toggleMaximize();
+      } else if (state === "fullscreen") {
+        this.toggleFullscreen();
+      }
+    }
+    /**
+     * Dispatch a `wp-desktop-window-changed` event so the session-save
+     * path can schedule a debounced write. Called after any state change
+     * that should end up persisted: drag end, resize end, minimize,
+     * restore, maximize toggle, fullscreen toggle.
+     */
+    emitChange(reason) {
+      document.dispatchEvent(
+        new CustomEvent("wp-desktop-window-changed", {
+          detail: { windowId: this.id, reason, state: this.state }
+        })
+      );
+    }
+    /**
+     * Returns the current resolved URL of the iframe — preferring the
+     * content window's location (reflects in-window navigation) and
+     * falling back to the iframe's src attribute for cases where the
+     * content document isn't yet reachable (cross-origin edge, early
+     * load).
+     */
+    getCurrentUrl() {
+      try {
+        const href = this.iframe.contentWindow?.location.href;
+        if (href && href !== "about:blank") {
+          return href;
+        }
+      } catch {
+      }
+      return this.iframe.src;
+    }
+    /**
+     * Bind all DOM event handlers.
+     */
+    bindEvents() {
+      this.element.addEventListener("pointerdown", () => {
+        this.onFocusRequest?.(this);
+      });
+      this.titleBar.addEventListener("pointerdown", this.onDragStart.bind(this));
+      const resizeHandle = this.element.querySelector(".wp-desktop-window__resize-handle");
+      resizeHandle.addEventListener("pointerdown", this.onResizeStart.bind(this));
+      const btnMin = this.element.querySelector(".wp-desktop-window__btn--minimize");
+      const btnMax = this.element.querySelector(".wp-desktop-window__btn--maximize");
+      const btnFocus = this.element.querySelector(".wp-desktop-window__btn--focus");
+      const btnDetach = this.element.querySelector(".wp-desktop-window__btn--detach");
+      const btnClose = this.element.querySelector(".wp-desktop-window__btn--close");
+      btnMin.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.minimize();
+      });
+      btnMax.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.toggleMaximize();
+      });
+      btnFocus.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.toggleFullscreen();
+      });
+      btnDetach.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.detach();
+      });
+      btnClose.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.close();
+      });
+      this.titleBar.addEventListener("dblclick", () => {
+        this.toggleMaximize();
+      });
+      const tabs = this.element.querySelector(".wp-desktop-window__tabs");
+      if (tabs) {
+        tabs.addEventListener("click", (e) => {
+          const target = e.target.closest(".wp-desktop-window__tab");
+          if (!target || !target.dataset.url) {
+            return;
+          }
+          e.stopPropagation();
+          const next = withChromelessParam(target.dataset.url);
+          if (next) {
+            this.iframe.src = next;
+          }
+        });
+      }
+      this.iframe.addEventListener("load", () => {
+        try {
+          const href = this.iframe.contentWindow?.location.href;
+          if (href) {
+            this.syncActiveTab(href);
+          }
+        } catch {
+        }
+      });
+      window.addEventListener("message", this.boundOnMessage);
+    }
+    /**
+     * Update the active tab to whichever submenu URL matches the iframe's
+     * current location. Called after every iframe navigation.
+     */
+    syncActiveTab(currentUrl) {
+      const tabs = this.element.querySelectorAll(".wp-desktop-window__tab");
+      if (!tabs.length) {
+        return;
+      }
+      const activeKey = urlMatchKey(currentUrl);
+      for (const tab of tabs) {
+        const tabUrl = tab.dataset.url;
+        const isActive = !!tabUrl && urlMatchKey(tabUrl) === activeKey;
+        tab.classList.toggle("wp-desktop-window__tab--active", isActive);
+        tab.setAttribute("aria-selected", isActive ? "true" : "false");
+      }
+    }
+    /**
+     * Handle postMessage events from the iframe.
+     */
+    onMessage(event) {
+      if (event.origin !== window.location.origin) {
+        return;
+      }
+      if (event.source !== this.iframe.contentWindow) {
+        return;
+      }
+      const data = event.data;
+      if (!data || typeof data.type !== "string") {
+        return;
+      }
+      if (data.type === "wp-desktop-title-change" && typeof data.title === "string") {
+        this.setTitle(data.title);
+      }
+      if (data.type === "wp-desktop-screen-meta" && Array.isArray(data.panels)) {
+        this.addScreenMetaButtons(data.panels);
+      }
+      if (data.type === "wp-desktop-screen-meta-state") {
+        this.setActiveScreenMetaPanel(
+          typeof data.open === "string" ? data.open : null
+        );
+      }
+    }
+    /**
+     * Add Screen Options / Help buttons to the title bar.
+     *
+     * Called when the iframe reports which screen-meta panels are available.
+     * Repopulates on every call — the iframe re-announces on each navigation,
+     * and different pages expose different panels.
+     */
+    addScreenMetaButtons(panels) {
+      const container = this.element.querySelector(".wp-desktop-window__screen-meta");
+      if (!container) {
+        return;
+      }
+      container.innerHTML = "";
+      const panelConfig = {
+        "screen-options": { icon: "dashicons-admin-generic", label: "Screen Options" },
+        "help": { icon: "dashicons-editor-help", label: "Help" }
+      };
+      for (const panel of panels) {
+        const cfg = panelConfig[panel];
+        if (!cfg) {
+          continue;
+        }
+        const btn = document.createElement("button");
+        btn.className = "wp-desktop-window__meta-btn";
+        btn.setAttribute("type", "button");
+        btn.setAttribute("aria-label", cfg.label);
+        btn.setAttribute("aria-pressed", "false");
+        btn.dataset.panel = panel;
+        btn.innerHTML = `<span class="dashicons ${cfg.icon}" aria-hidden="true"></span>`;
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          this.iframe.contentWindow?.postMessage(
+            { type: "wp-desktop-toggle-panel", panel },
+            window.location.origin
+          );
+        });
+        container.appendChild(btn);
+      }
+    }
+    /**
+     * Reflect the iframe's authoritative screen-meta state on the
+     * title-bar buttons. At most one button is active at a time.
+     */
+    setActiveScreenMetaPanel(panel) {
+      const container = this.element.querySelector(".wp-desktop-window__screen-meta");
+      if (!container) {
+        return;
+      }
+      container.querySelectorAll(".wp-desktop-window__meta-btn").forEach((btn) => {
+        const isActive = btn.dataset.panel === panel;
+        btn.classList.toggle("wp-desktop-window__meta-btn--active", isActive);
+        btn.setAttribute("aria-pressed", isActive ? "true" : "false");
+      });
+    }
+    /**
+     * Start dragging the window.
+     */
+    onDragStart(e) {
+      const target = e.target;
+      if (target.closest(".wp-desktop-window__controls") || target.closest(".wp-desktop-window__screen-meta")) {
+        return;
+      }
+      if (this.state === "maximized") {
+        return;
+      }
+      this.isDragging = true;
+      this.dragOffsetX = e.clientX - this.element.offsetLeft;
+      this.dragOffsetY = e.clientY - this.element.offsetTop;
+      this.titleBar.setPointerCapture(e.pointerId);
+      this.element.classList.add("wp-desktop-window--dragging");
+      const onDragMove = (ev) => {
+        if (!this.isDragging) {
+          return;
+        }
+        let x = ev.clientX - this.dragOffsetX;
+        let y = ev.clientY - this.dragOffsetY;
+        const desktop = this.element.parentElement;
+        if (desktop) {
+          x = Math.max(EDGE_MARGIN, Math.min(x, desktop.clientWidth - EDGE_MARGIN));
+          y = Math.max(EDGE_MARGIN, Math.min(y, desktop.clientHeight - EDGE_MARGIN));
+        }
+        this.element.style.left = `${x}px`;
+        this.element.style.top = `${y}px`;
+      };
+      const onDragEnd = () => {
+        if (!this.isDragging) {
+          return;
+        }
+        this.isDragging = false;
+        this.element.classList.remove("wp-desktop-window--dragging");
+        this.titleBar.removeEventListener("pointermove", onDragMove);
+        this.titleBar.removeEventListener("pointerup", onDragEnd);
+        this.titleBar.removeEventListener("pointercancel", onDragEnd);
+        this.titleBar.removeEventListener("lostpointercapture", onDragEnd);
+        this.emitChange("moved");
+      };
+      this.titleBar.addEventListener("pointermove", onDragMove);
+      this.titleBar.addEventListener("pointerup", onDragEnd);
+      this.titleBar.addEventListener("pointercancel", onDragEnd);
+      this.titleBar.addEventListener("lostpointercapture", onDragEnd);
+    }
+    /**
+     * Start resizing the window.
+     */
+    onResizeStart(e) {
+      if (this.state === "maximized") {
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      this.isResizing = true;
+      this.resizeStartX = e.clientX;
+      this.resizeStartY = e.clientY;
+      this.resizeStartW = this.element.offsetWidth;
+      this.resizeStartH = this.element.offsetHeight;
+      e.target.setPointerCapture(e.pointerId);
+      this.element.classList.add("wp-desktop-window--resizing");
+      const onResizeMove = (ev) => {
+        if (!this.isResizing) {
+          return;
+        }
+        const newW = Math.max(this.config.minWidth, this.resizeStartW + (ev.clientX - this.resizeStartX));
+        const newH = Math.max(this.config.minHeight, this.resizeStartH + (ev.clientY - this.resizeStartY));
+        this.element.style.width = `${newW}px`;
+        this.element.style.height = `${newH}px`;
+      };
+      const onResizeEnd = () => {
+        if (!this.isResizing) {
+          return;
+        }
+        this.isResizing = false;
+        this.element.classList.remove("wp-desktop-window--resizing");
+        const handle2 = this.element.querySelector(".wp-desktop-window__resize-handle");
+        handle2.removeEventListener("pointermove", onResizeMove);
+        handle2.removeEventListener("pointerup", onResizeEnd);
+        handle2.removeEventListener("pointercancel", onResizeEnd);
+        handle2.removeEventListener("lostpointercapture", onResizeEnd);
+        this.emitChange("resized");
+      };
+      const handle = e.target;
+      handle.addEventListener("pointermove", onResizeMove);
+      handle.addEventListener("pointerup", onResizeEnd);
+      handle.addEventListener("pointercancel", onResizeEnd);
+      handle.addEventListener("lostpointercapture", onResizeEnd);
+    }
+    /**
+     * Set the z-index of this window.
+     */
+    setZIndex(z) {
+      this.element.style.zIndex = String(z);
+    }
+    /**
+     * Mark this window as focused or unfocused.
+     */
+    setFocused(focused) {
+      this.element.classList.toggle("wp-desktop-window--focused", focused);
+    }
+    /**
+     * Update the window title.
+     */
+    setTitle(title) {
+      this.titleEl.textContent = title;
+    }
+    /**
+     * Minimize the window.
+     */
+    minimize() {
+      this.state = "minimized";
+      this.element.classList.add("wp-desktop-window--minimized");
+      this.element.addEventListener("transitionend", (e) => {
+        if (e.propertyName === "opacity" && this.state === "minimized") {
+          this.iframe.style.visibility = "hidden";
+        }
+      }, { once: true });
+      this.onMinimize?.(this);
+      this.emitChange("state");
+    }
+    /**
+     * Restore the window from minimized state.
+     */
+    restore() {
+      this.iframe.style.visibility = "";
+      this.element.classList.remove("wp-desktop-window--minimized");
+      if (this.state === "minimized") {
+        this.state = "normal";
+      }
+      this.onFocusRequest?.(this);
+      this.emitChange("state");
+    }
+    /**
+     * Toggle between maximized and normal states.
+     */
+    toggleMaximize() {
+      const parent = this.element.parentElement;
+      if (!parent) {
+        return;
+      }
+      if (this.state === "maximized") {
+        this.element.classList.remove("wp-desktop-window--maximized");
+        if (this.savedGeometry) {
+          this.element.style.left = `${this.savedGeometry.x}px`;
+          this.element.style.top = `${this.savedGeometry.y}px`;
+          this.element.style.width = `${this.savedGeometry.width}px`;
+          this.element.style.height = `${this.savedGeometry.height}px`;
+        }
+        this.state = "normal";
+      } else {
+        this.savedGeometry = {
+          x: this.element.offsetLeft,
+          y: this.element.offsetTop,
+          width: this.element.offsetWidth,
+          height: this.element.offsetHeight
+        };
+        this.element.classList.add("wp-desktop-window--maximized");
+        this.element.style.left = "0px";
+        this.element.style.top = "0px";
+        this.element.style.width = `${parent.clientWidth}px`;
+        this.element.style.height = `${parent.clientHeight}px`;
+        this.state = "maximized";
+      }
+      this.emitChange("state");
+    }
+    /**
+     * Toggle fullscreen ("focus") mode — the window covers the entire
+     * viewport, hiding the admin bar, dock, and taskbar behind it.
+     *
+     * This is the equivalent of macOS's green zoom-to-fullscreen: an
+     * immersive mode distinct from maximize (which only fills the
+     * desktop area between dock and taskbar).
+     */
+    toggleFullscreen() {
+      if (this.state === "fullscreen") {
+        this.element.classList.remove("wp-desktop-window--fullscreen");
+        if (this.savedFullscreenState) {
+          const s = this.savedFullscreenState;
+          this.element.style.left = `${s.x}px`;
+          this.element.style.top = `${s.y}px`;
+          this.element.style.width = `${s.width}px`;
+          this.element.style.height = `${s.height}px`;
+          this.element.classList.toggle(
+            "wp-desktop-window--maximized",
+            s.state === "maximized"
+          );
+          this.state = s.state;
+          this.savedFullscreenState = null;
+        } else {
+          this.state = "normal";
+        }
+      } else {
+        this.savedFullscreenState = {
+          state: this.state,
+          x: this.element.offsetLeft,
+          y: this.element.offsetTop,
+          width: this.element.offsetWidth,
+          height: this.element.offsetHeight
+        };
+        this.element.classList.add("wp-desktop-window--fullscreen");
+        this.state = "fullscreen";
+      }
+      updateFullscreenBodyClass();
+      this.updateFocusButtonState();
+      this.emitChange("state");
+    }
+    /**
+     * Reflect fullscreen state on the focus-mode button (active class,
+     * aria-pressed, and label).
+     */
+    updateFocusButtonState() {
+      const btn = this.element.querySelector(
+        ".wp-desktop-window__btn--focus"
+      );
+      if (!btn) {
+        return;
+      }
+      const isFullscreen = this.state === "fullscreen";
+      btn.classList.toggle("wp-desktop-window__btn--active", isFullscreen);
+      btn.setAttribute("aria-pressed", isFullscreen ? "true" : "false");
+      btn.setAttribute(
+        "aria-label",
+        isFullscreen ? "Exit fullscreen" : "Enter fullscreen"
+      );
+    }
+    /**
+     * Open the window's current URL in a new browser tab as classic
+     * wp-admin.
+     *
+     * Strips the chromeless `wp_desktop` flag and the transient
+     * `wp_desktop_portal` flag, and tags the URL with
+     * `wp_desktop_classic=1` so the server-side admin_init redirect
+     * (which otherwise forwards plain admin URLs to `/wp-desktop/`)
+     * lets the request through. The tag only has to survive the first
+     * request; once the browser renders the page, the user's in-tab
+     * navigation returns to normal admin flow.
+     *
+     * The desktop window itself stays open — detach is a branch, not
+     * a move. If the user wants to close it afterwards, they can.
+     */
+    detach() {
+      const current = this.getCurrentUrl();
+      let url;
+      try {
+        url = new URL(current, window.location.origin);
+      } catch {
+        return;
+      }
+      if (url.origin !== window.location.origin) {
+        return;
+      }
+      url.searchParams.delete("wp_desktop");
+      url.searchParams.delete("wp_desktop_portal");
+      url.searchParams.set("wp_desktop_classic", "1");
+      window.open(url.toString(), "_blank", "noopener");
+    }
+    /**
+     * Close and destroy the window.
+     *
+     * Plays a subtle closing animation before removing the element.
+     */
+    close() {
+      if (this.isDestroyed) {
+        return;
+      }
+      this.isDestroyed = true;
+      this.onClose?.(this);
+      this.element.classList.add("wp-desktop-window--closing");
+      let removed = false;
+      const onDone = () => {
+        if (removed) {
+          return;
+        }
+        removed = true;
+        window.removeEventListener("message", this.boundOnMessage);
+        this.element.remove();
+        updateFullscreenBodyClass();
+      };
+      const onTransitionEnd = (e) => {
+        if (e.propertyName === "opacity") {
+          this.element.removeEventListener("transitionend", onTransitionEnd);
+          onDone();
+        }
+      };
+      this.element.addEventListener("transitionend", onTransitionEnd);
+      setTimeout(onDone, 300);
+    }
+    /**
+     * Get a snapshot of the window state for persistence.
+     */
+    getSnapshot() {
+      return {
+        id: this.id,
+        x: this.element.offsetLeft,
+        y: this.element.offsetTop,
+        width: this.element.offsetWidth,
+        height: this.element.offsetHeight,
+        state: this.state
+      };
+    }
+  }
+  const BASE_Z_INDEX = 100;
+  const CASCADE_OFFSET = 30;
+  class WindowManager {
+    constructor(desktop) {
+      this.stack = [];
+      this.cascadeIndex = 0;
+      this.desktop = desktop;
+    }
+    /**
+     * Open a new window or focus an existing one for the given page.
+     */
+    open(config) {
+      const existing = this.getById(config.id);
+      if (existing) {
+        this.focus(existing);
+        if (existing.state === "minimized") {
+          existing.restore();
+        }
+        return existing;
+      }
+      const desktopRect = this.desktop.getBoundingClientRect();
+      const defaultWidth = Math.min(Math.round(desktopRect.width * 0.8), 1200);
+      const defaultHeight = Math.min(Math.round(desktopRect.height * 0.8), 800);
+      const cascadeX = 40 + this.cascadeIndex % 8 * CASCADE_OFFSET;
+      const cascadeY = 40 + this.cascadeIndex % 8 * CASCADE_OFFSET;
+      const fullConfig = {
+        icon: config.icon || "dashicons-admin-generic",
+        x: config.x ?? cascadeX,
+        y: config.y ?? cascadeY,
+        width: config.width ?? defaultWidth,
+        height: config.height ?? defaultHeight,
+        minWidth: config.minWidth ?? 320,
+        minHeight: config.minHeight ?? 200,
+        ...config
+      };
+      this.cascadeIndex++;
+      const win = new Window(fullConfig);
+      win.onFocusRequest = (w) => this.focus(w);
+      win.onClose = (w) => this.remove(w);
+      win.onMinimize = () => {
+        const visible = this.stack.filter((w) => w.state !== "minimized");
+        if (visible.length > 0) {
+          this.focus(visible[visible.length - 1]);
+        }
+      };
+      this.stack.push(win);
+      this.desktop.appendChild(win.element);
+      this.focus(win);
+      document.dispatchEvent(new CustomEvent("wp-desktop-window-opened", {
+        detail: { windowId: win.id, page: config.url, title: config.title }
+      }));
+      return win;
+    }
+    /**
+     * Focus a window: bring it to top of z-stack.
+     */
+    focus(win) {
+      const idx = this.stack.indexOf(win);
+      if (idx > -1) {
+        this.stack.splice(idx, 1);
+      }
+      this.stack.push(win);
+      this.stack.forEach((w, i) => {
+        w.setZIndex(BASE_Z_INDEX + i);
+        w.setFocused(i === this.stack.length - 1);
+      });
+      document.dispatchEvent(new CustomEvent("wp-desktop-window-focused", {
+        detail: { windowId: win.id }
+      }));
+    }
+    /**
+     * Remove a window from the stack and DOM.
+     */
+    remove(win) {
+      const idx = this.stack.indexOf(win);
+      if (idx > -1) {
+        this.stack.splice(idx, 1);
+      }
+      if (this.stack.length > 0) {
+        this.focus(this.stack[this.stack.length - 1]);
+      }
+      document.dispatchEvent(new CustomEvent("wp-desktop-window-closed", {
+        detail: { windowId: win.id }
+      }));
+    }
+    /**
+     * Get a window by its ID.
+     */
+    getById(id) {
+      return this.stack.find((w) => w.id === id);
+    }
+    /**
+     * Get all open windows.
+     */
+    getAll() {
+      return [...this.stack];
+    }
+    /**
+     * Get the currently focused (topmost) window.
+     */
+    getFocused() {
+      return this.stack.length > 0 ? this.stack[this.stack.length - 1] : void 0;
+    }
+    /**
+     * Serialize the current window stack for session persistence.
+     *
+     * Order in the returned `windows` array mirrors z-order (earliest
+     * opened / lowest-z first, focused last) so restoring preserves the
+     * stacking the user left behind.
+     */
+    snapshot() {
+      const focused = this.getFocused();
+      const windows = this.stack.map((w) => {
+        const snap = w.getSnapshot();
+        return {
+          id: w.id,
+          url: w.getCurrentUrl(),
+          title: w.config.title,
+          icon: w.config.icon,
+          state: snap.state,
+          x: snap.x,
+          y: snap.y,
+          width: snap.width,
+          height: snap.height
+        };
+      });
+      return {
+        windows,
+        focused: focused ? focused.id : "",
+        updated: Math.floor(Date.now() / 1e3)
+      };
+    }
+  }
+  class Dock {
+    constructor(container, windowManager, items, adminUrl) {
+      this.itemElements = /* @__PURE__ */ new Map();
+      this.container = container;
+      this.windowManager = windowManager;
+      this.items = items;
+      this.adminUrl = adminUrl;
+      this.tooltip = document.createElement("div");
+      this.tooltip.className = "wp-desktop-dock__tooltip";
+      this.tooltip.setAttribute("role", "tooltip");
+      document.body.appendChild(this.tooltip);
+      this.render();
+      this.bindWindowEvents();
+    }
+    /**
+     * Render the dock contents.
+     */
+    render() {
+      this.container.innerHTML = "";
+      for (const item of this.items) {
+        const btn = this.createItemButton(item);
+        this.itemElements.set(item.id, btn);
+        this.container.appendChild(btn);
+      }
+    }
+    /**
+     * Create a single dock icon button.
+     */
+    createItemButton(item) {
+      const btn = document.createElement("button");
+      btn.className = "wp-desktop-dock__item";
+      btn.setAttribute("type", "button");
+      btn.setAttribute("aria-label", item.title);
+      btn.dataset.menuSlug = item.id;
+      const iconEl = this.createIcon(item.icon);
+      btn.appendChild(iconEl);
+      if (item.badge > 0) {
+        const badge = document.createElement("span");
+        badge.className = "wp-desktop-dock__badge";
+        badge.textContent = String(item.badge);
+        badge.setAttribute("aria-label", `${item.badge} updates`);
+        btn.appendChild(badge);
+      }
+      btn.addEventListener("click", () => {
+        this.openPage(item);
+      });
+      this.bindTooltip(btn, item.title);
+      return btn;
+    }
+    /**
+     * Create the icon element based on the icon type.
+     */
+    createIcon(icon) {
+      if (icon.startsWith("dashicons-")) {
+        const el2 = document.createElement("span");
+        el2.className = `dashicons ${icon}`;
+        el2.setAttribute("aria-hidden", "true");
+        return el2;
+      }
+      if (icon.startsWith("data:image/svg+xml;base64,")) {
+        const base64Part = icon.slice("data:image/svg+xml;base64,".length);
+        if (/^[A-Za-z0-9+/=]+$/.test(base64Part)) {
+          const el2 = document.createElement("span");
+          el2.className = "wp-desktop-dock__item-svg";
+          el2.style.backgroundImage = `url("${icon}")`;
+          el2.style.backgroundSize = "contain";
+          el2.style.backgroundRepeat = "no-repeat";
+          el2.style.backgroundPosition = "center";
+          el2.setAttribute("aria-hidden", "true");
+          return el2;
+        }
+      }
+      if (icon && icon !== "none" && icon !== "div") {
+        const img = document.createElement("img");
+        img.className = "wp-desktop-dock__item-img";
+        img.src = icon;
+        img.alt = "";
+        img.setAttribute("aria-hidden", "true");
+        return img;
+      }
+      const el = document.createElement("span");
+      el.className = "dashicons dashicons-admin-generic";
+      el.setAttribute("aria-hidden", "true");
+      return el;
+    }
+    /**
+     * Bind tooltip show/hide on hover.
+     */
+    bindTooltip(el, text) {
+      el.addEventListener("pointerenter", () => {
+        const rect = el.getBoundingClientRect();
+        this.tooltip.textContent = text;
+        this.tooltip.style.top = `${rect.top + rect.height / 2 - 14}px`;
+        this.tooltip.classList.add("wp-desktop-dock__tooltip--visible");
+      });
+      el.addEventListener("pointerleave", () => {
+        this.tooltip.classList.remove("wp-desktop-dock__tooltip--visible");
+      });
+    }
+    /**
+     * Open an admin page in a window (or focus if already open).
+     */
+    openPage(item) {
+      const windowId = this.deriveWindowId(item.url);
+      this.windowManager.open({
+        id: windowId,
+        url: item.url,
+        title: item.title,
+        icon: item.icon.startsWith("dashicons-") ? item.icon : "dashicons-admin-generic",
+        submenu: item.submenu
+      });
+    }
+    /**
+     * Derive a window ID from an admin page URL.
+     */
+    deriveWindowId(url) {
+      return deriveWindowId(url, this.adminUrl);
+    }
+    /**
+     * Listen to window events to update active/focused indicators on dock items.
+     */
+    bindWindowEvents() {
+      document.addEventListener("wp-desktop-window-opened", (e) => {
+        this.updateActiveStates();
+      });
+      document.addEventListener("wp-desktop-window-closed", (e) => {
+        this.updateActiveStates();
+      });
+      document.addEventListener("wp-desktop-window-focused", (e) => {
+        this.updateActiveStates();
+      });
+    }
+    /**
+     * Update the active/focused CSS classes on dock items based on open windows.
+     */
+    updateActiveStates() {
+      const openWindows = this.windowManager.getAll();
+      const focused = this.windowManager.getFocused();
+      const openIds = new Set(openWindows.map((w) => w.id));
+      for (const item of this.items) {
+        const btn = this.itemElements.get(item.id);
+        if (!btn) {
+          continue;
+        }
+        const windowId = this.deriveWindowId(item.url);
+        const isOpen = openIds.has(windowId);
+        const isFocused = focused && focused.id === windowId;
+        btn.classList.toggle("wp-desktop-dock__item--active", isOpen);
+        btn.classList.toggle("wp-desktop-dock__item--focused", !!isFocused);
+      }
+    }
+  }
+  const SESSION_SAVE_DEBOUNCE_MS = 500;
+  const VIEWPORT_CLAMP_MARGIN = 12;
+  function init() {
+    const config = window.wpDesktopConfig;
+    if (!config) {
+      return;
+    }
+    const desktopArea = document.getElementById("wp-desktop-area");
+    if (!desktopArea) {
+      return;
+    }
+    const manager = new WindowManager(desktopArea);
+    const dockEl = document.getElementById("wp-desktop-dock");
+    let dock = null;
+    if (dockEl && config.dockItems) {
+      dock = new Dock(dockEl, manager, config.dockItems, config.adminUrl);
+      desktopArea.classList.add("wp-desktop-area--with-dock");
+    }
+    const hasSession = !!(config.session && config.session.windows && config.session.windows.length > 0);
+    if (hasSession) {
+      restoreSession(manager, config, desktopArea);
+    } else {
+      openCurrentPage(manager, config);
+    }
+    const saveSession = createSessionSaver(manager, config);
+    wireSessionEvents(saveSession);
+    window.wp = window.wp || {};
+    window.wp.desktop = {
+      windowManager: manager,
+      dock,
+      saveSession
+    };
+    desktopArea.addEventListener("click", (e) => {
+      if (e.target !== desktopArea) {
+        return;
+      }
+      const windows = manager.getAll();
+      const allMinimized = windows.length > 0 && windows.every((w) => w.state === "minimized");
+      if (allMinimized) {
+        for (const win of windows) {
+          win.restore();
+        }
+      } else {
+        for (const win of windows) {
+          if (win.state !== "minimized") {
+            win.minimize();
+          }
+        }
+      }
+    });
+    normalizeBrowserUrl(config);
+    document.dispatchEvent(
+      new CustomEvent("wp-desktop-init", {
+        detail: { config, restored: hasSession }
+      })
+    );
+  }
+  function restoreSession(manager, config, desktopArea) {
+    const rect = desktopArea.getBoundingClientRect();
+    for (const win of config.session.windows) {
+      const clamped = clampGeometryToViewport(win, rect);
+      const submenu = findSubmenuForUrl(win.url, config);
+      manager.open({
+        id: win.id,
+        url: win.url,
+        title: win.title,
+        icon: win.icon || "dashicons-admin-generic",
+        x: clamped.x,
+        y: clamped.y,
+        width: clamped.width,
+        height: clamped.height,
+        initialState: win.state,
+        submenu
+      });
+    }
+    if (config.session.focused) {
+      const focused = manager.getById(config.session.focused);
+      if (focused) {
+        manager.focus(focused);
+      }
+    }
+  }
+  function openCurrentPage(manager, config) {
+    const windowId = deriveWindowId(config.currentPage, config.adminUrl);
+    const submenu = findSubmenuForUrl(config.currentPage, config);
+    manager.open({
+      id: windowId,
+      url: config.currentPage,
+      title: config.currentTitle,
+      icon: config.currentIcon,
+      submenu
+    });
+  }
+  function findSubmenuForUrl(url, config) {
+    const windowId = deriveWindowId(url, config.adminUrl);
+    const item = (config.dockItems || []).find(
+      (i) => deriveWindowId(i.url, config.adminUrl) === windowId || (i.submenu || []).some(
+        (s) => deriveWindowId(s.url, config.adminUrl) === windowId
+      )
+    );
+    return item?.submenu;
+  }
+  function clampGeometryToViewport(win, rect) {
+    const maxW = Math.max(200, rect.width - VIEWPORT_CLAMP_MARGIN * 2);
+    const maxH = Math.max(200, rect.height - VIEWPORT_CLAMP_MARGIN * 2);
+    const width = Math.min(win.width, maxW);
+    const height = Math.min(win.height, maxH);
+    const maxX = Math.max(0, rect.width - width - VIEWPORT_CLAMP_MARGIN);
+    const maxY = Math.max(0, rect.height - height - VIEWPORT_CLAMP_MARGIN);
+    const x = Math.max(VIEWPORT_CLAMP_MARGIN, Math.min(win.x, maxX));
+    const y = Math.max(VIEWPORT_CLAMP_MARGIN, Math.min(win.y, maxY));
+    return { x, y, width, height };
+  }
+  function createSessionSaver(manager, config) {
+    let debounceTimer = null;
+    let inFlight = false;
+    const doSave = async () => {
+      if (inFlight) {
+        return;
+      }
+      const payload = manager.snapshot();
+      inFlight = true;
+      try {
+        await fetch(config.sessionUrl, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            "Content-Type": "application/json",
+            "X-WP-Nonce": config.restNonce
+          },
+          body: JSON.stringify({ session: payload }),
+          // Best-effort: we don't block the UI on persistence.
+          keepalive: true
+        });
+      } catch {
+      } finally {
+        inFlight = false;
+      }
+    };
+    const flushImmediately = () => {
+      if (debounceTimer !== null) {
+        clearTimeout(debounceTimer);
+        debounceTimer = null;
+      }
+      const payload = manager.snapshot();
+      const body = new Blob(
+        [JSON.stringify({ session: payload, _wpnonce: config.restNonce })],
+        { type: "application/json" }
+      );
+      if (navigator.sendBeacon && navigator.sendBeacon(config.sessionUrl, body)) {
+        return;
+      }
+      void doSave();
+    };
+    const schedule = () => {
+      if (debounceTimer !== null) {
+        clearTimeout(debounceTimer);
+      }
+      debounceTimer = window.setTimeout(() => {
+        debounceTimer = null;
+        void doSave();
+      }, SESSION_SAVE_DEBOUNCE_MS);
+    };
+    window.addEventListener("pagehide", flushImmediately);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") {
+        flushImmediately();
+      }
+    });
+    return schedule;
+  }
+  function wireSessionEvents(save) {
+    document.addEventListener("wp-desktop-window-opened", save);
+    document.addEventListener("wp-desktop-window-closed", save);
+    document.addEventListener("wp-desktop-window-focused", save);
+    document.addEventListener("wp-desktop-window-changed", save);
+  }
+  function normalizeBrowserUrl(config) {
+    if (!config.portalUrl || !window.history || !window.history.replaceState) {
+      return;
+    }
+    try {
+      window.history.replaceState(window.history.state, "", config.portalUrl);
+    } catch {
+    }
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
+  exports.clampGeometryToViewport = clampGeometryToViewport;
+  Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
+  return exports;
+}({});

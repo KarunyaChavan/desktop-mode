@@ -17,21 +17,26 @@ npm install
 
 ### 2. Build the TypeScript bundle
 
-**Production build** — minified, one-shot:
+The plugin uses **[Vite](https://vitejs.dev/)** in library mode. esbuild handles transpile and minify, so builds finish in ~70 ms per bundle.
+
+**Full build** — produces both bundles:
 
 ```bash
 npm run build
 ```
 
-Produces `assets/js/desktop.js` (dev bundle) and `assets/js/desktop.min.js` (prod bundle).
+Writes:
 
-**Development watch** — auto-recompiles on save:
+- `assets/js/desktop.js` — unminified IIFE, loaded when `SCRIPT_DEBUG` is `true`.
+- `assets/js/desktop.min.js` — esbuild-minified IIFE, loaded otherwise.
+
+**Development watch** — auto-recompiles the unminified bundle on save:
 
 ```bash
 npm run dev
 ```
 
-Leave it running in a separate terminal; refresh the browser after each save.
+Leave it running in a separate terminal; refresh the browser after each save. Set `define( 'SCRIPT_DEBUG', true )` in `wp-config.php` so WordPress picks up the unminified bundle during development.
 
 ### 3. Start a WordPress environment
 

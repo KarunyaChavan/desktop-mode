@@ -44,7 +44,7 @@ Key server-side entry points:
 
 1. `/wp-admin/` loads → portal redirect sends the user to `/wp-desktop/`.
 2. `/wp-desktop/` serves a real admin page (Dashboard by default) with the shell wrapped around it.
-3. The shell's TypeScript bundle (`desktop.js`) initializes:
+3. The shell's Vite-built TypeScript bundle (`desktop.js` in dev, `desktop.min.js` in prod) initializes:
    - Creates the `WindowManager`.
    - Creates the `Dock`.
    - Either restores the saved session (if one exists) **or** opens the current page in a new window.

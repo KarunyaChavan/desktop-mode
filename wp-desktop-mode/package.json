@@ -2,18 +2,16 @@
 	"name": "wp-desktop-mode",
 	"version": "0.4.0",
 	"private": true,
+	"type": "module",
 	"description": "WordPress admin as a desktop OS — draggable, resizable windows on a desktop with a dock.",
 	"license": "GPL-2.0-or-later",
 	"scripts": {
-		"build": "webpack --env environment=production",
-		"dev": "webpack --env environment=development --watch",
+		"build": "vite build --mode development && vite build --mode production",
+		"dev": "vite build --mode development --watch",
 		"test:php": "phpunit --configuration tests/phpunit/phpunit.xml.dist"
 	},
 	"devDependencies": {
-		"terser-webpack-plugin": "5.4.0",
-		"ts-loader": "9.5.7",
 		"typescript": "5.9.3",
-		"webpack": "5.105.4",
-		"webpack-cli": "6.0.1"
+		"vite": "^5.4.10"
 	}
 }

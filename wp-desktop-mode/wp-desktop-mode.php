@@ -28,4 +28,5 @@ require_once WPDM_DIR . 'includes/assets.php';
 require_once WPDM_DIR . 'includes/admin-bar.php';
 require_once WPDM_DIR . 'includes/session.php';
 require_once WPDM_DIR . 'includes/portal.php';
+require_once WPDM_DIR . 'includes/media-query.php';
 require_once WPDM_DIR . 'includes/render.php';

@@ -126,6 +126,8 @@ function wpdm_enqueue_assets() {
 	 *     @type array  $dockItems    Dock items derived from admin menu.
 	 *     @type array  $session      Saved session (windows, focused, updated).
 	 *     @type string $sessionUrl   REST endpoint for saving the session.
+	 *     @type string $mediaUrl     REST endpoint for media uploads (wp/v2/media).
+	 *     @type bool   $canUpload    Whether the user holds the `upload_files` capability.
 	 *     @type string $restNonce    Nonce for the session REST endpoint.
 	 *     @type string $portalUrl    Canonical `/wp-desktop/` URL.
 	 *     @type bool   $fromPortal   Whether the shell was reached via the portal.
@@ -142,6 +144,8 @@ function wpdm_enqueue_assets() {
 			'dockItems'    => $dock_items,
 			'session'      => wpdm_get_session( get_current_user_id() ),
 			'sessionUrl'   => esc_url_raw( rest_url( 'wp-desktop/v1/session' ) ),
+			'mediaUrl'     => esc_url_raw( rest_url( 'wp/v2/media' ) ),
+			'canUpload'    => current_user_can( 'upload_files' ),
 			'restNonce'    => wp_create_nonce( 'wp_rest' ),
 			'portalUrl'    => esc_url( wpdm_portal_url() ),
 			'fromPortal'   => $from_portal,

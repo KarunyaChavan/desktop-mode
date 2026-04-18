@@ -73,7 +73,14 @@ REST surface:
 - `POST /wp-json/wp-desktop-mode/v1/session` — overwrite the session. Body: `{ session: { windows: [...], focused, updated } }`.
 - `DELETE /wp-json/wp-desktop-mode/v1/session` — clear it.
 
-All routes require a valid `X-WP-Nonce` (the standard REST nonce) and the current user to be logged in with capability `read`.
+All session routes require a valid `X-WP-Nonce` (the standard REST nonce) and the current user to be logged in with capability `read`.
+
+We also extend Core's `/wp/v2/media` endpoint with two opt-in query parameters so the OS Settings wallpaper picker (and any plugin that wants the same capability) can ask the server to filter out images that are too small to look good stretched across the desktop:
+
+- `wpdm_min_width=<int>`  — only return images at least this many pixels wide.
+- `wpdm_min_height=<int>` — only return images at least this many pixels tall.
+
+Both params are purely additive — omitting them keeps the endpoint's default behavior untouched. Implementation lives in `includes/media-query.php`: every new upload gets stamped with two flat numeric post-meta keys (`_wpdm_width`, `_wpdm_height`) via `wp_generate_attachment_metadata` / `wp_update_attachment_metadata`, and the params translate into a `WP_Meta_Query` NUMERIC `>=` clause. Pre-existing attachments are backfilled opportunistically — each filtered REST request stamps up to 50 unstamped images — so a site upgrading into this feature starts seeing real filtered results within a few picker opens rather than requiring a CLI run. Once every image has been stamped, the `wpdm_media_dims_backfilled` site option flips to `1` and the sweep query is skipped from then on.
 
 ## CSS layering
 

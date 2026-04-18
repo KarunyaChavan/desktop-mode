@@ -57,7 +57,11 @@ function init(): void {
 	// OS Settings — shell-level preferences. Apply saved values before
 	// the first window paints so the user never sees the default palette
 	// when their saved accent differs.
-	const osSettings = new OsSettings();
+	const osSettings = new OsSettings( {
+		mediaUrl: config.mediaUrl,
+		restNonce: config.restNonce,
+		canUpload: !! config.canUpload,
+	} );
 	osSettings.apply();
 
 	// Dock.
@@ -85,8 +89,14 @@ function init(): void {
 					icon: 'dashicons-desktop',
 					native: true,
 					render: ( body ) => osSettings.renderPanel( body ),
-					width: 560,
-					height: 560,
+					// Sized to comfortably fit three wallpaper swatches
+					// across plus the media-library grid showing 5–6
+					// thumbnails per row — smaller defaults forced the
+					// sections into a single narrow column.
+					width: 820,
+					height: 720,
+					minWidth: 560,
+					minHeight: 480,
 				} );
 			},
 		} );

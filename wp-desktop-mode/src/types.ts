@@ -173,6 +173,10 @@ export interface DesktopConfig {
 	session: Session;
 	/** REST endpoint for reading/writing the session. */
 	sessionUrl: string;
+	/** REST endpoint for media uploads (wp/v2/media). */
+	mediaUrl: string;
+	/** Whether the user has the `upload_files` capability. */
+	canUpload: boolean;
 	/** Nonce for the REST endpoint (X-WP-Nonce header). */
 	restNonce: string;
 	/** Canonical `/wp-desktop/` URL — used for history.replaceState. */

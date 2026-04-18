@@ -7,7 +7,7 @@
  */
 
 import { Window } from './window';
-import type { WindowConfig } from './types';
+import type { Session, SessionWindow, WindowConfig } from './types';
 
 /** Base z-index for desktop windows. */
 const BASE_Z_INDEX = 100;
@@ -156,5 +156,36 @@ export class WindowManager {
 	 */
 	public getFocused(): Window | undefined {
 		return this.stack.length > 0 ? this.stack[ this.stack.length - 1 ] : undefined;
+	}
+
+	/**
+	 * Serialize the current window stack for session persistence.
+	 *
+	 * Order in the returned `windows` array mirrors z-order (earliest
+	 * opened / lowest-z first, focused last) so restoring preserves the
+	 * stacking the user left behind.
+	 */
+	public snapshot(): Session {
+		const focused = this.getFocused();
+		const windows: SessionWindow[] = this.stack.map( ( w ) => {
+			const snap = w.getSnapshot();
+			return {
+				id: w.id,
+				url: w.getCurrentUrl(),
+				title: w.config.title,
+				icon: w.config.icon,
+				state: snap.state,
+				x: snap.x,
+				y: snap.y,
+				width: snap.width,
+				height: snap.height,
+			};
+		} );
+
+		return {
+			windows,
+			focused: focused ? focused.id : '',
+			updated: Math.floor( Date.now() / 1000 ),
+		};
 	}
 }

@@ -11,7 +11,7 @@ require_once ABSPATH . 'wp-admin/includes/ajax-actions.php';
  * @group desktop-mode
  * @group ajax
  *
- * @covers ::wp_ajax_save_desktop_mode
+ * @covers ::wpdm_ajax_save
  */
 class Tests_DesktopMode_WpAjaxSaveDesktopMode extends WP_Ajax_UnitTestCase {
 
@@ -49,6 +49,17 @@ class Tests_DesktopMode_WpAjaxSaveDesktopMode extends WP_Ajax_UnitTestCase {
 		$this->assertSame( '1', get_user_meta( get_current_user_id(), 'wp_desktop_mode', true ) );
 	}
 
+	/**
+	 * Enabling must return the portal URL so the client navigates into
+	 * the shell, not back to classic admin.
+	 */
+	public function test_enable_response_redirects_to_portal() {
+		$this->_setRole( 'administrator' );
+		$response = $this->dispatch( '1' );
+
+		$this->assertSame( wpdm_portal_url(), $response['data']['redirect'] );
+	}
+
 	public function test_disables_desktop_mode_for_user() {
 		$this->_setRole( 'administrator' );
 		update_user_meta( get_current_user_id(), 'wp_desktop_mode', '1' );
@@ -58,6 +69,22 @@ class Tests_DesktopMode_WpAjaxSaveDesktopMode extends WP_Ajax_UnitTestCase {
 		$this->assertTrue( $response['success'] );
 		$this->assertSame( '', $response['data']['enabled'] );
 		$this->assertSame( '', get_user_meta( get_current_user_id(), 'wp_desktop_mode', true ) );
+	}
+
+	/**
+	 * Disabling must NOT redirect through the portal. The portal's
+	 * auto-enable filter would flip the user meta back to '1' on the next
+	 * request and trap them in desktop mode. Send them to a plain admin
+	 * URL instead.
+	 */
+	public function test_disable_response_redirects_to_plain_admin_not_portal() {
+		$this->_setRole( 'administrator' );
+		update_user_meta( get_current_user_id(), 'wp_desktop_mode', '1' );
+
+		$response = $this->dispatch( '' );
+
+		$this->assertSame( admin_url(), $response['data']['redirect'] );
+		$this->assertNotSame( wpdm_portal_url(), $response['data']['redirect'] );
 	}
 
 	/**
@@ -109,6 +136,27 @@ class Tests_DesktopMode_WpAjaxSaveDesktopMode extends WP_Ajax_UnitTestCase {
 		$this->assertFalse( $response['success'] );
 		$this->assertSame( 'desktop_mode_disabled', $response['data'] );
 		$this->assertSame( '', get_user_meta( get_current_user_id(), 'wp_desktop_mode', true ) );
+	}
+
+	/**
+	 * A user whose role lacks the `read` capability must be turned away
+	 * even if they managed to obtain a valid save-desktop-mode nonce:
+	 * nonce ≠ authorization. Verifies the current_user_can( 'read' )
+	 * gate that sits after the nonce check.
+	 */
+	public function test_user_without_read_cap_is_forbidden() {
+		// Build a throwaway role with no capabilities, including no `read`.
+		add_role( 'wpdm_test_nonread', 'No Read', array() );
+		$uid = self::factory()->user->create( array( 'role' => 'wpdm_test_nonread' ) );
+		wp_set_current_user( $uid );
+
+		$response = $this->dispatch( '1' );
+
+		$this->assertFalse( $response['success'] );
+		$this->assertSame( 'desktop_mode_forbidden', $response['data'] );
+		$this->assertSame( '', get_user_meta( $uid, 'wp_desktop_mode', true ) );
+
+		remove_role( 'wpdm_test_nonread' );
 	}
 
 	/**

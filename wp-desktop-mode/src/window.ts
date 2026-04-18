@@ -41,6 +41,29 @@ function urlMatchKey( url: string ): string {
 }
 
 /**
+ * Toggle `wp-desktop-has-fullscreen-window` on `<body>` based on whether any
+ * window is currently in fullscreen state.
+ *
+ * Why a body class: a fullscreen window lives inside the shell, and the
+ * shell creates a stacking context (positioned + z-index), so the window's
+ * z-index can never rise above sibling root-level chrome like `#wpadminbar`.
+ * Instead of moving the window element out of the shell (fragile — event
+ * handlers, focus trap, and size-from-parent logic all assume the parent
+ * is the desktop area), we hide the admin bar via CSS while any fullscreen
+ * window is open. This matches macOS convention (menu bar auto-hides in
+ * fullscreen) and keeps the stacking context intact.
+ *
+ * Called from toggleFullscreen and after close() removes a window — so a
+ * user closing a fullscreen window without exiting fullscreen first doesn't
+ * leave the body class stranded.
+ */
+function updateFullscreenBodyClass(): void {
+	const hasFullscreen =
+		document.querySelectorAll( '.wp-desktop-window--fullscreen' ).length > 0;
+	document.body.classList.toggle( 'wp-desktop-has-fullscreen-window', hasFullscreen );
+}
+
+/**
  * Build a title-bar control button with an inline SVG icon.
  *
  * Using inline SVG (rather than a dashicon font glyph) keeps icons crisp
@@ -100,6 +123,16 @@ function createWindowElement( config: WindowConfig ): HTMLElement {
 		'Enter fullscreen',
 		'<path d="M4.5 2H2v2.5M10 4.5V2H7.5M4.5 10H2V7.5M10 7.5V10H7.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none"/>'
 	);
+	// Detach: open this window's current URL in a new browser tab as
+	// plain classic admin (no desktop shell, no chromeless). Escape hatch
+	// for users who want to work on one page outside the windowed UI
+	// without disabling desktop mode globally. Icon is the conventional
+	// "open in new window" box + arrow.
+	const btnDetach = createControlButton(
+		'detach',
+		'Detach to new tab',
+		'<path d="M5 2H2.5v7.5H10V7M6.5 2H10v3.5M10 2L5.5 6.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none"/>'
+	);
 	const btnClose = createControlButton(
 		'close',
 		'Close',
@@ -109,6 +142,7 @@ function createWindowElement( config: WindowConfig ): HTMLElement {
 	controls.appendChild( btnMin );
 	controls.appendChild( btnMax );
 	controls.appendChild( btnFocus );
+	controls.appendChild( btnDetach );
 	controls.appendChild( btnClose );
 
 	// Screen meta buttons container (populated when iframe reports available panels).
@@ -225,11 +259,79 @@ export class Window {
 
 		this.bindEvents();
 
-		// Play the opening animation, then remove the class.
+		// Session-restored minimized windows must paint already-minimized on
+		// the first frame — otherwise the user sees the opening fade-in
+		// followed by the minimize transition (a visible flicker on every
+		// page refresh). Apply the minimized class before the element is in
+		// the DOM so no transition runs, skip the opening animation, hide
+		// the iframe immediately, and bypass the emitChange save the regular
+		// minimize() path would fire for state the server already has.
+		if ( config.initialState === 'minimized' ) {
+			this.state = 'minimized';
+			this.element.classList.add( 'wp-desktop-window--minimized' );
+			this.iframe.style.visibility = 'hidden';
+			return;
+		}
+
+		// Fresh open (or restored to a visible state). Play the opening
+		// animation, then remove the class.
 		this.element.classList.add( 'wp-desktop-window--opening' );
 		this.element.addEventListener( 'animationend', () => {
 			this.element.classList.remove( 'wp-desktop-window--opening' );
 		}, { once: true } );
+
+		// Maximized/fullscreen restores go through the class-driven path
+		// after the geometry renders, so the state transition animates.
+		// 'normal' is the default — applying it would echo a redundant save.
+		if ( config.initialState && config.initialState !== 'normal' ) {
+			requestAnimationFrame( () => this.applyInitialState( config.initialState! ) );
+		}
+	}
+
+	/**
+	 * Apply a state restored from the session. Called once, after construction.
+	 */
+	private applyInitialState( state: WindowState ): void {
+		if ( state === 'minimized' ) {
+			this.minimize();
+		} else if ( state === 'maximized' ) {
+			this.toggleMaximize();
+		} else if ( state === 'fullscreen' ) {
+			this.toggleFullscreen();
+		}
+	}
+
+	/**
+	 * Dispatch a `wp-desktop-window-changed` event so the session-save
+	 * path can schedule a debounced write. Called after any state change
+	 * that should end up persisted: drag end, resize end, minimize,
+	 * restore, maximize toggle, fullscreen toggle.
+	 */
+	private emitChange( reason: 'moved' | 'resized' | 'state' ): void {
+		document.dispatchEvent(
+			new CustomEvent( 'wp-desktop-window-changed', {
+				detail: { windowId: this.id, reason, state: this.state },
+			} )
+		);
+	}
+
+	/**
+	 * Returns the current resolved URL of the iframe — preferring the
+	 * content window's location (reflects in-window navigation) and
+	 * falling back to the iframe's src attribute for cases where the
+	 * content document isn't yet reachable (cross-origin edge, early
+	 * load).
+	 */
+	public getCurrentUrl(): string {
+		try {
+			const href = this.iframe.contentWindow?.location.href;
+			if ( href && href !== 'about:blank' ) {
+				return href;
+			}
+		} catch {
+			/* Cross-origin read rejected — fall through. */
+		}
+		return this.iframe.src;
 	}
 
 	/**
@@ -252,6 +354,7 @@ export class Window {
 		const btnMin = this.element.querySelector( '.wp-desktop-window__btn--minimize' ) as HTMLElement;
 		const btnMax = this.element.querySelector( '.wp-desktop-window__btn--maximize' ) as HTMLElement;
 		const btnFocus = this.element.querySelector( '.wp-desktop-window__btn--focus' ) as HTMLElement;
+		const btnDetach = this.element.querySelector( '.wp-desktop-window__btn--detach' ) as HTMLElement;
 		const btnClose = this.element.querySelector( '.wp-desktop-window__btn--close' ) as HTMLElement;
 
 		btnMin.addEventListener( 'click', ( e: Event ) => {
@@ -265,6 +368,10 @@ export class Window {
 		btnFocus.addEventListener( 'click', ( e: Event ) => {
 			e.stopPropagation();
 			this.toggleFullscreen();
+		} );
+		btnDetach.addEventListener( 'click', ( e: Event ) => {
+			e.stopPropagation();
+			this.detach();
 		} );
 		btnClose.addEventListener( 'click', ( e: Event ) => {
 			e.stopPropagation();
@@ -474,6 +581,7 @@ export class Window {
 			this.titleBar.removeEventListener( 'pointerup', onDragEnd );
 			this.titleBar.removeEventListener( 'pointercancel', onDragEnd );
 			this.titleBar.removeEventListener( 'lostpointercapture', onDragEnd );
+			this.emitChange( 'moved' );
 		};
 
 		this.titleBar.addEventListener( 'pointermove', onDragMove );
@@ -523,6 +631,7 @@ export class Window {
 			handle.removeEventListener( 'pointerup', onResizeEnd );
 			handle.removeEventListener( 'pointercancel', onResizeEnd );
 			handle.removeEventListener( 'lostpointercapture', onResizeEnd );
+			this.emitChange( 'resized' );
 		};
 
 		const handle = e.target as HTMLElement;
@@ -568,6 +677,7 @@ export class Window {
 		}, { once: true } );
 
 		this.onMinimize?.( this );
+		this.emitChange( 'state' );
 	}
 
 	/**
@@ -582,6 +692,7 @@ export class Window {
 			this.state = 'normal';
 		}
 		this.onFocusRequest?.( this );
+		this.emitChange( 'state' );
 	}
 
 	/**
@@ -619,6 +730,7 @@ export class Window {
 			this.element.style.height = `${ parent.clientHeight }px`;
 			this.state = 'maximized';
 		}
+		this.emitChange( 'state' );
 	}
 
 	/**
@@ -659,7 +771,9 @@ export class Window {
 			this.element.classList.add( 'wp-desktop-window--fullscreen' );
 			this.state = 'fullscreen';
 		}
+		updateFullscreenBodyClass();
 		this.updateFocusButtonState();
+		this.emitChange( 'state' );
 	}
 
 	/**
@@ -680,6 +794,42 @@ export class Window {
 			'aria-label',
 			isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'
 		);
+	}
+
+	/**
+	 * Open the window's current URL in a new browser tab as classic
+	 * wp-admin.
+	 *
+	 * Strips the chromeless `wp_desktop` flag and the transient
+	 * `wp_desktop_portal` flag, and tags the URL with
+	 * `wp_desktop_classic=1` so the server-side admin_init redirect
+	 * (which otherwise forwards plain admin URLs to `/wp-desktop/`)
+	 * lets the request through. The tag only has to survive the first
+	 * request; once the browser renders the page, the user's in-tab
+	 * navigation returns to normal admin flow.
+	 *
+	 * The desktop window itself stays open — detach is a branch, not
+	 * a move. If the user wants to close it afterwards, they can.
+	 */
+	public detach(): void {
+		const current = this.getCurrentUrl();
+		let url: URL;
+		try {
+			url = new URL( current, window.location.origin );
+		} catch {
+			return;
+		}
+		if ( url.origin !== window.location.origin ) {
+			return;
+		}
+		url.searchParams.delete( 'wp_desktop' );
+		url.searchParams.delete( 'wp_desktop_portal' );
+		url.searchParams.set( 'wp_desktop_classic', '1' );
+
+		// `noopener` is required for security (tabs should not be able to
+		// reach back into window.opener), and it also lets the browser
+		// move the new tab to its own process.
+		window.open( url.toString(), '_blank', 'noopener' );
 	}
 
 	/**
@@ -706,6 +856,9 @@ export class Window {
 			removed = true;
 			window.removeEventListener( 'message', this.boundOnMessage );
 			this.element.remove();
+			// If this was the last fullscreen window, drop the body class so
+			// the admin bar and shell top-offset come back cleanly.
+			updateFullscreenBodyClass();
 		};
 
 		const onTransitionEnd = ( e: TransitionEvent ): void => {

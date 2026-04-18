@@ -32,6 +32,26 @@ body.wp-desktop-active #collapse-menu {
 }
 
 /*
+ * The admin bar is the ONLY escape hatch in desktop mode — it hosts the
+ * "Switch to Classic Admin" toggle. Any plugin CSS, Gutenberg state,
+ * user preference, or stray `display:none` that hides it would strand
+ * the user inside the shell with no way out. Hard-pin it visible.
+ *
+ * The exception: while a window is in immersive fullscreen, we *want*
+ * the bar hidden (macOS convention). That rule lives below and wins on
+ * specificity because it also targets #wpadminbar under a body class.
+ */
+body.wp-desktop-active #wpadminbar {
+	display: block !important;
+	visibility: visible !important;
+	opacity: 1 !important;
+	position: fixed !important;
+	inset-block-start: 0 !important;
+	inset-inline-start: 0 !important;
+	inset-inline-end: 0 !important;
+}
+
+/*
  * Classic wpcontent carries a `margin-left: 160px` for the sidebar. With
  * the sidebar hidden we let wpcontent fall back to flush — the shell is
  * fixed-positioned anyway so this doesn't change the shell's layout, it
@@ -64,6 +84,26 @@ body.wp-desktop-active #wpcontent {
 	.wp-desktop-shell {
 		inset-block-start: var(--wp-admin--admin-bar--height, 46px);
 	}
+}
+
+/*
+ * Immersive fullscreen: when any window is in fullscreen state, hide the
+ * admin bar and let the shell cover the full viewport. This keeps the
+ * fullscreen window visually above all chrome without fighting the shell's
+ * stacking context (a fullscreen window lives inside the shell, so its
+ * z-index is always bounded by the shell's — moving it out of the shell
+ * to raise it would break focus, drag, and session snapshotting).
+ *
+ * The window's title bar remains visible because the window itself is
+ * position: fixed at top: 0, so the focus/exit-fullscreen button is
+ * still reachable.
+ */
+body.wp-desktop-has-fullscreen-window #wpadminbar {
+	display: none !important;
+}
+
+body.wp-desktop-has-fullscreen-window .wp-desktop-shell {
+	inset-block-start: 0;
 }
 
 /* Shell body: contains dock + desktop area side by side. */

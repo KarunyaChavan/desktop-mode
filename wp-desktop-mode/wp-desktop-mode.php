@@ -3,7 +3,7 @@
  * Plugin Name:       WP Desktop Mode
  * Plugin URI:        https://wordpress.org/plugins/wp-desktop-mode/
  * Description:       Renders the WordPress admin as a desktop OS. Admin screens become draggable, resizable, minimizable windows floating on a desktop with a dock. Purely opt-in per user.
- * Version:           0.3.0
+ * Version:           0.4.0
  * Requires at least: 6.0
  * Requires PHP:      7.4
  * Author:            The WordPress Contributors
@@ -17,13 +17,15 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'WP_DESKTOP_MODE_VERSION', '0.3.0' );
-define( 'WP_DESKTOP_MODE_FILE', __FILE__ );
-define( 'WP_DESKTOP_MODE_DIR', plugin_dir_path( __FILE__ ) );
-define( 'WP_DESKTOP_MODE_URL', plugin_dir_url( __FILE__ ) );
+define( 'WPDM_VERSION', '0.4.0' );
+define( 'WPDM_FILE', __FILE__ );
+define( 'WPDM_DIR', plugin_dir_path( __FILE__ ) );
+define( 'WPDM_URL', plugin_dir_url( __FILE__ ) );
 
-require_once WP_DESKTOP_MODE_DIR . 'includes/helpers.php';
-require_once WP_DESKTOP_MODE_DIR . 'includes/ajax.php';
-require_once WP_DESKTOP_MODE_DIR . 'includes/assets.php';
-require_once WP_DESKTOP_MODE_DIR . 'includes/admin-bar.php';
-require_once WP_DESKTOP_MODE_DIR . 'includes/render.php';
+require_once WPDM_DIR . 'includes/helpers.php';
+require_once WPDM_DIR . 'includes/ajax.php';
+require_once WPDM_DIR . 'includes/assets.php';
+require_once WPDM_DIR . 'includes/admin-bar.php';
+require_once WPDM_DIR . 'includes/session.php';
+require_once WPDM_DIR . 'includes/portal.php';
+require_once WPDM_DIR . 'includes/render.php';

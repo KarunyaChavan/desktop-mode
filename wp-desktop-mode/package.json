@@ -1,12 +1,12 @@
 {
 	"name": "wp-desktop-mode",
-	"version": "0.3.0",
+	"version": "0.4.0",
 	"private": true,
 	"description": "WordPress admin as a desktop OS — draggable, resizable windows on a desktop with a dock.",
 	"license": "GPL-2.0-or-later",
 	"scripts": {
 		"build": "webpack --env environment=production",
-		"dev": "webpack --env environment=development --env watch=true",
+		"dev": "webpack --env environment=development --watch",
 		"test:php": "phpunit --configuration tests/phpunit/phpunit.xml.dist"
 	},
 	"devDependencies": {

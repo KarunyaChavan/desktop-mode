@@ -22,18 +22,24 @@ defined( 'ABSPATH' ) || exit;
  * @param string $classes Space-separated CSS class string.
  * @return string
  */
-function wp_desktop_admin_body_classes( $classes ) {
-	if ( wp_is_chromeless_request() ) {
+function wpdm_admin_body_classes( $classes ) {
+	if ( wpdm_is_chromeless_request() ) {
 		return ltrim( $classes . ' wp-desktop-chromeless' );
 	}
 
-	if ( wp_is_desktop_mode() ) {
+	// Per-request classic override: don't tag the body as desktop-active so
+	// the classic chrome isn't hidden by CSS for this one tab.
+	if ( wpdm_is_classic_request() ) {
+		return $classes;
+	}
+
+	if ( wpdm_is_enabled() ) {
 		return ltrim( $classes . ' wp-desktop-active' );
 	}
 
 	return $classes;
 }
-add_filter( 'admin_body_class', 'wp_desktop_admin_body_classes' );
+add_filter( 'admin_body_class', 'wpdm_admin_body_classes' );
 
 /**
  * Enqueues the desktop mode shell assets (CSS + JS) when desktop mode is active.
@@ -43,13 +49,13 @@ add_filter( 'admin_body_class', 'wp_desktop_admin_body_classes' );
  *
  * @since 0.1.0
  */
-function wp_enqueue_desktop_mode_assets() {
+function wpdm_enqueue_assets() {
 	if ( ! is_admin() ) {
 		return;
 	}
 
 	// Chromeless requests (iframes) need chromeless styles and overrides.
-	if ( wp_is_chromeless_request() ) {
+	if ( wpdm_is_chromeless_request() ) {
 		wp_enqueue_style( 'wp-desktop' );
 		wp_enqueue_style( 'wp-desktop-chromeless' );
 
@@ -66,7 +72,7 @@ function wp_enqueue_desktop_mode_assets() {
 		return;
 	}
 
-	if ( ! wp_is_desktop_mode() ) {
+	if ( ! wpdm_is_enabled() || wpdm_is_classic_request() ) {
 		return;
 	}
 
@@ -92,7 +98,17 @@ function wp_enqueue_desktop_mode_assets() {
 	}
 
 	// Build dock items from the admin menu.
-	$dock_items = wp_desktop_build_dock_items();
+	$dock_items = wpdm_build_dock_items();
+
+	// Build the current page URL from $pagenow + $_GET. Strip the portal
+	// marker so the derived window ID matches what the dock would produce
+	// for the same page — otherwise auto-opening the entry window and
+	// clicking the same dock icon would create a duplicate.
+	$current_query = $_GET; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+	unset( $current_query[ WPDM_PORTAL_FLAG ] );
+	$current_page = admin_url( $pagenow ) . ( ! empty( $current_query ) ? '?' . http_build_query( $current_query ) : '' );
+
+	$from_portal = ! empty( $_GET[ WPDM_PORTAL_FLAG ] ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 
 	/**
 	 * Filters the desktop shell configuration passed to JavaScript.
@@ -108,17 +124,27 @@ function wp_enqueue_desktop_mode_assets() {
 	 *     @type string $adminUrl     The base admin URL.
 	 *     @type string $colorScheme  The active admin color scheme.
 	 *     @type array  $dockItems    Dock items derived from admin menu.
+	 *     @type array  $session      Saved session (windows, focused, updated).
+	 *     @type string $sessionUrl   REST endpoint for saving the session.
+	 *     @type string $restNonce    Nonce for the session REST endpoint.
+	 *     @type string $portalUrl    Canonical `/wp-desktop/` URL.
+	 *     @type bool   $fromPortal   Whether the shell was reached via the portal.
 	 * }
 	 */
 	$config = apply_filters(
 		'wp_desktop_shell_config',
 		array(
-			'currentPage'  => esc_url( admin_url( $pagenow ) . ( ! empty( $_GET ) ? '?' . http_build_query( $_GET ) : '' ) ),
+			'currentPage'  => esc_url( $current_page ),
 			'currentTitle' => wp_strip_all_tags( $title ),
 			'currentIcon'  => sanitize_html_class( $menu_icon ),
 			'adminUrl'     => esc_url( admin_url() ),
 			'colorScheme'  => sanitize_html_class( get_user_option( 'admin_color' ), 'modern' ),
 			'dockItems'    => $dock_items,
+			'session'      => wpdm_get_session( get_current_user_id() ),
+			'sessionUrl'   => esc_url_raw( rest_url( 'wp-desktop/v1/session' ) ),
+			'restNonce'    => wp_create_nonce( 'wp_rest' ),
+			'portalUrl'    => esc_url( wpdm_portal_url() ),
+			'fromPortal'   => $from_portal,
 		)
 	);
 
@@ -131,7 +157,7 @@ function wp_enqueue_desktop_mode_assets() {
 	 */
 	do_action( 'wp_desktop_mode_init' );
 }
-add_action( 'admin_enqueue_scripts', 'wp_enqueue_desktop_mode_assets' );
+add_action( 'admin_enqueue_scripts', 'wpdm_enqueue_assets' );
 
 /**
  * Injects the desktop shell markup into the admin page.
@@ -144,8 +170,8 @@ add_action( 'admin_enqueue_scripts', 'wp_enqueue_desktop_mode_assets' );
  *
  * @since 0.1.0
  */
-function wp_desktop_render_shell() {
-	if ( wp_is_chromeless_request() || ! wp_is_desktop_mode() ) {
+function wpdm_render_shell() {
+	if ( wpdm_is_chromeless_request() || ! wpdm_is_enabled() || wpdm_is_classic_request() ) {
 		return;
 	}
 
@@ -170,7 +196,110 @@ function wp_desktop_render_shell() {
 	 */
 	do_action( 'wp_desktop_shell_after' );
 }
-add_action( 'in_admin_header', 'wp_desktop_render_shell', 5 );
+add_action( 'in_admin_header', 'wpdm_render_shell', 5 );
+
+/**
+ * Forces Gutenberg out of fullscreen mode and dismisses welcome guides
+ * inside chromeless iframes.
+ *
+ * The block editor's fullscreen mode renders a "back to dashboard" button
+ * (the "W" logo in the top-left). Clicking it navigates the iframe to
+ * `/wp-admin/edit.php` without the `wp_desktop=1` flag, which re-renders
+ * the entire classic admin inside the chromeless window.
+ *
+ * Timing: Core's `initializeEditor()` runs inside a `window.load` handler
+ * emitted by `edit-form-blocks.php` and synchronously calls
+ * `setPersistenceLayer()` on the `core/preferences` store. That swap
+ * produces the first state update the store ever emits — earlier defaults
+ * come from the registered reducer at module-load time and don't reach
+ * subscribers. So we scope a `wp.data.subscribe` to `core/preferences`,
+ * wait for the first notification, and apply our overrides then. No
+ * timers, no polling — the store tells us exactly when it's safe to write.
+ *
+ * A previous iteration swapped the persistence layer for a no-op at
+ * module-load time. That silenced user dismissals during the window
+ * before `initializeEditor()` ran, breaking "Got it" persistence for the
+ * welcome guide. Don't do that.
+ *
+ * Belt-and-suspenders: `chromeless.css` hides the fullscreen close button
+ * and welcome modal so there's no visible flash between window open and
+ * our overrides firing.
+ *
+ * @since 0.1.0
+ */
+function wpdm_chromeless_editor_preferences() {
+	if ( ! wpdm_is_chromeless_request() ) {
+		return;
+	}
+
+	$script = <<<'JS'
+( function () {
+	if ( ! window.wp || ! wp.data || typeof wp.data.subscribe !== 'function' ) {
+		return;
+	}
+
+	// Minimize writes: each set() triggers a debounced REST persist, so we
+	// only flip values that are currently truthy. Skipping no-ops avoids
+	// re-saving the user's meta on every chromeless load.
+	//
+	// Note: we intentionally do NOT touch `fullscreenMode`. Gutenberg's
+	// non-fullscreen layout hardcodes top: 32px / left: 160px on
+	// .interface-interface-skeleton to reserve space for the admin bar and
+	// sidebar — both of which we've hidden — producing visible gaps inside
+	// chromeless windows. Leaving fullscreenMode at its default (true)
+	// makes the skeleton fill the viewport naturally. The W logo that
+	// fullscreen surfaces is hidden via chromeless.css.
+	var OVERRIDES = [
+		[ 'core/edit-post', 'welcomeGuide' ],
+		[ 'core/edit-post', 'welcomeGuideTemplate' ],
+		[ 'core/edit-site', 'welcomeGuide' ],
+		[ 'core/edit-site', 'welcomeGuideStyles' ],
+		[ 'core/edit-site', 'welcomeGuidePage' ],
+		[ 'core/edit-site', 'welcomeGuideTemplate' ],
+		[ 'core/edit-widgets', 'welcomeGuide' ]
+	];
+
+	function applyOverrides() {
+		var select = wp.data.select( 'core/preferences' );
+		var prefs  = wp.data.dispatch( 'core/preferences' );
+		if ( ! select || ! prefs || typeof prefs.set !== 'function' ) {
+			return;
+		}
+		for ( var i = 0; i < OVERRIDES.length; i++ ) {
+			var scope = OVERRIDES[ i ][ 0 ];
+			var key   = OVERRIDES[ i ][ 1 ];
+			try {
+				if ( select.get( scope, key ) ) {
+					prefs.set( scope, key, false );
+				}
+			} catch ( e ) {}
+		}
+	}
+
+	// initializeEditor() runs inside a window.load handler and calls
+	// setPersistenceLayer() on the preferences store. That call emits the
+	// first state update the store ever sends to subscribers — which is
+	// exactly the moment it's safe for us to write. Subscribe scoped to
+	// this store, fire once, unsubscribe.
+	var fired  = false;
+	var unsub  = wp.data.subscribe( function () {
+		if ( fired ) {
+			return;
+		}
+		fired = true;
+		unsub();
+		applyOverrides();
+	}, 'core/preferences' );
+} )();
+JS;
+
+	// Attach after whichever editor package is loaded on this screen.
+	// wp_add_inline_script silently no-ops for handles that aren't registered.
+	wp_add_inline_script( 'wp-edit-post', $script, 'after' );
+	wp_add_inline_script( 'wp-edit-site', $script, 'after' );
+	wp_add_inline_script( 'wp-edit-widgets', $script, 'after' );
+}
+add_action( 'enqueue_block_editor_assets', 'wpdm_chromeless_editor_preferences' );
 
 /**
  * Outputs the chromeless screen-meta bridge script.
@@ -182,8 +311,8 @@ add_action( 'in_admin_header', 'wp_desktop_render_shell', 5 );
  *
  * @since 0.1.0
  */
-function wp_desktop_chromeless_bridge_script() {
-	if ( ! wp_is_chromeless_request() ) {
+function wpdm_chromeless_bridge_script() {
+	if ( ! wpdm_is_chromeless_request() ) {
 		return;
 	}
 
@@ -195,115 +324,315 @@ function wp_desktop_chromeless_bridge_script() {
 	 * @param string $hook_suffix The current admin page hook suffix.
 	 */
 	do_action( 'wp_desktop_chromeless_after', isset( $GLOBALS['hook_suffix'] ) ? $GLOBALS['hook_suffix'] : '' );
-	?>
-	<script>
-	( function() {
-		if ( ! window.parent || window.parent === window ) {
-			return;
-		}
-		var links = document.getElementById( 'screen-meta-links' );
-		if ( ! links ) {
-			return;
-		}
-		var screenOptionsBtn = document.getElementById( 'show-settings-link' );
-		var helpBtn = document.getElementById( 'contextual-help-link' );
-		var panels = [];
-		if ( screenOptionsBtn ) {
-			panels.push( 'screen-options' );
-		}
-		if ( helpBtn ) {
-			panels.push( 'help' );
-		}
-		if ( panels.length === 0 ) {
-			return;
-		}
 
-		var origin = window.location.origin;
-
-		window.parent.postMessage( {
-			type: 'wp-desktop-screen-meta',
-			panels: panels
-		}, origin );
-
-		function getOpenPanel() {
-			if ( screenOptionsBtn && screenOptionsBtn.getAttribute( 'aria-expanded' ) === 'true' ) {
-				return 'screen-options';
+	// Emit via wp_print_inline_script_tag so CSP nonces and `<script>`
+	// attribute hygiene go through Core rather than being hand-rolled.
+	$js = <<<'JS'
+( function() {
+	// Escape hatch: a chromeless page is only meant to live inside a
+	// desktop-mode window iframe. If the top window IS this page, the
+	// user ended up here directly — either bookmarked it, followed a
+	// stale link, or got stranded by a bad portal redirect. Without
+	// an admin bar there's no toggle to turn desktop mode off, so
+	// strip the chromeless flag and reload as classic admin. That
+	// puts the admin bar back and lets the user decide what to do.
+	if ( ! window.parent || window.parent === window ) {
+		try {
+			var here = new URL( window.location.href );
+			if ( here.searchParams.has( 'wp_desktop' ) ) {
+				here.searchParams.delete( 'wp_desktop' );
+				here.searchParams.delete( 'wp_desktop_portal' );
+				window.location.replace( here.toString() );
 			}
-			if ( helpBtn && helpBtn.getAttribute( 'aria-expanded' ) === 'true' ) {
-				return 'help';
-			}
+		} catch ( err ) {
+			/* URL parse failure — let the broken state stand rather than
+			 * navigate somewhere worse. */
+		}
+		return;
+	}
+
+	/*
+	 * Link & form interceptor.
+	 *
+	 * Every same-origin wp-admin <a> href and <form> action gets the
+	 * `wp_desktop=1` flag appended so navigation inside the iframe stays
+	 * chromeless. Without this, a stray link to /wp-admin/edit.php (see
+	 * Gutenberg's fullscreen close button, help-tab links, "Return to
+	 * posts" affordances, etc.) re-renders the full classic admin inside
+	 * our window.
+	 *
+	 * Excluded from rewriting:
+	 *   - modifier clicks (cmd/ctrl/shift/alt) — user wants to open a
+	 *     new tab/window, respect that
+	 *   - target="_blank" / target="_top" / target="_parent"
+	 *   - download attribute
+	 *   - in-page anchors (#)
+	 *   - mailto:, tel:, javascript: schemes
+	 *   - cross-origin URLs
+	 *   - URLs that already carry wp_desktop=
+	 */
+	function rewriteAdminUrl( href, base ) {
+		if ( ! href || href.charAt( 0 ) === '#' ) {
 			return null;
 		}
-
-		function reportState() {
-			window.parent.postMessage( {
-				type: 'wp-desktop-screen-meta-state',
-				open: getOpenPanel()
-			}, origin );
+		if ( /^(mailto:|tel:|javascript:|data:)/i.test( href ) ) {
+			return null;
 		}
-
-		reportState();
-
-		var observer = new MutationObserver( reportState );
-		if ( screenOptionsBtn ) {
-			observer.observe( screenOptionsBtn, { attributes: true, attributeFilter: [ 'aria-expanded' ] } );
+		var url;
+		try {
+			url = new URL( href, base );
+		} catch ( err ) {
+			return null;
 		}
-		if ( helpBtn ) {
-			observer.observe( helpBtn, { attributes: true, attributeFilter: [ 'aria-expanded' ] } );
+		if ( url.origin !== window.location.origin ) {
+			return null;
 		}
-
-		// WP's close() animates and shares #screen-meta between both panels,
-		// so racing two animated clicks hides the panel that just opened.
-		// Jump the other panel to its closed end state synchronously instead.
-		function forceClose( button ) {
-			if ( ! button || button.getAttribute( 'aria-expanded' ) !== 'true' ) {
-				return;
-			}
-			var panelId = button.getAttribute( 'aria-controls' );
-			var panel = panelId ? document.getElementById( panelId ) : null;
-			if ( ! panel ) {
-				return;
-			}
-			if ( window.jQuery ) {
-				window.jQuery( panel ).stop( true, false );
-			}
-			panel.style.display = 'none';
-			panel.classList.add( 'hidden' );
-			if ( panel.parentNode instanceof HTMLElement ) {
-				panel.parentNode.style.display = 'none';
-			}
-			button.classList.remove( 'screen-meta-active' );
-			button.setAttribute( 'aria-expanded', 'false' );
-			var toggles = document.querySelectorAll( '.screen-meta-toggle' );
-			for ( var i = 0; i < toggles.length; i++ ) {
-				toggles[ i ].style.visibility = '';
-			}
+		if ( url.pathname.indexOf( '/wp-admin/' ) === -1 ) {
+			return null;
 		}
+		if ( url.searchParams.has( 'wp_desktop' ) ) {
+			return null;
+		}
+		url.searchParams.set( 'wp_desktop', '1' );
+		return url.toString();
+	}
 
-		window.addEventListener( 'message', function( e ) {
-			if ( e.origin !== origin ) {
-				return;
-			}
-			if ( ! e.data || e.data.type !== 'wp-desktop-toggle-panel' ) {
-				return;
-			}
-			var target = null;
-			if ( e.data.panel === 'screen-options' && screenOptionsBtn ) {
-				target = screenOptionsBtn;
-			} else if ( e.data.panel === 'help' && helpBtn ) {
-				target = helpBtn;
-			}
-			if ( ! target ) {
-				return;
-			}
-			if ( target.getAttribute( 'aria-expanded' ) !== 'true' ) {
-				var other = target === screenOptionsBtn ? helpBtn : screenOptionsBtn;
-				forceClose( other );
-			}
-			target.click();
-		} );
-	} )();
-	</script>
-	<?php
+	document.addEventListener( 'click', function ( e ) {
+		if ( e.defaultPrevented ) {
+			return;
+		}
+		if ( e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey ) {
+			return;
+		}
+		var link = e.target && e.target.closest ? e.target.closest( 'a[href]' ) : null;
+		if ( ! link ) {
+			return;
+		}
+		if ( link.target && link.target !== '' && link.target !== '_self' ) {
+			return;
+		}
+		if ( link.hasAttribute( 'download' ) ) {
+			return;
+		}
+		var rewritten = rewriteAdminUrl( link.getAttribute( 'href' ), window.location.href );
+		if ( rewritten ) {
+			link.setAttribute( 'href', rewritten );
+		}
+	}, true );
+
+	document.addEventListener( 'submit', function ( e ) {
+		var form = e.target;
+		if ( ! form || form.tagName !== 'FORM' ) {
+			return;
+		}
+		var action = form.getAttribute( 'action' );
+		var rewritten = rewriteAdminUrl( action || window.location.href, window.location.href );
+		if ( rewritten ) {
+			form.setAttribute( 'action', rewritten );
+		}
+	}, true );
+
+	var links = document.getElementById( 'screen-meta-links' );
+	if ( ! links ) {
+		return;
+	}
+	var screenOptionsBtn = document.getElementById( 'show-settings-link' );
+	var helpBtn = document.getElementById( 'contextual-help-link' );
+	var panels = [];
+	if ( screenOptionsBtn ) {
+		panels.push( 'screen-options' );
+	}
+	if ( helpBtn ) {
+		panels.push( 'help' );
+	}
+	if ( panels.length === 0 ) {
+		return;
+	}
+
+	var origin = window.location.origin;
+
+	window.parent.postMessage( {
+		type: 'wp-desktop-screen-meta',
+		panels: panels
+	}, origin );
+
+	function getOpenPanel() {
+		if ( screenOptionsBtn && screenOptionsBtn.getAttribute( 'aria-expanded' ) === 'true' ) {
+			return 'screen-options';
+		}
+		if ( helpBtn && helpBtn.getAttribute( 'aria-expanded' ) === 'true' ) {
+			return 'help';
+		}
+		return null;
+	}
+
+	function reportState() {
+		window.parent.postMessage( {
+			type: 'wp-desktop-screen-meta-state',
+			open: getOpenPanel()
+		}, origin );
+	}
+
+	reportState();
+
+	var observer = new MutationObserver( reportState );
+	if ( screenOptionsBtn ) {
+		observer.observe( screenOptionsBtn, { attributes: true, attributeFilter: [ 'aria-expanded' ] } );
+	}
+	if ( helpBtn ) {
+		observer.observe( helpBtn, { attributes: true, attributeFilter: [ 'aria-expanded' ] } );
+	}
+
+	// WP's close() animates and shares #screen-meta between both panels,
+	// so racing two animated clicks hides the panel that just opened.
+	// Jump the other panel to its closed end state synchronously instead.
+	function forceClose( button ) {
+		if ( ! button || button.getAttribute( 'aria-expanded' ) !== 'true' ) {
+			return;
+		}
+		var panelId = button.getAttribute( 'aria-controls' );
+		var panel = panelId ? document.getElementById( panelId ) : null;
+		if ( ! panel ) {
+			return;
+		}
+		if ( window.jQuery ) {
+			window.jQuery( panel ).stop( true, false );
+		}
+		panel.style.display = 'none';
+		panel.classList.add( 'hidden' );
+		if ( panel.parentNode instanceof HTMLElement ) {
+			panel.parentNode.style.display = 'none';
+		}
+		button.classList.remove( 'screen-meta-active' );
+		button.setAttribute( 'aria-expanded', 'false' );
+		var toggles = document.querySelectorAll( '.screen-meta-toggle' );
+		for ( var i = 0; i < toggles.length; i++ ) {
+			toggles[ i ].style.visibility = '';
+		}
+	}
+
+	window.addEventListener( 'message', function( e ) {
+		if ( e.origin !== origin ) {
+			return;
+		}
+		if ( ! e.data || e.data.type !== 'wp-desktop-toggle-panel' ) {
+			return;
+		}
+		var target = null;
+		if ( e.data.panel === 'screen-options' && screenOptionsBtn ) {
+			target = screenOptionsBtn;
+		} else if ( e.data.panel === 'help' && helpBtn ) {
+			target = helpBtn;
+		}
+		if ( ! target ) {
+			return;
+		}
+		if ( target.getAttribute( 'aria-expanded' ) !== 'true' ) {
+			var other = target === screenOptionsBtn ? helpBtn : screenOptionsBtn;
+			forceClose( other );
+		}
+		target.click();
+	} );
+} )();
+JS;
+
+	wp_print_inline_script_tag( $js );
 }
-add_action( 'admin_footer', 'wp_desktop_chromeless_bridge_script' );
+add_action( 'admin_footer', 'wpdm_chromeless_bridge_script' );
+
+/**
+ * Outputs a same-origin admin link/form rewriter for detached ("classic
+ * override") tabs.
+ *
+ * Without this, the first navigation after a detach drops the
+ * `wp_desktop_classic=1` flag and the next page falls back to the
+ * desktop shell — because the user meta is still `'1'` and the
+ * `admin_init` portal redirect kicks in. The JS here re-stamps the flag
+ * on every same-origin `/wp-admin/` `<a href>` and `<form action>` so
+ * navigations within the tab stay classic. Server-side redirects are
+ * covered by {@see wpdm_classic_preserve_redirect}.
+ *
+ * Narrowly scoped: only runs when the current request itself carries
+ * the classic flag. Skips modifier-clicks (cmd/ctrl/shift/alt), targets
+ * other than `_self`, downloads, anchors, and non-http schemes so we
+ * don't break "open in new tab" or mailto links.
+ *
+ * @since 0.4.0
+ */
+function wpdm_classic_link_interceptor() {
+	if ( ! wpdm_is_classic_request() ) {
+		return;
+	}
+
+	$flag_literal = wp_json_encode( WPDM_CLASSIC_FLAG );
+
+	$js = <<<JS
+( function () {
+	var FLAG = {$flag_literal};
+
+	function rewriteAdminUrl( href, base ) {
+		if ( ! href || href.charAt( 0 ) === '#' ) {
+			return null;
+		}
+		if ( /^(mailto:|tel:|javascript:|data:)/i.test( href ) ) {
+			return null;
+		}
+		var url;
+		try {
+			url = new URL( href, base );
+		} catch ( err ) {
+			return null;
+		}
+		if ( url.origin !== window.location.origin ) {
+			return null;
+		}
+		if ( url.pathname.indexOf( '/wp-admin/' ) === -1 ) {
+			return null;
+		}
+		if ( url.searchParams.has( FLAG ) ) {
+			return null;
+		}
+		url.searchParams.set( FLAG, '1' );
+		return url.toString();
+	}
+
+	document.addEventListener( 'click', function ( e ) {
+		if ( e.defaultPrevented ) {
+			return;
+		}
+		if ( e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey ) {
+			return;
+		}
+		var link = e.target && e.target.closest ? e.target.closest( 'a[href]' ) : null;
+		if ( ! link ) {
+			return;
+		}
+		if ( link.target && link.target !== '' && link.target !== '_self' ) {
+			return;
+		}
+		if ( link.hasAttribute( 'download' ) ) {
+			return;
+		}
+		var rewritten = rewriteAdminUrl( link.getAttribute( 'href' ), window.location.href );
+		if ( rewritten ) {
+			link.setAttribute( 'href', rewritten );
+		}
+	}, true );
+
+	document.addEventListener( 'submit', function ( e ) {
+		var form = e.target;
+		if ( ! form || form.tagName !== 'FORM' ) {
+			return;
+		}
+		var action = form.getAttribute( 'action' );
+		var rewritten = rewriteAdminUrl( action || window.location.href, window.location.href );
+		if ( rewritten ) {
+			form.setAttribute( 'action', rewritten );
+		}
+	}, true );
+} )();
+JS;
+
+	wp_print_inline_script_tag( $js );
+}
+add_action( 'admin_footer', 'wpdm_classic_link_interceptor' );

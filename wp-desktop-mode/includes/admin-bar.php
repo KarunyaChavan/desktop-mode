@@ -20,12 +20,12 @@ defined( 'ABSPATH' ) || exit;
  *
  * @param WP_Admin_Bar $wp_admin_bar The WP_Admin_Bar instance.
  */
-function wp_admin_bar_desktop_mode_toggle( $wp_admin_bar ) {
+function wpdm_admin_bar_toggle( $wp_admin_bar ) {
 	if ( ! is_admin() || ! is_user_logged_in() ) {
 		return;
 	}
 
-	$is_active = wp_is_desktop_mode();
+	$is_active = wpdm_is_enabled();
 	$label     = $is_active
 		? __( 'Switch to Classic Admin', 'wp-desktop-mode' )
 		: __( 'Switch to Desktop Mode', 'wp-desktop-mode' );
@@ -45,7 +45,7 @@ function wp_admin_bar_desktop_mode_toggle( $wp_admin_bar ) {
 		)
 	);
 }
-add_action( 'admin_bar_menu', 'wp_admin_bar_desktop_mode_toggle', 190 );
+add_action( 'admin_bar_menu', 'wpdm_admin_bar_toggle', 190 );
 
 /**
  * Enqueues the inline CSS and JS for the desktop mode toggle.
@@ -55,7 +55,7 @@ add_action( 'admin_bar_menu', 'wp_admin_bar_desktop_mode_toggle', 190 );
  *
  * @since 0.1.0
  */
-function wp_enqueue_desktop_mode_toggle_assets() {
+function wpdm_enqueue_toggle_assets() {
 	if ( ! is_admin() || ! is_user_logged_in() ) {
 		return;
 	}
@@ -82,8 +82,18 @@ function wp_enqueue_desktop_mode_toggle_assets() {
 	';
 	wp_add_inline_style( 'admin-bar', $css );
 
-	$nonce  = wp_create_nonce( 'save-desktop-mode' );
-	$active = wp_is_desktop_mode() ? 'true' : 'false';
+	// All PHP→JS values are emitted as JSON literals (never interpolated
+	// raw into the script body) so special characters, quotes, and
+	// unexpected shapes can't break the parser or be exploited.
+	$config = wp_json_encode(
+		array(
+			'nonce'      => wp_create_nonce( 'save-desktop-mode' ),
+			'active'     => wpdm_is_enabled(),
+			'classicUrl' => esc_url_raw( admin_url() ),
+			'portalUrl'  => esc_url_raw( wpdm_portal_url() ),
+			'ajaxUrl'    => esc_url_raw( admin_url( 'admin-ajax.php' ) ),
+		)
+	);
 
 	$js = <<<JS
 ( function() {
@@ -91,22 +101,53 @@ function wp_enqueue_desktop_mode_toggle_assets() {
 	if ( ! toggle ) {
 		return;
 	}
+	var cfg = {$config};
 	toggle.addEventListener( 'click', function( e ) {
 		e.preventDefault();
-		var isActive = {$active};
+		var isActive = !! cfg.active;
 		var newValue = isActive ? '' : '1';
+		// Fallback targets if the server response is missing a `redirect`
+		// field (shouldn't happen, but keep the click functional either
+		// way). Disabling -> classic admin (NOT the portal, which would
+		// auto-re-enable); enabling -> portal URL so the shell takes over.
+		var fallback = isActive ? cfg.classicUrl : cfg.portalUrl;
+		// The toggle lives in an admin bar that may be rendered either in
+		// the top window (classic) or — today it's suppressed in iframes,
+		// but a plugin could surface it — inside a chromeless iframe. In
+		// either case we want the ENTIRE browser tab to navigate, so we
+		// hit `window.top` and fall back to `window` if cross-origin
+		// security blocks access.
+		function navigate( url ) {
+			try {
+				window.top.location.href = url;
+			} catch ( err ) {
+				window.location.href = url;
+			}
+		}
+		var body = new URLSearchParams();
+		body.set( 'action', 'save-desktop-mode' );
+		body.set( 'nonce', cfg.nonce );
+		body.set( 'enabled', newValue );
 		var xhr = new XMLHttpRequest();
-		xhr.open( 'POST', ajaxurl, true );
+		xhr.open( 'POST', cfg.ajaxUrl, true );
 		xhr.setRequestHeader( 'Content-Type', 'application/x-www-form-urlencoded' );
 		xhr.onload = function() {
-			if ( xhr.status === 200 ) {
-				window.location.reload();
+			if ( xhr.status !== 200 ) {
+				return;
 			}
+			var target = fallback;
+			try {
+				var resp = JSON.parse( xhr.responseText );
+				if ( resp && resp.success && resp.data && resp.data.redirect ) {
+					target = resp.data.redirect;
+				}
+			} catch ( parseErr ) {}
+			navigate( target );
 		};
-		xhr.send( 'action=save-desktop-mode&nonce={$nonce}&enabled=' + newValue );
+		xhr.send( body.toString() );
 	} );
 } )();
 JS;
 	wp_add_inline_script( 'admin-bar', $js );
 }
-add_action( 'admin_enqueue_scripts', 'wp_enqueue_desktop_mode_toggle_assets' );
+add_action( 'admin_enqueue_scripts', 'wpdm_enqueue_toggle_assets' );

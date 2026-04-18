@@ -39,6 +39,12 @@ export interface WindowConfig {
 	 * Pass an empty array (or omit) to hide the strip.
 	 */
 	submenu?: { title: string; url: string }[];
+	/**
+	 * Optional initial state. When present, the window is constructed
+	 * into this state directly — used by session restore so a minimized
+	 * or maximized window comes back in the same shape the user left it.
+	 */
+	initialState?: WindowState;
 }
 
 /**
@@ -75,6 +81,34 @@ export interface DockItemConfig {
 }
 
 /**
+ * A single persisted window entry.
+ *
+ * Shape mirrors the server-side sanitizer in includes/session.php — any
+ * field added here must be validated server-side or it will be dropped.
+ */
+export interface SessionWindow {
+	id: string;
+	url: string;
+	title: string;
+	icon: string;
+	state: WindowState;
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+}
+
+/**
+ * The user's saved desktop session — open windows, focused id, last-write
+ * timestamp. Restored by the shell on load; written back debounced.
+ */
+export interface Session {
+	windows: SessionWindow[];
+	focused: string;
+	updated: number;
+}
+
+/**
  * Desktop shell configuration passed from PHP via wp_localize_script.
  */
 export interface DesktopConfig {
@@ -90,6 +124,16 @@ export interface DesktopConfig {
 	colorScheme: string;
 	/** Dock items derived from the admin menu. */
 	dockItems: DockItemConfig[];
+	/** Previously saved session (may be empty on first run). */
+	session: Session;
+	/** REST endpoint for reading/writing the session. */
+	sessionUrl: string;
+	/** Nonce for the REST endpoint (X-WP-Nonce header). */
+	restNonce: string;
+	/** Canonical `/wp-desktop/` URL — used for history.replaceState. */
+	portalUrl: string;
+	/** True when the shell was reached via the portal redirect. */
+	fromPortal: boolean;
 }
 
 /**

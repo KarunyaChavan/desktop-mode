@@ -9,7 +9,7 @@
 const TerserPlugin = require( 'terser-webpack-plugin' );
 const { join } = require( 'path' );
 
-module.exports = function ( env = { environment: 'production', watch: false } ) {
+module.exports = function ( env = { environment: 'production' } ) {
 	const mode = env.environment || 'production';
 
 	return {
@@ -54,6 +54,5 @@ module.exports = function ( env = { environment: 'production', watch: false } ) 
 				} ),
 			],
 		},
-		watch: env.watch,
 	};
 };

@@ -24,82 +24,134 @@ class Tests_DesktopMode_Render extends WP_UnitTestCase {
 
 	public function tear_down() {
 		delete_user_meta( self::$admin_id, 'wp_desktop_mode' );
-		unset( $_GET['wp_desktop'] );
+		unset( $_GET['wp_desktop'], $_GET[ WPDM_CLASSIC_FLAG ] );
 		parent::tear_down();
 	}
 
 	/**
-	 * @covers ::wp_desktop_admin_body_classes
+	 * @covers ::wpdm_admin_body_classes
 	 */
 	public function test_body_class_unchanged_when_mode_off() {
-		$this->assertSame( 'foo', wp_desktop_admin_body_classes( 'foo' ) );
+		$this->assertSame( 'foo', wpdm_admin_body_classes( 'foo' ) );
 	}
 
 	/**
-	 * @covers ::wp_desktop_admin_body_classes
+	 * @covers ::wpdm_admin_body_classes
 	 */
 	public function test_body_class_adds_active_when_mode_on() {
 		update_user_meta( self::$admin_id, 'wp_desktop_mode', '1' );
-		$this->assertStringContainsString( 'wp-desktop-active', wp_desktop_admin_body_classes( '' ) );
+		$this->assertStringContainsString( 'wp-desktop-active', wpdm_admin_body_classes( '' ) );
 	}
 
 	/**
-	 * @covers ::wp_desktop_admin_body_classes
+	 * @covers ::wpdm_admin_body_classes
 	 */
 	public function test_body_class_adds_chromeless_when_iframed() {
 		update_user_meta( self::$admin_id, 'wp_desktop_mode', '1' );
 		$_GET['wp_desktop'] = '1';
-		$this->assertStringContainsString( 'wp-desktop-chromeless', wp_desktop_admin_body_classes( '' ) );
+		$this->assertStringContainsString( 'wp-desktop-chromeless', wpdm_admin_body_classes( '' ) );
 	}
 
 	/**
-	 * Chromeless wins over active — inside an iframe we want the
-	 * chromeless class, never the shell class.
+	 * Per-request classic override must suppress the `wp-desktop-active`
+	 * body class so the classic admin chrome isn't hidden in the detached
+	 * tab — even when the user's account still has desktop mode enabled.
 	 *
-	 * @covers ::wp_desktop_admin_body_classes
+	 * @covers ::wpdm_admin_body_classes
 	 */
-	public function test_chromeless_class_wins_over_active() {
+	public function test_body_class_omits_active_when_classic_flag_present() {
 		update_user_meta( self::$admin_id, 'wp_desktop_mode', '1' );
-		$_GET['wp_desktop'] = '1';
-		$classes            = wp_desktop_admin_body_classes( '' );
+		$_GET[ WPDM_CLASSIC_FLAG ] = '1';
+
+		$classes = wpdm_admin_body_classes( 'foo' );
+
+		$this->assertSame( 'foo', $classes );
+		$this->assertStringNotContainsString( 'wp-desktop-active', $classes );
+	}
+
+	/**
+	 * Classic override must not short-circuit chromeless tagging —
+	 * defense in depth in case both flags land on the same request.
+	 *
+	 * @covers ::wpdm_admin_body_classes
+	 */
+	public function test_chromeless_class_wins_over_classic_flag() {
+		update_user_meta( self::$admin_id, 'wp_desktop_mode', '1' );
+		$_GET['wp_desktop']              = '1';
+		$_GET[ WPDM_CLASSIC_FLAG ] = '1';
+
+		$classes = wpdm_admin_body_classes( '' );
 
 		$this->assertStringContainsString( 'wp-desktop-chromeless', $classes );
 		$this->assertStringNotContainsString( 'wp-desktop-active', $classes );
 	}
 
 	/**
-	 * @covers ::wp_desktop_render_shell
+	 * Chromeless wins over active — inside an iframe we want the
+	 * chromeless class, never the shell class.
+	 *
+	 * @covers ::wpdm_admin_body_classes
+	 */
+	public function test_chromeless_class_wins_over_active() {
+		update_user_meta( self::$admin_id, 'wp_desktop_mode', '1' );
+		$_GET['wp_desktop'] = '1';
+		$classes            = wpdm_admin_body_classes( '' );
+
+		$this->assertStringContainsString( 'wp-desktop-chromeless', $classes );
+		$this->assertStringNotContainsString( 'wp-desktop-active', $classes );
+	}
+
+	/**
+	 * @covers ::wpdm_render_shell
 	 */
 	public function test_render_shell_emits_nothing_when_mode_off() {
 		ob_start();
-		wp_desktop_render_shell();
+		wpdm_render_shell();
 		$output = ob_get_clean();
 
 		$this->assertSame( '', $output );
 	}
 
 	/**
-	 * @covers ::wp_desktop_render_shell
+	 * @covers ::wpdm_render_shell
 	 */
 	public function test_render_shell_emits_nothing_in_chromeless() {
 		update_user_meta( self::$admin_id, 'wp_desktop_mode', '1' );
 		$_GET['wp_desktop'] = '1';
 
 		ob_start();
-		wp_desktop_render_shell();
+		wpdm_render_shell();
 		$output = ob_get_clean();
 
 		$this->assertSame( '', $output );
 	}
 
 	/**
-	 * @covers ::wp_desktop_render_shell
+	 * Per-request classic override must skip shell injection even with
+	 * desktop mode enabled on the account — otherwise the detached tab
+	 * would render both the classic chrome and the floating shell.
+	 *
+	 * @covers ::wpdm_render_shell
+	 */
+	public function test_render_shell_emits_nothing_on_classic_request() {
+		update_user_meta( self::$admin_id, 'wp_desktop_mode', '1' );
+		$_GET[ WPDM_CLASSIC_FLAG ] = '1';
+
+		ob_start();
+		wpdm_render_shell();
+		$output = ob_get_clean();
+
+		$this->assertSame( '', $output );
+	}
+
+	/**
+	 * @covers ::wpdm_render_shell
 	 */
 	public function test_render_shell_emits_markup_when_mode_on() {
 		update_user_meta( self::$admin_id, 'wp_desktop_mode', '1' );
 
 		ob_start();
-		wp_desktop_render_shell();
+		wpdm_render_shell();
 		$output = ob_get_clean();
 
 		$this->assertStringContainsString( 'wp-desktop-shell', $output );
@@ -108,7 +160,7 @@ class Tests_DesktopMode_Render extends WP_UnitTestCase {
 	}
 
 	/**
-	 * @covers ::wp_desktop_render_shell
+	 * @covers ::wpdm_render_shell
 	 */
 	public function test_shell_before_and_after_actions_fire() {
 		update_user_meta( self::$admin_id, 'wp_desktop_mode', '1' );
@@ -128,7 +180,7 @@ class Tests_DesktopMode_Render extends WP_UnitTestCase {
 		);
 
 		ob_start();
-		wp_desktop_render_shell();
+		wpdm_render_shell();
 		ob_end_clean();
 
 		$this->assertSame( array( 'before', 'after' ), $order );
@@ -138,12 +190,12 @@ class Tests_DesktopMode_Render extends WP_UnitTestCase {
 	}
 
 	/**
-	 * @covers ::wp_desktop_render_shell
+	 * @covers ::wpdm_render_shell
 	 */
 	public function test_render_shell_is_wired_to_in_admin_header() {
 		$this->assertSame(
 			5,
-			has_action( 'in_admin_header', 'wp_desktop_render_shell' )
+			has_action( 'in_admin_header', 'wpdm_render_shell' )
 		);
 	}
 
@@ -152,53 +204,53 @@ class Tests_DesktopMode_Render extends WP_UnitTestCase {
 	 * chromeless iframes — the filter alone can't stop it because
 	 * `is_admin_bar_showing()` returns true unconditionally in admin.
 	 *
-	 * @covers ::wp_desktop_chromeless_suppress_admin_bar
+	 * @covers ::wpdm_chromeless_suppress_admin_bar
 	 */
 	public function test_chromeless_detaches_admin_bar_render_action() {
 		update_user_meta( self::$admin_id, 'wp_desktop_mode', '1' );
 		$_GET['wp_desktop'] = '1';
 
 		add_action( 'in_admin_header', 'wp_admin_bar_render', 0 );
-		wp_desktop_chromeless_suppress_admin_bar();
+		wpdm_chromeless_suppress_admin_bar();
 
 		$this->assertFalse( has_action( 'in_admin_header', 'wp_admin_bar_render' ) );
 	}
 
 	/**
-	 * @covers ::wp_desktop_chromeless_suppress_admin_bar
+	 * @covers ::wpdm_chromeless_suppress_admin_bar
 	 */
 	public function test_non_chromeless_leaves_admin_bar_render_wired() {
 		update_user_meta( self::$admin_id, 'wp_desktop_mode', '1' );
 
 		add_action( 'in_admin_header', 'wp_admin_bar_render', 0 );
-		wp_desktop_chromeless_suppress_admin_bar();
+		wpdm_chromeless_suppress_admin_bar();
 
 		$this->assertSame( 0, has_action( 'in_admin_header', 'wp_admin_bar_render' ) );
 		remove_action( 'in_admin_header', 'wp_admin_bar_render', 0 );
 	}
 
 	/**
-	 * @covers ::wp_desktop_chromeless_bridge_script
+	 * @covers ::wpdm_chromeless_bridge_script
 	 */
 	public function test_bridge_script_emits_nothing_outside_chromeless() {
 		update_user_meta( self::$admin_id, 'wp_desktop_mode', '1' );
 
 		ob_start();
-		wp_desktop_chromeless_bridge_script();
+		wpdm_chromeless_bridge_script();
 		$output = ob_get_clean();
 
 		$this->assertSame( '', $output );
 	}
 
 	/**
-	 * @covers ::wp_desktop_chromeless_bridge_script
+	 * @covers ::wpdm_chromeless_bridge_script
 	 */
 	public function test_bridge_script_emits_postmessage_glue_in_chromeless() {
 		update_user_meta( self::$admin_id, 'wp_desktop_mode', '1' );
 		$_GET['wp_desktop'] = '1';
 
 		ob_start();
-		wp_desktop_chromeless_bridge_script();
+		wpdm_chromeless_bridge_script();
 		$output = ob_get_clean();
 
 		$this->assertStringContainsString( 'wp-desktop-screen-meta', $output );
@@ -206,7 +258,143 @@ class Tests_DesktopMode_Render extends WP_UnitTestCase {
 	}
 
 	/**
-	 * @covers ::wp_desktop_chromeless_bridge_script
+	 * Link interceptor must be inside the bridge script so stray clicks on
+	 * `<a href="/wp-admin/...">` don't kick the iframe out of chromeless mode.
+	 *
+	 * @covers ::wpdm_chromeless_bridge_script
+	 */
+	public function test_bridge_script_emits_link_interceptor_in_chromeless() {
+		update_user_meta( self::$admin_id, 'wp_desktop_mode', '1' );
+		$_GET['wp_desktop'] = '1';
+
+		ob_start();
+		wpdm_chromeless_bridge_script();
+		$output = ob_get_clean();
+
+		$this->assertStringContainsString( 'rewriteAdminUrl', $output );
+		$this->assertStringContainsString( "addEventListener( 'click'", $output );
+		$this->assertStringContainsString( "addEventListener( 'submit'", $output );
+		$this->assertStringContainsString( "'wp_desktop'", $output );
+	}
+
+	/**
+	 * @covers ::wpdm_classic_link_interceptor
+	 */
+	public function test_classic_interceptor_emits_nothing_without_flag() {
+		update_user_meta( self::$admin_id, 'wp_desktop_mode', '1' );
+
+		ob_start();
+		wpdm_classic_link_interceptor();
+		$output = ob_get_clean();
+
+		$this->assertSame( '', $output );
+	}
+
+	/**
+	 * @covers ::wpdm_classic_link_interceptor
+	 */
+	public function test_classic_interceptor_emits_script_when_flag_present() {
+		$_GET[ WPDM_CLASSIC_FLAG ] = '1';
+
+		ob_start();
+		wpdm_classic_link_interceptor();
+		$output = ob_get_clean();
+
+		$this->assertStringContainsString( '<script>', $output );
+		$this->assertStringContainsString( 'rewriteAdminUrl', $output );
+		$this->assertStringContainsString( "addEventListener( 'click'", $output );
+		$this->assertStringContainsString( "addEventListener( 'submit'", $output );
+		// The rewritten URL must carry the same flag the server checks for.
+		$this->assertStringContainsString( '"' . WPDM_CLASSIC_FLAG . '"', $output );
+	}
+
+	/**
+	 * The interceptor is what keeps the detached tab classic across
+	 * navigations. It must be wired on admin_footer or the first click
+	 * would escape back into the desktop shell.
+	 *
+	 * @covers ::wpdm_classic_link_interceptor
+	 */
+	public function test_classic_interceptor_is_wired_on_admin_footer() {
+		$this->assertNotFalse(
+			has_action( 'admin_footer', 'wpdm_classic_link_interceptor' )
+		);
+	}
+
+	/**
+	 * @covers ::wpdm_chromeless_editor_preferences
+	 */
+	public function test_editor_preferences_is_wired_to_enqueue_block_editor_assets() {
+		$this->assertNotFalse(
+			has_action(
+				'enqueue_block_editor_assets',
+				'wpdm_chromeless_editor_preferences'
+			)
+		);
+	}
+
+	/**
+	 * Calling the preferences override outside a chromeless request must
+	 * return early — we never want to touch Gutenberg's persistence layer
+	 * on classic admin loads.
+	 *
+	 * @covers ::wpdm_chromeless_editor_preferences
+	 */
+	public function test_editor_preferences_short_circuits_when_not_chromeless() {
+		update_user_meta( self::$admin_id, 'wp_desktop_mode', '1' );
+		// Note: no $_GET['wp_desktop'] — desktop mode is on, but this is not an iframe.
+
+		wp_register_script( 'wp-edit-post', '', array(), '1.0', true );
+
+		wpdm_chromeless_editor_preferences();
+
+		// WP_Scripts::get_inline_script_data() returns '' when no inline
+		// data has been attached for the handle; older WP used to return
+		// false. `empty()` covers both.
+		$this->assertEmpty( wp_scripts()->get_inline_script_data( 'wp-edit-post', 'after' ) );
+
+		wp_deregister_script( 'wp-edit-post' );
+	}
+
+	/**
+	 * @covers ::wpdm_chromeless_editor_preferences
+	 */
+	public function test_editor_preferences_enqueues_inline_script_when_chromeless() {
+		update_user_meta( self::$admin_id, 'wp_desktop_mode', '1' );
+		$_GET['wp_desktop'] = '1';
+
+		wp_register_script( 'wp-edit-post', '', array(), '1.0', true );
+
+		wpdm_chromeless_editor_preferences();
+
+		$inline = wp_scripts()->get_inline_script_data( 'wp-edit-post', 'after' );
+
+		$this->assertNotEmpty( $inline );
+		$this->assertStringContainsString( 'welcomeGuide', $inline );
+		// Dispatches are gated on the first state update from the
+		// preferences store — that's initializeEditor()'s setPersistenceLayer
+		// call, which is the exact moment the real persistence layer is
+		// wired up. No timers, no polling.
+		$this->assertStringContainsString( 'wp.data.subscribe', $inline );
+		$this->assertStringContainsString( "'core/preferences'", $inline );
+		$this->assertStringNotContainsString( 'setTimeout', $inline );
+		// The persistence-layer swap approach broke "Got it" persistence;
+		// make sure we don't accidentally reintroduce the CALL (commentary
+		// that mentions the name by way of explanation is fine).
+		$this->assertStringNotContainsString( '.setPersistenceLayer(', $inline );
+		// `fullscreenMode` is intentionally left alone: forcing it false
+		// makes Gutenberg render at top: 32px / left: 160px to reserve
+		// space for admin bar + sidebar, which we've already hidden.
+		// Leaving it at its default (true) keeps the skeleton inset: 0.
+		// Guard the assertion against the quoted string that would appear
+		// in a dispatch: commentary that names the pref is fine.
+		$this->assertStringNotContainsString( "'fullscreenMode'", $inline );
+
+		wp_deregister_script( 'wp-edit-post' );
+	}
+
+	/**
+	 * @covers ::wpdm_chromeless_bridge_script
 	 */
 	public function test_chromeless_after_action_fires_in_iframes() {
 		update_user_meta( self::$admin_id, 'wp_desktop_mode', '1' );
@@ -221,7 +409,7 @@ class Tests_DesktopMode_Render extends WP_UnitTestCase {
 		);
 
 		ob_start();
-		wp_desktop_chromeless_bridge_script();
+		wpdm_chromeless_bridge_script();
 		ob_end_clean();
 
 		$this->assertTrue( $fired );

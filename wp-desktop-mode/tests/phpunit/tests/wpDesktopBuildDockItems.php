@@ -8,7 +8,7 @@
  *
  * @group desktop-mode
  *
- * @covers ::wp_desktop_build_dock_items
+ * @covers ::wpdm_build_dock_items
  */
 class Tests_DesktopMode_WpDesktopBuildDockItems extends WP_UnitTestCase {
 
@@ -60,7 +60,7 @@ class Tests_DesktopMode_WpDesktopBuildDockItems extends WP_UnitTestCase {
 	public function test_returns_empty_array_when_menu_globals_are_empty() {
 		global $menu;
 		$menu = array();
-		$this->assertSame( array(), wp_desktop_build_dock_items() );
+		$this->assertSame( array(), wpdm_build_dock_items() );
 	}
 
 	public function test_skips_separators() {
@@ -70,7 +70,7 @@ class Tests_DesktopMode_WpDesktopBuildDockItems extends WP_UnitTestCase {
 			$this->make_menu_row( 'Posts', 'edit_posts', 'edit.php' ),
 		);
 
-		$items = wp_desktop_build_dock_items();
+		$items = wpdm_build_dock_items();
 
 		$this->assertCount( 1, $items );
 		$this->assertSame( 'Posts', $items[0]['title'] );
@@ -83,7 +83,7 @@ class Tests_DesktopMode_WpDesktopBuildDockItems extends WP_UnitTestCase {
 			$this->make_menu_row( 'Posts', 'edit_posts', 'edit.php' ),
 		);
 
-		$items = wp_desktop_build_dock_items();
+		$items = wpdm_build_dock_items();
 
 		$this->assertCount( 1, $items );
 		$this->assertSame( 'Posts', $items[0]['title'] );
@@ -101,7 +101,7 @@ class Tests_DesktopMode_WpDesktopBuildDockItems extends WP_UnitTestCase {
 			$this->make_menu_row( 'Settings', 'manage_options', 'options-general.php' ),
 		);
 
-		$items = wp_desktop_build_dock_items();
+		$items = wpdm_build_dock_items();
 
 		$titles = wp_list_pluck( $items, 'title' );
 		$this->assertContains( 'Read', $titles );
@@ -127,7 +127,7 @@ class Tests_DesktopMode_WpDesktopBuildDockItems extends WP_UnitTestCase {
 			),
 		);
 
-		$items = wp_desktop_build_dock_items();
+		$items = wpdm_build_dock_items();
 
 		$this->assertSame( 'Plugins', $items[0]['title'] );
 		$this->assertSame( 3, $items[0]['badge'] );
@@ -137,7 +137,7 @@ class Tests_DesktopMode_WpDesktopBuildDockItems extends WP_UnitTestCase {
 		global $menu;
 		$menu = array( $this->make_menu_row( 'Posts', 'edit_posts', 'edit.php' ) );
 
-		$items = wp_desktop_build_dock_items();
+		$items = wpdm_build_dock_items();
 		$this->assertSame( 0, $items[0]['badge'] );
 	}
 
@@ -148,7 +148,7 @@ class Tests_DesktopMode_WpDesktopBuildDockItems extends WP_UnitTestCase {
 			array( 'Custom', 'read', 'custom.php', '', '', 'menu-custom', '' ),
 		);
 
-		$items = wp_desktop_build_dock_items();
+		$items = wpdm_build_dock_items();
 		$this->assertSame( 'dashicons-admin-generic', $items[0]['icon'] );
 	}
 
@@ -160,7 +160,7 @@ class Tests_DesktopMode_WpDesktopBuildDockItems extends WP_UnitTestCase {
 			array( 'Add New', 'edit_posts', 'post-new.php' ),
 		);
 
-		$items = wp_desktop_build_dock_items();
+		$items = wpdm_build_dock_items();
 
 		$this->assertCount( 2, $items[0]['submenu'] );
 		$this->assertSame( 'All Posts', $items[0]['submenu'][0]['title'] );
@@ -178,7 +178,7 @@ class Tests_DesktopMode_WpDesktopBuildDockItems extends WP_UnitTestCase {
 			array( 'Add New', 'edit_posts', 'post-new.php' ),
 		);
 
-		$items = wp_desktop_build_dock_items();
+		$items = wpdm_build_dock_items();
 
 		$this->assertCount( 1, $items[0]['submenu'] );
 		$this->assertSame( 'All Posts', $items[0]['submenu'][0]['title'] );
@@ -192,7 +192,7 @@ class Tests_DesktopMode_WpDesktopBuildDockItems extends WP_UnitTestCase {
 			array( 'Customize', 'customize', 'customize.php', '', 'hide-if-no-customize' ),
 		);
 
-		$items = wp_desktop_build_dock_items();
+		$items = wpdm_build_dock_items();
 
 		$titles = wp_list_pluck( $items[0]['submenu'], 'title' );
 		$this->assertContains( 'Themes', $titles );
@@ -214,7 +214,7 @@ class Tests_DesktopMode_WpDesktopBuildDockItems extends WP_UnitTestCase {
 			2
 		);
 
-		$items = wp_desktop_build_dock_items();
+		$items = wpdm_build_dock_items();
 		$this->assertSame( 'POSTS', $items[0]['title'] );
 		$this->assertSame( 'edit.php', $items[0]['slug'] );
 	}
@@ -230,8 +230,145 @@ class Tests_DesktopMode_WpDesktopBuildDockItems extends WP_UnitTestCase {
 			}
 		);
 
-		$items = wp_desktop_build_dock_items();
+		$items = wpdm_build_dock_items();
 		$this->assertCount( 1, $items );
 		$this->assertSame( 'replaced', $items[0]['id'] );
+	}
+
+	/**
+	 * Dashicons values are passed through intact — these are CSS class
+	 * names baked into Core's menu config and safe to render.
+	 *
+	 * @covers ::wpdm_sanitize_dock_icon
+	 */
+	public function test_icon_dashicon_class_preserved() {
+		global $menu;
+		$menu = array( $this->make_menu_row( 'Posts', 'edit_posts', 'edit.php', '', '', '', 'dashicons-admin-post' ) );
+
+		$items = wpdm_build_dock_items();
+
+		$this->assertSame( 'dashicons-admin-post', $items[0]['icon'] );
+	}
+
+	/**
+	 * Falling back to the generic icon when the menu row doesn't supply
+	 * one (or supplies an empty string) keeps the shell renderable.
+	 *
+	 * @covers ::wpdm_sanitize_dock_icon
+	 */
+	public function test_icon_falls_back_to_generic_when_empty() {
+		global $menu;
+		$menu = array( $this->make_menu_row( 'Posts', 'edit_posts', 'edit.php', '', '', '', '' ) );
+
+		$items = wpdm_build_dock_items();
+
+		$this->assertSame( 'dashicons-admin-generic', $items[0]['icon'] );
+	}
+
+	/**
+	 * Core treats 'none' and 'div' as "no inline icon, style via CSS".
+	 * The shell has no special handling for them, so collapsing to the
+	 * generic dashicon gives a safe, visible fallback.
+	 *
+	 * @covers ::wpdm_sanitize_dock_icon
+	 */
+	public function test_icon_none_and_div_collapse_to_generic() {
+		global $menu;
+		$menu = array(
+			$this->make_menu_row( 'None', 'read', 'none.php', '', '', 'hook-none', 'none' ),
+			$this->make_menu_row( 'Div',  'read', 'div.php',  '', '', 'hook-div',  'div' ),
+		);
+
+		$items = wpdm_build_dock_items();
+
+		$this->assertSame( 'dashicons-admin-generic', $items[0]['icon'] );
+		$this->assertSame( 'dashicons-admin-generic', $items[1]['icon'] );
+	}
+
+	/**
+	 * http(s) URLs — e.g. a plugin bundling its own PNG — pass through
+	 * esc_url_raw so scheme-shaped bytes can't slip past.
+	 *
+	 * @covers ::wpdm_sanitize_dock_icon
+	 */
+	public function test_icon_http_url_preserved_after_sanitizing() {
+		global $menu;
+		$menu = array(
+			$this->make_menu_row( 'X', 'read', 'x.php', '', '', 'hook-x', 'https://example.com/icon.png' ),
+		);
+
+		$items = wpdm_build_dock_items();
+
+		$this->assertSame( 'https://example.com/icon.png', $items[0]['icon'] );
+	}
+
+	/**
+	 * Inline SVG data URIs are a legitimate Core pattern (see e.g. the
+	 * Site Health and Privacy menu icons). Allow them.
+	 *
+	 * @covers ::wpdm_sanitize_dock_icon
+	 */
+	public function test_icon_data_svg_preserved() {
+		global $menu;
+		$svg  = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciLz4=';
+		$menu = array( $this->make_menu_row( 'Y', 'read', 'y.php', '', '', 'hook-y', $svg ) );
+
+		$items = wpdm_build_dock_items();
+
+		$this->assertStringStartsWith( 'data:image/svg+xml', $items[0]['icon'] );
+	}
+
+	/**
+	 * A `javascript:` URL from a hostile plugin would execute as soon as
+	 * the shell wrote it to an `<img src>` or anchor. Must be dropped to
+	 * the fallback icon, not passed through.
+	 *
+	 * @covers ::wpdm_sanitize_dock_icon
+	 */
+	public function test_icon_javascript_url_is_rejected() {
+		global $menu;
+		$menu = array( $this->make_menu_row( 'Z', 'read', 'z.php', '', '', 'hook-z', 'javascript:alert(1)' ) );
+
+		$items = wpdm_build_dock_items();
+
+		$this->assertSame( 'dashicons-admin-generic', $items[0]['icon'] );
+	}
+
+	/**
+	 * Non-image data URIs (e.g. `data:text/html,<script>...`) are a
+	 * common XSS vector and must be rejected, even though `data:` itself
+	 * is allowed for the SVG case.
+	 *
+	 * @covers ::wpdm_sanitize_dock_icon
+	 */
+	public function test_icon_non_svg_data_uri_is_rejected() {
+		global $menu;
+		$menu = array(
+			$this->make_menu_row( 'A', 'read', 'a.php', '', '', 'hook-a', 'data:text/html,<script>alert(1)</script>' ),
+		);
+
+		$items = wpdm_build_dock_items();
+
+		$this->assertSame( 'dashicons-admin-generic', $items[0]['icon'] );
+	}
+
+	/**
+	 * A dashicons-prefixed value with embedded quotes would let a
+	 * hostile plugin break out of the class attribute on the shell side.
+	 * Strip everything that isn't a legal dashicon class character.
+	 *
+	 * @covers ::wpdm_sanitize_dock_icon
+	 */
+	public function test_icon_dashicon_breakout_attempt_is_scrubbed() {
+		global $menu;
+		$menu = array(
+			$this->make_menu_row( 'B', 'read', 'b.php', '', '', 'hook-b', 'dashicons-admin-post" onerror="alert(1)' ),
+		);
+
+		$items = wpdm_build_dock_items();
+
+		$this->assertSame( 'dashicons-admin-postonerroralert1', $items[0]['icon'] );
+		$this->assertStringNotContainsString( '"', $items[0]['icon'] );
+		$this->assertStringNotContainsString( ' ', $items[0]['icon'] );
 	}
 }

@@ -38,7 +38,7 @@ class Tests_DesktopMode_DesktopModeHooks extends WP_UnitTestCase {
 	}
 
 	/**
-	 * @covers ::wp_desktop_build_dock_items
+	 * @covers ::wpdm_build_dock_items
 	 */
 	public function test_wp_desktop_dock_items_filter_receives_array() {
 		global $menu;
@@ -55,14 +55,14 @@ class Tests_DesktopMode_DesktopModeHooks extends WP_UnitTestCase {
 			}
 		);
 
-		wp_desktop_build_dock_items();
+		wpdm_build_dock_items();
 
 		$this->assertIsArray( $received );
 		$this->assertCount( 1, $received );
 	}
 
 	/**
-	 * @covers ::wp_desktop_build_dock_items
+	 * @covers ::wpdm_build_dock_items
 	 */
 	public function test_wp_desktop_dock_item_filter_receives_item_and_slug() {
 		global $menu;
@@ -83,14 +83,14 @@ class Tests_DesktopMode_DesktopModeHooks extends WP_UnitTestCase {
 			2
 		);
 
-		wp_desktop_build_dock_items();
+		wpdm_build_dock_items();
 
 		$this->assertIsArray( $received_item );
 		$this->assertSame( 'edit.php', $received_slug );
 	}
 
 	/**
-	 * @covers ::wp_enqueue_desktop_mode_assets
+	 * @covers ::wpdm_enqueue_assets
 	 */
 	public function test_wp_desktop_shell_config_filter_fires_with_expected_keys() {
 		update_user_meta( self::$admin_id, 'wp_desktop_mode', '1' );
@@ -104,7 +104,7 @@ class Tests_DesktopMode_DesktopModeHooks extends WP_UnitTestCase {
 			}
 		);
 
-		wp_enqueue_desktop_mode_assets();
+		wpdm_enqueue_assets();
 
 		$this->assertIsArray( $received );
 		foreach ( array( 'currentPage', 'currentTitle', 'currentIcon', 'adminUrl', 'colorScheme', 'dockItems' ) as $key ) {
@@ -113,7 +113,7 @@ class Tests_DesktopMode_DesktopModeHooks extends WP_UnitTestCase {
 	}
 
 	/**
-	 * @covers ::wp_enqueue_desktop_mode_assets
+	 * @covers ::wpdm_enqueue_assets
 	 */
 	public function test_wp_desktop_mode_init_action_fires_when_assets_enqueue() {
 		update_user_meta( self::$admin_id, 'wp_desktop_mode', '1' );
@@ -126,13 +126,13 @@ class Tests_DesktopMode_DesktopModeHooks extends WP_UnitTestCase {
 			}
 		);
 
-		wp_enqueue_desktop_mode_assets();
+		wpdm_enqueue_assets();
 
 		$this->assertTrue( $fired );
 	}
 
 	/**
-	 * @covers ::wp_enqueue_desktop_mode_assets
+	 * @covers ::wpdm_enqueue_assets
 	 */
 	public function test_wp_desktop_mode_init_does_not_fire_when_mode_off() {
 		$fired = false;
@@ -143,13 +143,13 @@ class Tests_DesktopMode_DesktopModeHooks extends WP_UnitTestCase {
 			}
 		);
 
-		wp_enqueue_desktop_mode_assets();
+		wpdm_enqueue_assets();
 
 		$this->assertFalse( $fired );
 	}
 
 	/**
-	 * @covers ::wp_enqueue_desktop_mode_assets
+	 * @covers ::wpdm_enqueue_assets
 	 */
 	public function test_wp_desktop_chromeless_styles_action_fires_on_chromeless_request() {
 		update_user_meta( self::$admin_id, 'wp_desktop_mode', '1' );
@@ -163,13 +163,13 @@ class Tests_DesktopMode_DesktopModeHooks extends WP_UnitTestCase {
 			}
 		);
 
-		wp_enqueue_desktop_mode_assets();
+		wpdm_enqueue_assets();
 
 		$this->assertTrue( $fired );
 	}
 
 	/**
-	 * @covers ::wp_enqueue_desktop_mode_assets
+	 * @covers ::wpdm_enqueue_assets
 	 */
 	public function test_wp_desktop_chromeless_styles_does_not_fire_outside_chromeless() {
 		update_user_meta( self::$admin_id, 'wp_desktop_mode', '1' );
@@ -182,7 +182,7 @@ class Tests_DesktopMode_DesktopModeHooks extends WP_UnitTestCase {
 			}
 		);
 
-		wp_enqueue_desktop_mode_assets();
+		wpdm_enqueue_assets();
 
 		$this->assertFalse( $fired );
 	}

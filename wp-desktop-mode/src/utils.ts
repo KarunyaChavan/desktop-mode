@@ -5,30 +5,73 @@
  */
 
 /**
- * Derive a window ID from an admin page URL.
+ * Query args that meaningfully differentiate admin pages.
  *
- * Strips the admin base URL and special characters to produce
- * a clean slug suitable for use as a DOM id attribute.
- *
- * @param url      The full admin page URL.
- * @param adminUrl The base admin URL (e.g., 'http://localhost/wp-admin/').
- * @return A sanitized window ID string.
+ * `post_type` separates Posts from Pages (both are edit.php). `page` is
+ * the plugin-routed admin.php entry point. `taxonomy` distinguishes
+ * Categories from Tags (both are edit-tags.php). Everything else —
+ * pagination, nonces, action-feedback flags, our internal wp_desktop
+ * marker — is considered transient and stripped, so a direct-URL land
+ * and a dock click resolve to the same window ID.
  */
-export function deriveWindowId( url: string, adminUrl: string ): string {
-	let path = url.replace( adminUrl, '' );
+const IDENTITY_PARAMS: readonly string[] = [ 'post_type', 'page', 'taxonomy' ];
 
-	// Remove leading slash.
-	if ( path.startsWith( '/' ) ) {
-		path = path.substring( 1 );
-	}
-
-	// Replace special chars with dashes for a clean DOM id.
+/**
+ * Collapse a URL path (plus its significant query params) into a clean
+ * slug that is safe to use as a DOM id attribute.
+ */
+function slugify( path: string ): string {
 	return path
 		.replace( /\.php/g, '-php' )
 		.replace( /[?&=]/g, '-' )
 		.replace( /[^a-zA-Z0-9_-]/g, '' )
 		.replace( /-+/g, '-' )
 		.replace( /^-|-$/g, '' ) || 'index';
+}
+
+/**
+ * Derive a window ID from an admin page URL.
+ *
+ * The ID is the admin filename plus any query params that distinguish
+ * one admin page from another (see IDENTITY_PARAMS). Transient params —
+ * wp_desktop, _wpnonce, paged, message — are discarded so the same
+ * logical page always maps to the same window, whether reached via
+ * direct URL or via the dock.
+ *
+ * @param url      The full admin page URL.
+ * @param adminUrl The base admin URL (e.g., 'http://localhost/wp-admin/').
+ * @return A sanitized window ID string.
+ */
+export function deriveWindowId( url: string, adminUrl: string ): string {
+	let parsed: URL | null = null;
+	try {
+		parsed = new URL( url, adminUrl );
+	} catch ( err ) {
+		parsed = null;
+	}
+
+	if ( parsed ) {
+		const basePath = new URL( adminUrl ).pathname;
+		const filename = parsed.pathname.replace( basePath, '' ).replace( /^\/+/, '' );
+
+		const significant = new URLSearchParams();
+		for ( const key of IDENTITY_PARAMS ) {
+			const value = parsed.searchParams.get( key );
+			if ( value ) {
+				significant.set( key, value );
+			}
+		}
+
+		const query = significant.toString();
+		return slugify( query ? `${ filename }?${ query }` : filename );
+	}
+
+	// Fallback for inputs that don't parse as URLs.
+	let path = url.replace( adminUrl, '' );
+	if ( path.startsWith( '/' ) ) {
+		path = path.substring( 1 );
+	}
+	return slugify( path );
 }
 
 /**

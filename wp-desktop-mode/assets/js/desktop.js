@@ -60,7 +60,7 @@ var wpDesktop = function(exports) {
     btn.type = "button";
     btn.className = `wp-desktop-window__btn wp-desktop-window__btn--${variant}`;
     btn.setAttribute("aria-label", label);
-    btn.innerHTML = `<svg class="wp-desktop-window__btn-icon" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" focusable="false">${svgInner}</svg>`;
+    btn.innerHTML = `<svg class="wp-desktop-window__btn-icon" width="14" height="14" viewBox="0 0 12 12" aria-hidden="true" focusable="false">${svgInner}</svg>`;
     return btn;
   }
   function createWindowElement(config) {
@@ -75,6 +75,27 @@ var wpDesktop = function(exports) {
     el.style.height = `${config.height}px`;
     const titleBar = document.createElement("div");
     titleBar.className = "wp-desktop-window__titlebar";
+    let menuBtn = null;
+    let menuPanel = null;
+    if (config.multi) {
+      menuBtn = document.createElement("button");
+      menuBtn.type = "button";
+      menuBtn.className = "wp-desktop-window__btn wp-desktop-window__menu-btn";
+      menuBtn.setAttribute("aria-label", "Window actions");
+      menuBtn.setAttribute("aria-haspopup", "menu");
+      menuBtn.setAttribute("aria-expanded", "false");
+      menuBtn.innerHTML = '<svg class="wp-desktop-window__btn-icon" width="14" height="14" viewBox="0 0 12 12" aria-hidden="true" focusable="false"><circle cx="3" cy="6" r="1.2" fill="currentColor"/><circle cx="6" cy="6" r="1.2" fill="currentColor"/><circle cx="9" cy="6" r="1.2" fill="currentColor"/></svg>';
+      menuPanel = document.createElement("div");
+      menuPanel.className = "wp-desktop-window__menu-panel";
+      menuPanel.setAttribute("role", "menu");
+      menuPanel.hidden = true;
+      const openAnother = document.createElement("button");
+      openAnother.type = "button";
+      openAnother.className = "wp-desktop-window__menu-item wp-desktop-window__menu-item--open-another";
+      openAnother.setAttribute("role", "menuitem");
+      openAnother.innerHTML = `<span class="wp-desktop-window__menu-icon dashicons dashicons-plus-alt2" aria-hidden="true"></span><span class="wp-desktop-window__menu-label">Open another ${config.title}</span>`;
+      menuPanel.appendChild(openAnother);
+    }
     const iconEl = document.createElement("span");
     iconEl.className = `wp-desktop-window__icon dashicons ${sanitizeClassName(config.icon)}`;
     iconEl.setAttribute("aria-hidden", "true");
@@ -119,6 +140,10 @@ var wpDesktop = function(exports) {
     titleBar.appendChild(iconEl);
     titleBar.appendChild(titleEl);
     titleBar.appendChild(screenMeta);
+    if (menuBtn && menuPanel && menuPanel.children.length > 0) {
+      titleBar.appendChild(menuBtn);
+      titleBar.appendChild(menuPanel);
+    }
     titleBar.appendChild(controls);
     const body = document.createElement("div");
     body.className = "wp-desktop-window__body";
@@ -175,6 +200,8 @@ var wpDesktop = function(exports) {
       this.onFocusRequest = null;
       this.onClose = null;
       this.onMinimize = null;
+      this.onOpenAnother = null;
+      this.boundOnDocumentPointerDown = null;
       this.id = config.id;
       this.config = config;
       this.element = createWindowElement(config);
@@ -254,6 +281,36 @@ var wpDesktop = function(exports) {
       const btnFocus = this.element.querySelector(".wp-desktop-window__btn--focus");
       const btnDetach = this.element.querySelector(".wp-desktop-window__btn--detach");
       const btnClose = this.element.querySelector(".wp-desktop-window__btn--close");
+      const menuBtn = this.element.querySelector(
+        ".wp-desktop-window__menu-btn"
+      );
+      const menuPanel = this.element.querySelector(
+        ".wp-desktop-window__menu-panel"
+      );
+      if (menuBtn && menuPanel) {
+        menuBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          this.toggleActionsMenu();
+        });
+        const openAnother = menuPanel.querySelector(
+          ".wp-desktop-window__menu-item--open-another"
+        );
+        if (openAnother) {
+          openAnother.addEventListener("click", (e) => {
+            e.stopPropagation();
+            this.closeActionsMenu();
+            this.onOpenAnother?.(this);
+          });
+        }
+        menuPanel.addEventListener("keydown", (e) => {
+          const kev = e;
+          if (kev.key === "Escape") {
+            e.stopPropagation();
+            this.closeActionsMenu();
+            menuBtn.focus();
+          }
+        });
+      }
       btnMin.addEventListener("click", (e) => {
         e.stopPropagation();
         this.minimize();
@@ -404,7 +461,7 @@ var wpDesktop = function(exports) {
      */
     onDragStart(e) {
       const target = e.target;
-      if (target.closest(".wp-desktop-window__controls") || target.closest(".wp-desktop-window__screen-meta")) {
+      if (target.closest(".wp-desktop-window__controls") || target.closest(".wp-desktop-window__screen-meta") || target.closest(".wp-desktop-window__menu-btn") || target.closest(".wp-desktop-window__menu-panel")) {
         return;
       }
       if (this.state === "maximized") {
@@ -659,6 +716,91 @@ var wpDesktop = function(exports) {
       window.open(url.toString(), "_blank", "noopener");
     }
     /**
+     * Toggle the title-bar actions menu.
+     */
+    toggleActionsMenu() {
+      const panel = this.element.querySelector(
+        ".wp-desktop-window__menu-panel"
+      );
+      if (!panel) {
+        return;
+      }
+      if (panel.hidden) {
+        this.openActionsMenu();
+      } else {
+        this.closeActionsMenu();
+      }
+    }
+    /**
+     * Open the title-bar actions menu and wire an outside-click listener
+     * that dismisses it. The listener uses pointerdown (capture phase) so
+     * it fires before any click handler on the clicked target, which keeps
+     * dock/icon clicks outside the menu from opening-then-immediately-
+     * closing anything.
+     */
+    openActionsMenu() {
+      const panel = this.element.querySelector(
+        ".wp-desktop-window__menu-panel"
+      );
+      const btn = this.element.querySelector(
+        ".wp-desktop-window__menu-btn"
+      );
+      if (!panel || !btn) {
+        return;
+      }
+      panel.hidden = false;
+      btn.setAttribute("aria-expanded", "true");
+      if (!this.boundOnDocumentPointerDown) {
+        this.boundOnDocumentPointerDown = (e) => {
+          const target = e.target;
+          if (!target) {
+            return;
+          }
+          if (panel.contains(target) || btn.contains(target)) {
+            return;
+          }
+          this.closeActionsMenu();
+        };
+      }
+      setTimeout(() => {
+        if (this.boundOnDocumentPointerDown) {
+          document.addEventListener(
+            "pointerdown",
+            this.boundOnDocumentPointerDown,
+            true
+          );
+        }
+      }, 0);
+      const firstItem = panel.querySelector(
+        '[role="menuitem"]'
+      );
+      firstItem?.focus();
+    }
+    /**
+     * Close the title-bar actions menu.
+     */
+    closeActionsMenu() {
+      const panel = this.element.querySelector(
+        ".wp-desktop-window__menu-panel"
+      );
+      const btn = this.element.querySelector(
+        ".wp-desktop-window__menu-btn"
+      );
+      if (panel) {
+        panel.hidden = true;
+      }
+      if (btn) {
+        btn.setAttribute("aria-expanded", "false");
+      }
+      if (this.boundOnDocumentPointerDown) {
+        document.removeEventListener(
+          "pointerdown",
+          this.boundOnDocumentPointerDown,
+          true
+        );
+      }
+    }
+    /**
      * Close and destroy the window.
      *
      * Plays a subtle closing animation before removing the element.
@@ -677,6 +819,13 @@ var wpDesktop = function(exports) {
         }
         removed = true;
         window.removeEventListener("message", this.boundOnMessage);
+        if (this.boundOnDocumentPointerDown) {
+          document.removeEventListener(
+            "pointerdown",
+            this.boundOnDocumentPointerDown,
+            true
+          );
+        }
         this.element.remove();
         updateFullscreenBodyClass();
       };
@@ -712,10 +861,20 @@ var wpDesktop = function(exports) {
       this.desktop = desktop;
     }
     /**
-     * Open a new window or focus an existing one for the given page.
+     * Open a new window — or focus an existing one — for the given page.
+     *
+     * Matches any existing window sharing the same `baseId` (defaulting to
+     * the config's `id`). For singleton pages (Settings, Dashboard, …)
+     * `baseId === id`, so this behaves exactly like strict id matching.
+     * For multi pages, clicking the dock icon while a window is already
+     * open focuses the most-recent instance rather than creating a twin.
+     *
+     * To force a brand-new instance alongside an existing one, use
+     * {@link openNew}.
      */
     open(config) {
-      const existing = this.getById(config.id);
+      const baseId = config.baseId || config.id;
+      const existing = this.getByBaseId(baseId);
       if (existing) {
         this.focus(existing);
         if (existing.state === "minimized") {
@@ -723,6 +882,29 @@ var wpDesktop = function(exports) {
         }
         return existing;
       }
+      return this.createWindow({ ...config, baseId });
+    }
+    /**
+     * Open a brand-new window even if one is already open for this page.
+     *
+     * Only makes sense for pages flagged `multi` — invoked by the dock's
+     * "+" chip and the window title-bar's "Open another" action. The new
+     * instance gets a suffixed id (`${baseId}-2`, `${baseId}-3`, …) while
+     * keeping the same baseId so the dock still groups it with siblings.
+     *
+     * Finds the lowest unused suffix, so closing an intermediate instance
+     * and opening another won't reuse its id while it's still in-flight.
+     */
+    openNew(config) {
+      const baseId = config.baseId || config.id;
+      const nextId = this.nextInstanceId(baseId);
+      return this.createWindow({ ...config, id: nextId, baseId });
+    }
+    /**
+     * Build and mount a window element. Common tail shared by open() and
+     * openNew() — everything that happens once the id has been resolved.
+     */
+    createWindow(config) {
       const desktopRect = this.desktop.getBoundingClientRect();
       const defaultWidth = Math.min(Math.round(desktopRect.width * 0.8), 1200);
       const defaultHeight = Math.min(Math.round(desktopRect.height * 0.8), 800);
@@ -736,7 +918,8 @@ var wpDesktop = function(exports) {
         height: config.height ?? defaultHeight,
         minWidth: config.minWidth ?? 320,
         minHeight: config.minHeight ?? 200,
-        ...config
+        ...config,
+        baseId: config.baseId || config.id
       };
       this.cascadeIndex++;
       const win = new Window(fullConfig);
@@ -748,6 +931,17 @@ var wpDesktop = function(exports) {
           this.focus(visible[visible.length - 1]);
         }
       };
+      win.onOpenAnother = (w) => {
+        this.openNew({
+          id: w.config.baseId || w.id,
+          baseId: w.config.baseId || w.id,
+          url: w.config.url,
+          title: w.config.title,
+          icon: w.config.icon,
+          submenu: w.config.submenu,
+          multi: true
+        });
+      };
       this.stack.push(win);
       this.desktop.appendChild(win.element);
       this.focus(win);
@@ -755,6 +949,22 @@ var wpDesktop = function(exports) {
         detail: { windowId: win.id, page: config.url, title: config.title }
       }));
       return win;
+    }
+    /**
+     * Find the next unused suffixed id for a given baseId. Prefers the
+     * bare baseId itself if free (user closed the original), then walks
+     * `-2`, `-3`, … until it lands on one not currently in the stack.
+     */
+    nextInstanceId(baseId) {
+      const taken = new Set(this.stack.map((w) => w.id));
+      if (!taken.has(baseId)) {
+        return baseId;
+      }
+      let n = 2;
+      while (taken.has(`${baseId}-${n}`)) {
+        n++;
+      }
+      return `${baseId}-${n}`;
     }
     /**
      * Focus a window: bring it to top of z-stack.
@@ -795,6 +1005,42 @@ var wpDesktop = function(exports) {
       return this.stack.find((w) => w.id === id);
     }
     /**
+     * Get the most-recently-focused window for a given baseId.
+     *
+     * Multi-instance windows share a baseId; the stack is ordered bottom
+     * to top by focus, so iterating from the end finds the best candidate
+     * to bring forward when the user re-clicks the dock icon.
+     */
+    getByBaseId(baseId) {
+      for (let i = this.stack.length - 1; i >= 0; i--) {
+        const w = this.stack[i];
+        if ((w.config.baseId || w.id) === baseId) {
+          return w;
+        }
+      }
+      return void 0;
+    }
+    /**
+     * Get every open window sharing the given baseId, ordered by
+     * instance slot (bare baseId first, then `-2`, `-3`, …) rather than
+     * z-order — so the dock's instance rail keeps a stable left-to-right
+     * order even as the user focuses between windows.
+     */
+    getAllByBaseId(baseId) {
+      const instanceSlot = (id) => {
+        if (id === baseId) {
+          return 1;
+        }
+        const prefix = `${baseId}-`;
+        if (id.startsWith(prefix)) {
+          const n = parseInt(id.slice(prefix.length), 10);
+          return Number.isFinite(n) ? n : 999;
+        }
+        return 999;
+      };
+      return this.stack.filter((w) => (w.config.baseId || w.id) === baseId).sort((a, b) => instanceSlot(a.id) - instanceSlot(b.id));
+    }
+    /**
      * Get all open windows.
      */
     getAll() {
@@ -819,6 +1065,7 @@ var wpDesktop = function(exports) {
         const snap = w.getSnapshot();
         return {
           id: w.id,
+          baseId: w.config.baseId || w.id,
           url: w.getCurrentUrl(),
           title: w.config.title,
           icon: w.config.icon,
@@ -862,28 +1109,69 @@ var wpDesktop = function(exports) {
       }
     }
     /**
-     * Create a single dock icon button.
+     * Create a single dock icon tile.
+     *
+     * A tile is a vertical stack: the primary icon button, plus — for
+     * multi-capable pages — an instance rail rendered below it showing one
+     * dot per open window and a trailing "+" to open another. The rail is
+     * hydrated by {@link updateActiveStates}; here we only place the empty
+     * container so the DOM is stable.
      */
     createItemButton(item) {
-      const btn = document.createElement("button");
-      btn.className = "wp-desktop-dock__item";
-      btn.setAttribute("type", "button");
-      btn.setAttribute("aria-label", item.title);
-      btn.dataset.menuSlug = item.id;
+      const tile = document.createElement("div");
+      tile.className = "wp-desktop-dock__item";
+      tile.dataset.menuSlug = item.id;
+      if (item.multi) {
+        tile.classList.add("wp-desktop-dock__item--multi");
+      }
+      const primary = document.createElement("button");
+      primary.className = "wp-desktop-dock__item-primary";
+      primary.setAttribute("type", "button");
+      primary.setAttribute("aria-label", item.title);
       const iconEl = this.createIcon(item.icon);
-      btn.appendChild(iconEl);
+      primary.appendChild(iconEl);
       if (item.badge > 0) {
         const badge = document.createElement("span");
         badge.className = "wp-desktop-dock__badge";
         badge.textContent = String(item.badge);
         badge.setAttribute("aria-label", `${item.badge} updates`);
-        btn.appendChild(badge);
+        primary.appendChild(badge);
       }
-      btn.addEventListener("click", () => {
+      primary.addEventListener("click", () => {
         this.openPage(item);
       });
-      this.bindTooltip(btn, item.title);
-      return btn;
+      tile.appendChild(primary);
+      if (item.multi) {
+        const addBtn = document.createElement("button");
+        addBtn.type = "button";
+        addBtn.className = "wp-desktop-dock__item-new";
+        addBtn.hidden = true;
+        addBtn.setAttribute("aria-label", `Open another ${item.title}`);
+        addBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M6 2v8M2 6h8" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/></svg>';
+        addBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          this.openNewInstance(item);
+        });
+        addBtn.addEventListener("pointerenter", () => {
+          const rect = addBtn.getBoundingClientRect();
+          this.tooltip.textContent = `Open new ${item.title}`;
+          this.tooltip.style.top = `${rect.top + rect.height / 2 - 14}px`;
+          this.tooltip.classList.add("wp-desktop-dock__tooltip--visible");
+        });
+        addBtn.addEventListener("pointerleave", (e) => {
+          const next = e.relatedTarget;
+          if (next && tile.contains(next)) {
+            const rect = tile.getBoundingClientRect();
+            this.tooltip.textContent = item.title;
+            this.tooltip.style.top = `${rect.top + rect.height / 2 - 14}px`;
+            return;
+          }
+          this.tooltip.classList.remove("wp-desktop-dock__tooltip--visible");
+        });
+        tile.appendChild(addBtn);
+      }
+      this.bindTooltip(tile, item.title);
+      return tile;
     }
     /**
      * Create the icon element based on the icon type.
@@ -939,13 +1227,31 @@ var wpDesktop = function(exports) {
      * Open an admin page in a window (or focus if already open).
      */
     openPage(item) {
-      const windowId = this.deriveWindowId(item.url);
+      const baseId = this.deriveWindowId(item.url);
       this.windowManager.open({
-        id: windowId,
+        id: baseId,
+        baseId,
         url: item.url,
         title: item.title,
         icon: item.icon.startsWith("dashicons-") ? item.icon : "dashicons-admin-generic",
-        submenu: item.submenu
+        submenu: item.submenu,
+        multi: !!item.multi
+      });
+    }
+    /**
+     * Open a brand-new instance of a multi-capable page, even if one is
+     * already open. Invoked by the "+" chip on the dock icon.
+     */
+    openNewInstance(item) {
+      const baseId = this.deriveWindowId(item.url);
+      this.windowManager.openNew({
+        id: baseId,
+        baseId,
+        url: item.url,
+        title: item.title,
+        icon: item.icon.startsWith("dashicons-") ? item.icon : "dashicons-admin-generic",
+        submenu: item.submenu,
+        multi: true
       });
     }
     /**
@@ -969,22 +1275,36 @@ var wpDesktop = function(exports) {
       });
     }
     /**
-     * Update the active/focused CSS classes on dock items based on open windows.
+     * Update the active/focused classes and multi-instance rail on every
+     * dock item in response to a window lifecycle event.
+     *
+     * For singletons the rail is absent; "active" means "the one window
+     * is open". For multi-capable items, active means "≥1 instance is
+     * open" and focused means "the focused window belongs to this item".
      */
     updateActiveStates() {
-      const openWindows = this.windowManager.getAll();
       const focused = this.windowManager.getFocused();
-      const openIds = new Set(openWindows.map((w) => w.id));
+      const focusedBaseId = focused ? focused.config.baseId || focused.id : null;
       for (const item of this.items) {
-        const btn = this.itemElements.get(item.id);
-        if (!btn) {
+        const tile = this.itemElements.get(item.id);
+        if (!tile) {
           continue;
         }
-        const windowId = this.deriveWindowId(item.url);
-        const isOpen = openIds.has(windowId);
-        const isFocused = focused && focused.id === windowId;
-        btn.classList.toggle("wp-desktop-dock__item--active", isOpen);
-        btn.classList.toggle("wp-desktop-dock__item--focused", !!isFocused);
+        const baseId = this.deriveWindowId(item.url);
+        const instances = item.multi ? this.windowManager.getAllByBaseId(baseId) : [];
+        const singleOpen = !item.multi && !!this.windowManager.getById(baseId);
+        const isOpen = item.multi ? instances.length > 0 : singleOpen;
+        const isFocused = focusedBaseId === baseId;
+        tile.classList.toggle("wp-desktop-dock__item--active", isOpen);
+        tile.classList.toggle("wp-desktop-dock__item--focused", isFocused);
+        if (item.multi) {
+          const addBtn = tile.querySelector(
+            ".wp-desktop-dock__item-new"
+          );
+          if (addBtn) {
+            addBtn.hidden = instances.length === 0;
+          }
+        }
       }
     }
   }
@@ -1009,9 +1329,8 @@ var wpDesktop = function(exports) {
     const hasSession = !!(config.session && config.session.windows && config.session.windows.length > 0);
     if (hasSession) {
       restoreSession(manager, config, desktopArea);
-    } else {
-      openCurrentPage(manager, config);
     }
+    openCurrentPage(manager, config);
     const saveSession = createSessionSaver(manager, config);
     wireSessionEvents(saveSession);
     window.wp = window.wp || {};
@@ -1020,6 +1339,7 @@ var wpDesktop = function(exports) {
       dock,
       saveSession
     };
+    bindTopWindowLinkInterceptor(manager, config);
     desktopArea.addEventListener("click", (e) => {
       if (e.target !== desktopArea) {
         return;
@@ -1049,9 +1369,11 @@ var wpDesktop = function(exports) {
     const rect = desktopArea.getBoundingClientRect();
     for (const win of config.session.windows) {
       const clamped = clampGeometryToViewport(win, rect);
-      const submenu = findSubmenuForUrl(win.url, config);
+      const dockEntry = findDockEntryForUrl(win.url, config);
       manager.open({
         id: win.id,
+        baseId: win.baseId || win.id,
+        multi: !!dockEntry?.multi,
         url: win.url,
         title: win.title,
         icon: win.icon || "dashicons-admin-generic",
@@ -1060,7 +1382,7 @@ var wpDesktop = function(exports) {
         width: clamped.width,
         height: clamped.height,
         initialState: win.state,
-        submenu
+        submenu: dockEntry?.submenu
       });
     }
     if (config.session.focused) {
@@ -1072,23 +1394,99 @@ var wpDesktop = function(exports) {
   }
   function openCurrentPage(manager, config) {
     const windowId = deriveWindowId(config.currentPage, config.adminUrl);
-    const submenu = findSubmenuForUrl(config.currentPage, config);
+    const dockEntry = findDockEntryForUrl(config.currentPage, config);
     manager.open({
       id: windowId,
+      baseId: windowId,
+      multi: !!dockEntry?.multi,
       url: config.currentPage,
       title: config.currentTitle,
       icon: config.currentIcon,
-      submenu
+      submenu: dockEntry?.submenu
     });
   }
-  function findSubmenuForUrl(url, config) {
+  function bindTopWindowLinkInterceptor(manager, config) {
+    document.addEventListener(
+      "click",
+      (e) => {
+        if (e.defaultPrevented) {
+          return;
+        }
+        if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
+          return;
+        }
+        const target = e.target;
+        const link = target && target.closest ? target.closest("a[href]") : null;
+        if (!link) {
+          return;
+        }
+        const anchor = link;
+        const linkTarget = anchor.getAttribute("target");
+        if (linkTarget && linkTarget !== "" && linkTarget !== "_self") {
+          return;
+        }
+        if (anchor.hasAttribute("download")) {
+          return;
+        }
+        const rawHref = anchor.getAttribute("href");
+        if (!rawHref || rawHref.charAt(0) === "#") {
+          return;
+        }
+        if (/^(mailto:|tel:|javascript:|data:)/i.test(rawHref)) {
+          return;
+        }
+        let url;
+        try {
+          url = new URL(rawHref, window.location.href);
+        } catch {
+          return;
+        }
+        if (url.origin !== window.location.origin) {
+          return;
+        }
+        let adminPath;
+        try {
+          adminPath = new URL(config.adminUrl).pathname;
+        } catch {
+          adminPath = "/wp-admin/";
+        }
+        if (!url.pathname.startsWith(adminPath)) {
+          return;
+        }
+        if (/\/(admin-post|admin-ajax)\.php$/.test(url.pathname)) {
+          return;
+        }
+        if (url.searchParams.has("action") && url.searchParams.get("action") === "logout") {
+          return;
+        }
+        if (url.searchParams.has("wp_desktop_classic")) {
+          return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        const windowId = deriveWindowId(url.href, config.adminUrl);
+        const dockEntry = findDockEntryForUrl(url.href, config);
+        const fallbackTitle = (anchor.textContent || "").trim() || dockEntry?.title || "";
+        manager.open({
+          id: windowId,
+          baseId: windowId,
+          multi: !!dockEntry?.multi,
+          url: url.href,
+          title: dockEntry?.title || fallbackTitle,
+          icon: dockEntry?.icon || "dashicons-admin-generic",
+          submenu: dockEntry?.submenu
+        });
+      },
+      true
+    );
+  }
+  function findDockEntryForUrl(url, config) {
     const windowId = deriveWindowId(url, config.adminUrl);
-    const item = (config.dockItems || []).find(
+    return (config.dockItems || []).find(
       (i) => deriveWindowId(i.url, config.adminUrl) === windowId || (i.submenu || []).some(
         (s) => deriveWindowId(s.url, config.adminUrl) === windowId
       )
     );
-    return item?.submenu;
   }
   function clampGeometryToViewport(win, rect) {
     const maxW = Math.max(200, rect.width - VIEWPORT_CLAMP_MARGIN * 2);

@@ -21,18 +21,33 @@
 	backdrop-filter: blur(20px);
 	-webkit-backdrop-filter: blur(20px);
 	border-inline-end: 1px solid var(--wp-desktop-dock-border);
-	overflow-y: auto;
-	overflow-x: hidden;
-	scrollbar-width: none;
+	/*
+	 * overflow: visible so the per-tile "Open another" chip can float
+	 * just past the dock's inline-end border. Typical admin menus fit
+	 * the viewport height vertically without a scrollbar; if this ever
+	 * needs to scroll in practice, wrap tiles in a scroll container
+	 * rather than re-clipping the overflow here.
+	 */
+	overflow: visible;
 	flex-shrink: 0;
 }
 
-.wp-desktop-dock::-webkit-scrollbar {
-	display: none;
+/*
+ * Dock tile — a vertical stack: primary icon button (fixed 40×40) on
+ * top, optional instance rail below. Height is auto so multi tiles
+ * grow by a few px when windows are open and shrink back when closed.
+ */
+.wp-desktop-dock__item {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	width: 40px;
+	flex-shrink: 0;
 }
 
-/* Dock icon button. */
-.wp-desktop-dock__item {
+/* Primary icon button — opens or focuses the page. */
+.wp-desktop-dock__item-primary {
 	position: relative;
 	display: flex;
 	align-items: center;
@@ -46,17 +61,66 @@
 	background: transparent;
 	color: rgba(255, 255, 255, 0.7);
 	transition: background-color 0.15s ease, transform 0.15s ease, color 0.15s ease;
-	flex-shrink: 0;
 }
 
-.wp-desktop-dock__item:hover {
+.wp-desktop-dock__item-primary:hover {
 	background: rgba(255, 255, 255, 0.15);
 	color: #fff;
 	transform: scale(1.1);
 }
 
-.wp-desktop-dock__item:active {
+.wp-desktop-dock__item-primary:active {
 	transform: scale(0.95);
+}
+
+.wp-desktop-dock__item-primary:focus-visible {
+	outline: 2px solid rgba(255, 255, 255, 0.7);
+	outline-offset: 2px;
+}
+
+/*
+ * "Open another" floating chip — sits off the right edge of the tile,
+ * outside the icon so it doesn't crowd the notification badge or
+ * compete with the icon glyph. Only rendered when ≥1 instance of a
+ * multi-capable page is open (no instance → no need to open another).
+ *
+ * Positioned absolutely so it floats alongside the dock without
+ * widening the tile column. The dock's container uses `overflow:
+ * visible` so this chip can extend past the dock's inline-end border.
+ */
+.wp-desktop-dock__item-new {
+	position: absolute;
+	top: 50%;
+	inset-inline-end: -13px;
+	transform: translateY(-50%);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 20px;
+	padding: 0;
+	border: 2px solid var(--wp-desktop-dock-bg, rgba(0, 0, 0, 0.4));
+	border-radius: 50%;
+	background: var(--wp-admin-theme-color, #2271b1);
+	color: #fff;
+	cursor: pointer;
+	transition: background-color 0.15s ease, transform 0.15s ease;
+	z-index: 1;
+}
+
+.wp-desktop-dock__item-new[hidden] {
+	display: none;
+}
+
+.wp-desktop-dock__item-new:hover {
+	background: #fff;
+	color: var(--wp-admin-theme-color, #2271b1);
+	transform: translateY(-50%) scale(1.1);
+}
+
+.wp-desktop-dock__item-new:focus-visible {
+	outline: 2px solid rgba(255, 255, 255, 0.85);
+	outline-offset: 2px;
 }
 
 /* Active indicator — dot on the left edge when this page has an open window. */
@@ -103,7 +167,7 @@
 	transition: opacity 0.15s ease;
 }
 
-.wp-desktop-dock__item:hover img.wp-desktop-dock__item-img {
+.wp-desktop-dock__item-primary:hover img.wp-desktop-dock__item-img {
 	opacity: 1;
 }
 

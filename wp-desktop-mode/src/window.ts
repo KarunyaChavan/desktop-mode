@@ -75,7 +75,7 @@ function createControlButton( variant: string, label: string, svgInner: string )
 	btn.type = 'button';
 	btn.className = `wp-desktop-window__btn wp-desktop-window__btn--${ variant }`;
 	btn.setAttribute( 'aria-label', label );
-	btn.innerHTML = `<svg class="wp-desktop-window__btn-icon" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" focusable="false">${ svgInner }</svg>`;
+	btn.innerHTML = `<svg class="wp-desktop-window__btn-icon" width="14" height="14" viewBox="0 0 12 12" aria-hidden="true" focusable="false">${ svgInner }</svg>`;
 	return btn;
 }
 
@@ -95,6 +95,41 @@ function createWindowElement( config: WindowConfig ): HTMLElement {
 
 	const titleBar = document.createElement( 'div' );
 	titleBar.className = 'wp-desktop-window__titlebar';
+
+	// Leading menu button — sits before the icon + title. Visible only on
+	// multi-capable windows for now (singletons have no items to offer
+	// yet). Future: window-management verbs like "Tile left", "Duplicate",
+	// "Detach to tab" migrate here so the title bar stops growing controls.
+	let menuBtn: HTMLButtonElement | null = null;
+	let menuPanel: HTMLElement | null = null;
+	if ( config.multi ) {
+		menuBtn = document.createElement( 'button' );
+		menuBtn.type = 'button';
+		menuBtn.className = 'wp-desktop-window__btn wp-desktop-window__menu-btn';
+		menuBtn.setAttribute( 'aria-label', 'Window actions' );
+		menuBtn.setAttribute( 'aria-haspopup', 'menu' );
+		menuBtn.setAttribute( 'aria-expanded', 'false' );
+		menuBtn.innerHTML =
+			'<svg class="wp-desktop-window__btn-icon" width="14" height="14" viewBox="0 0 12 12" aria-hidden="true" focusable="false">' +
+			'<circle cx="3" cy="6" r="1.2" fill="currentColor"/>' +
+			'<circle cx="6" cy="6" r="1.2" fill="currentColor"/>' +
+			'<circle cx="9" cy="6" r="1.2" fill="currentColor"/>' +
+			'</svg>';
+
+		menuPanel = document.createElement( 'div' );
+		menuPanel.className = 'wp-desktop-window__menu-panel';
+		menuPanel.setAttribute( 'role', 'menu' );
+		menuPanel.hidden = true;
+
+		const openAnother = document.createElement( 'button' );
+		openAnother.type = 'button';
+		openAnother.className = 'wp-desktop-window__menu-item wp-desktop-window__menu-item--open-another';
+		openAnother.setAttribute( 'role', 'menuitem' );
+		openAnother.innerHTML =
+			'<span class="wp-desktop-window__menu-icon dashicons dashicons-plus-alt2" aria-hidden="true"></span>' +
+			`<span class="wp-desktop-window__menu-label">Open another ${ config.title }</span>`;
+		menuPanel.appendChild( openAnother );
+	}
 
 	const iconEl = document.createElement( 'span' );
 	iconEl.className = `wp-desktop-window__icon dashicons ${ sanitizeClassName( config.icon ) }`;
@@ -152,6 +187,15 @@ function createWindowElement( config: WindowConfig ): HTMLElement {
 	titleBar.appendChild( iconEl );
 	titleBar.appendChild( titleEl );
 	titleBar.appendChild( screenMeta );
+	// ⋯ menu sits as the last item before the controls divider so it
+	// groups with the page-level chrome (screen options, help) rather
+	// than the window chrome (minimize, close, …). Only appended when
+	// the menu actually has items to offer — otherwise the button
+	// would open an empty dropdown.
+	if ( menuBtn && menuPanel && menuPanel.children.length > 0 ) {
+		titleBar.appendChild( menuBtn );
+		titleBar.appendChild( menuPanel );
+	}
 	titleBar.appendChild( controls );
 
 	const body = document.createElement( 'div' );
@@ -247,6 +291,14 @@ export class Window {
 	public onFocusRequest: ( ( win: Window ) => void ) | null = null;
 	public onClose: ( ( win: Window ) => void ) | null = null;
 	public onMinimize: ( ( win: Window ) => void ) | null = null;
+	/**
+	 * Invoked when the title-bar menu's "Open another" item is clicked.
+	 * The window manager wires this to `openNew()`.
+	 */
+	public onOpenAnother: ( ( win: Window ) => void ) | null = null;
+
+	/** Bound handler used to close the actions menu on outside clicks. */
+	private boundOnDocumentPointerDown: ( ( e: PointerEvent ) => void ) | null = null;
 
 	constructor( config: WindowConfig ) {
 		this.id = config.id;
@@ -356,6 +408,41 @@ export class Window {
 		const btnFocus = this.element.querySelector( '.wp-desktop-window__btn--focus' ) as HTMLElement;
 		const btnDetach = this.element.querySelector( '.wp-desktop-window__btn--detach' ) as HTMLElement;
 		const btnClose = this.element.querySelector( '.wp-desktop-window__btn--close' ) as HTMLElement;
+
+		// Title-bar actions menu (multi-capable windows only — button
+		// absent for singletons).
+		const menuBtn = this.element.querySelector(
+			'.wp-desktop-window__menu-btn'
+		) as HTMLButtonElement | null;
+		const menuPanel = this.element.querySelector(
+			'.wp-desktop-window__menu-panel'
+		) as HTMLElement | null;
+		if ( menuBtn && menuPanel ) {
+			menuBtn.addEventListener( 'click', ( e: Event ) => {
+				e.stopPropagation();
+				this.toggleActionsMenu();
+			} );
+			const openAnother = menuPanel.querySelector(
+				'.wp-desktop-window__menu-item--open-another'
+			);
+			if ( openAnother ) {
+				openAnother.addEventListener( 'click', ( e: Event ) => {
+					e.stopPropagation();
+					this.closeActionsMenu();
+					this.onOpenAnother?.( this );
+				} );
+			}
+			// Escape closes the menu, returning focus to the trigger so
+			// keyboard users don't lose their place.
+			menuPanel.addEventListener( 'keydown', ( e: Event ) => {
+				const kev = e as KeyboardEvent;
+				if ( kev.key === 'Escape' ) {
+					e.stopPropagation();
+					this.closeActionsMenu();
+					menuBtn.focus();
+				}
+			} );
+		}
 
 		btnMin.addEventListener( 'click', ( e: Event ) => {
 			e.stopPropagation();
@@ -537,7 +624,12 @@ export class Window {
 	private onDragStart( e: PointerEvent ): void {
 		// Only drag from the title bar background, not from any buttons.
 		const target = e.target as HTMLElement;
-		if ( target.closest( '.wp-desktop-window__controls' ) || target.closest( '.wp-desktop-window__screen-meta' ) ) {
+		if (
+			target.closest( '.wp-desktop-window__controls' ) ||
+			target.closest( '.wp-desktop-window__screen-meta' ) ||
+			target.closest( '.wp-desktop-window__menu-btn' ) ||
+			target.closest( '.wp-desktop-window__menu-panel' )
+		) {
 			return;
 		}
 
@@ -833,6 +925,99 @@ export class Window {
 	}
 
 	/**
+	 * Toggle the title-bar actions menu.
+	 */
+	private toggleActionsMenu(): void {
+		const panel = this.element.querySelector(
+			'.wp-desktop-window__menu-panel'
+		) as HTMLElement | null;
+		if ( ! panel ) {
+			return;
+		}
+		if ( panel.hidden ) {
+			this.openActionsMenu();
+		} else {
+			this.closeActionsMenu();
+		}
+	}
+
+	/**
+	 * Open the title-bar actions menu and wire an outside-click listener
+	 * that dismisses it. The listener uses pointerdown (capture phase) so
+	 * it fires before any click handler on the clicked target, which keeps
+	 * dock/icon clicks outside the menu from opening-then-immediately-
+	 * closing anything.
+	 */
+	private openActionsMenu(): void {
+		const panel = this.element.querySelector(
+			'.wp-desktop-window__menu-panel'
+		) as HTMLElement | null;
+		const btn = this.element.querySelector(
+			'.wp-desktop-window__menu-btn'
+		) as HTMLButtonElement | null;
+		if ( ! panel || ! btn ) {
+			return;
+		}
+		panel.hidden = false;
+		btn.setAttribute( 'aria-expanded', 'true' );
+
+		if ( ! this.boundOnDocumentPointerDown ) {
+			this.boundOnDocumentPointerDown = ( e: PointerEvent ) => {
+				const target = e.target as Node | null;
+				if ( ! target ) {
+					return;
+				}
+				if ( panel.contains( target ) || btn.contains( target ) ) {
+					return;
+				}
+				this.closeActionsMenu();
+			};
+		}
+		// Attach on the next microtask so the same pointerdown that opened
+		// the menu (bubbling up from the button) doesn't immediately close it.
+		setTimeout( () => {
+			if ( this.boundOnDocumentPointerDown ) {
+				document.addEventListener(
+					'pointerdown',
+					this.boundOnDocumentPointerDown,
+					true
+				);
+			}
+		}, 0 );
+
+		// Move focus into the panel for keyboard navigation.
+		const firstItem = panel.querySelector<HTMLElement>(
+			'[role="menuitem"]'
+		);
+		firstItem?.focus();
+	}
+
+	/**
+	 * Close the title-bar actions menu.
+	 */
+	private closeActionsMenu(): void {
+		const panel = this.element.querySelector(
+			'.wp-desktop-window__menu-panel'
+		) as HTMLElement | null;
+		const btn = this.element.querySelector(
+			'.wp-desktop-window__menu-btn'
+		) as HTMLButtonElement | null;
+		if ( panel ) {
+			panel.hidden = true;
+		}
+		if ( btn ) {
+			btn.setAttribute( 'aria-expanded', 'false' );
+		}
+		if ( this.boundOnDocumentPointerDown ) {
+			document.removeEventListener(
+				'pointerdown',
+				this.boundOnDocumentPointerDown,
+				true
+			);
+		}
+	}
+
+	/**
 	 * Close and destroy the window.
 	 *
 	 * Plays a subtle closing animation before removing the element.
@@ -855,6 +1040,13 @@ export class Window {
 			}
 			removed = true;
 			window.removeEventListener( 'message', this.boundOnMessage );
+			if ( this.boundOnDocumentPointerDown ) {
+				document.removeEventListener(
+					'pointerdown',
+					this.boundOnDocumentPointerDown,
+					true
+				);
+			}
 			this.element.remove();
 			// If this was the last fullscreen window, drop the body class so
 			// the admin bar and shell top-offset come back cleanly.

@@ -138,7 +138,7 @@ function wpdm_enqueue_assets() {
 			'currentTitle' => wp_strip_all_tags( $title ),
 			'currentIcon'  => sanitize_html_class( $menu_icon ),
 			'adminUrl'     => esc_url( admin_url() ),
-			'colorScheme'  => sanitize_html_class( get_user_option( 'admin_color' ), 'modern' ),
+			'colorScheme'  => sanitize_html_class( get_user_option( 'admin_color' ), 'fresh' ),
 			'dockItems'    => $dock_items,
 			'session'      => wpdm_get_session( get_current_user_id() ),
 			'sessionUrl'   => esc_url_raw( rest_url( 'wp-desktop/v1/session' ) ),
@@ -181,8 +181,14 @@ function wpdm_render_shell() {
 	 * @since 0.1.0
 	 */
 	do_action( 'wp_desktop_shell_before' );
+
+	// Stamp the user's admin color scheme onto the shell root so the
+	// variables.css per-scheme selectors kick in before first paint —
+	// doing this from JS on init() would show the default palette for a
+	// frame before swapping.
+	$scheme = sanitize_html_class( get_user_option( 'admin_color' ), 'fresh' );
 	?>
-	<div id="wp-desktop-shell" class="wp-desktop-shell" role="application" aria-label="<?php esc_attr_e( 'Desktop shell', 'wp-desktop-mode' ); ?>">
+	<div id="wp-desktop-shell" class="wp-desktop-shell" data-wp-desktop-scheme="<?php echo esc_attr( $scheme ); ?>" role="application" aria-label="<?php esc_attr_e( 'Desktop shell', 'wp-desktop-mode' ); ?>">
 		<div class="wp-desktop-shell__body">
 			<nav id="wp-desktop-dock" class="wp-desktop-dock" role="toolbar" aria-label="<?php esc_attr_e( 'Admin navigation', 'wp-desktop-mode' ); ?>"></nav>
 			<div id="wp-desktop-area" class="wp-desktop-area wp-desktop-area--with-dock"></div>

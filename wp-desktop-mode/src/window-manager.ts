@@ -35,11 +35,20 @@ export class WindowManager {
 	}
 
 	/**
-	 * Open a new window or focus an existing one for the given page.
+	 * Open a new window — or focus an existing one — for the given page.
+	 *
+	 * Matches any existing window sharing the same `baseId` (defaulting to
+	 * the config's `id`). For singleton pages (Settings, Dashboard, …)
+	 * `baseId === id`, so this behaves exactly like strict id matching.
+	 * For multi pages, clicking the dock icon while a window is already
+	 * open focuses the most-recent instance rather than creating a twin.
+	 *
+	 * To force a brand-new instance alongside an existing one, use
+	 * {@link openNew}.
 	 */
 	public open( config: Partial<WindowConfig> & { id: string; url: string; title: string } ): Window {
-		// If a window for this page already exists, focus it.
-		const existing = this.getById( config.id );
+		const baseId = config.baseId || config.id;
+		const existing = this.getByBaseId( baseId );
 		if ( existing ) {
 			this.focus( existing );
 			if ( existing.state === 'minimized' ) {
@@ -48,7 +57,33 @@ export class WindowManager {
 			return existing;
 		}
 
-		// Calculate default position and size.
+		return this.createWindow( { ...config, baseId } );
+	}
+
+	/**
+	 * Open a brand-new window even if one is already open for this page.
+	 *
+	 * Only makes sense for pages flagged `multi` — invoked by the dock's
+	 * "+" chip and the window title-bar's "Open another" action. The new
+	 * instance gets a suffixed id (`${baseId}-2`, `${baseId}-3`, …) while
+	 * keeping the same baseId so the dock still groups it with siblings.
+	 *
+	 * Finds the lowest unused suffix, so closing an intermediate instance
+	 * and opening another won't reuse its id while it's still in-flight.
+	 */
+	public openNew( config: Partial<WindowConfig> & { id: string; url: string; title: string } ): Window {
+		const baseId = config.baseId || config.id;
+		const nextId = this.nextInstanceId( baseId );
+		return this.createWindow( { ...config, id: nextId, baseId } );
+	}
+
+	/**
+	 * Build and mount a window element. Common tail shared by open() and
+	 * openNew() — everything that happens once the id has been resolved.
+	 */
+	private createWindow(
+		config: Partial<WindowConfig> & { id: string; url: string; title: string; baseId?: string }
+	): Window {
 		const desktopRect = this.desktop.getBoundingClientRect();
 		const defaultWidth = Math.min( Math.round( desktopRect.width * 0.8 ), 1200 );
 		const defaultHeight = Math.min( Math.round( desktopRect.height * 0.8 ), 800 );
@@ -64,34 +99,59 @@ export class WindowManager {
 			minWidth: config.minWidth ?? 320,
 			minHeight: config.minHeight ?? 200,
 			...config,
+			baseId: config.baseId || config.id,
 		};
 
 		this.cascadeIndex++;
 
 		const win = new Window( fullConfig );
 
-		// Wire up callbacks.
 		win.onFocusRequest = ( w: Window ) => this.focus( w );
 		win.onClose = ( w: Window ) => this.remove( w );
 		win.onMinimize = () => {
-			// Focus the next window in the stack.
 			const visible = this.stack.filter( ( w ) => w.state !== 'minimized' );
 			if ( visible.length > 0 ) {
 				this.focus( visible[ visible.length - 1 ] );
 			}
 		};
+		win.onOpenAnother = ( w: Window ) => {
+			this.openNew( {
+				id: w.config.baseId || w.id,
+				baseId: w.config.baseId || w.id,
+				url: w.config.url,
+				title: w.config.title,
+				icon: w.config.icon,
+				submenu: w.config.submenu,
+				multi: true,
+			} );
+		};
 
-		// Add to stack and DOM.
 		this.stack.push( win );
 		this.desktop.appendChild( win.element );
 		this.focus( win );
 
-		// Dispatch custom event.
 		document.dispatchEvent( new CustomEvent( 'wp-desktop-window-opened', {
 			detail: { windowId: win.id, page: config.url, title: config.title },
 		} ) );
 
 		return win;
+	}
+
+	/**
+	 * Find the next unused suffixed id for a given baseId. Prefers the
+	 * bare baseId itself if free (user closed the original), then walks
+	 * `-2`, `-3`, … until it lands on one not currently in the stack.
+	 */
+	private nextInstanceId( baseId: string ): string {
+		const taken = new Set( this.stack.map( ( w ) => w.id ) );
+		if ( ! taken.has( baseId ) ) {
+			return baseId;
+		}
+		let n = 2;
+		while ( taken.has( `${ baseId }-${ n }` ) ) {
+			n++;
+		}
+		return `${ baseId }-${ n }`;
 	}
 
 	/**
@@ -145,6 +205,46 @@ export class WindowManager {
 	}
 
 	/**
+	 * Get the most-recently-focused window for a given baseId.
+	 *
+	 * Multi-instance windows share a baseId; the stack is ordered bottom
+	 * to top by focus, so iterating from the end finds the best candidate
+	 * to bring forward when the user re-clicks the dock icon.
+	 */
+	public getByBaseId( baseId: string ): Window | undefined {
+		for ( let i = this.stack.length - 1; i >= 0; i-- ) {
+			const w = this.stack[ i ];
+			if ( ( w.config.baseId || w.id ) === baseId ) {
+				return w;
+			}
+		}
+		return undefined;
+	}
+
+	/**
+	 * Get every open window sharing the given baseId, ordered by
+	 * instance slot (bare baseId first, then `-2`, `-3`, …) rather than
+	 * z-order — so the dock's instance rail keeps a stable left-to-right
+	 * order even as the user focuses between windows.
+	 */
+	public getAllByBaseId( baseId: string ): Window[] {
+		const instanceSlot = ( id: string ): number => {
+			if ( id === baseId ) {
+				return 1;
+			}
+			const prefix = `${ baseId }-`;
+			if ( id.startsWith( prefix ) ) {
+				const n = parseInt( id.slice( prefix.length ), 10 );
+				return Number.isFinite( n ) ? n : 999;
+			}
+			return 999;
+		};
+		return this.stack
+			.filter( ( w ) => ( w.config.baseId || w.id ) === baseId )
+			.sort( ( a, b ) => instanceSlot( a.id ) - instanceSlot( b.id ) );
+	}
+
+	/**
 	 * Get all open windows.
 	 */
 	public getAll(): Window[] {
@@ -171,6 +271,7 @@ export class WindowManager {
 			const snap = w.getSnapshot();
 			return {
 				id: w.id,
+				baseId: w.config.baseId || w.id,
 				url: w.getCurrentUrl(),
 				title: w.config.title,
 				icon: w.config.icon,

@@ -244,6 +244,37 @@ add_filter( 'wp_desktop_dock_item', function ( $item, $slug ) {
 
 ---
 
+### `wp_desktop_dock_item_multi` — Stable
+
+Controls whether a dock item supports multiple simultaneous windows. Multi-capable pages expose a "+" chip on the dock icon and an "Open another" action in the window's title-bar menu; singletons always focus the existing window when re-opened.
+
+Built-in defaults: `edit.php`, `edit-tags.php`, `upload.php`, `users.php`, and `edit-comments.php` are multi; everything else is singleton. The base filename is matched against the list, so every CPT (`edit.php?post_type=page`) and every taxonomy inherits the same rule as its parent admin file.
+
+```php
+apply_filters( 'wp_desktop_dock_item_multi', bool $multi, string $menu_slug );
+```
+
+**Example — let a custom plugin page open multiple windows:**
+
+```php
+add_filter( 'wp_desktop_dock_item_multi', function ( $multi, $slug ) {
+    if ( 'my-plugin-entities' === $slug ) {
+        return true;
+    }
+    return $multi;
+}, 10, 2 );
+```
+
+**Example — force Users into singleton mode:**
+
+```php
+add_filter( 'wp_desktop_dock_item_multi', function ( $multi, $slug ) {
+    return 'users.php' === $slug ? false : $multi;
+}, 10, 2 );
+```
+
+---
+
 ### `wp_desktop_portal_auto_enable` — Stable
 
 When a user lands on `/wp-desktop/` without desktop mode enabled, the portal auto-enables it for them by default. Return `false` to require an explicit toggle instead.

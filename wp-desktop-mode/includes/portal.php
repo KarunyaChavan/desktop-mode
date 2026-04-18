@@ -99,9 +99,20 @@ function wpdm_handle_portal_request( $wp ) {
 		update_user_meta( $user_id, 'wp_desktop_mode', '1' );
 	}
 
-	// Pick the landing page: the last-focused window from the saved
-	// session, or the dashboard if no session / no focused window.
-	$target = wpdm_portal_entry_url( $user_id );
+	// Pick the landing page. Priority:
+	//   1. Explicit `target` query arg, if same-origin wp-admin URL.
+	//      This is how `wpdm_redirect_plain_admin_to_portal` preserves
+	//      the user's navigation intent when they follow a link to a
+	//      specific admin page (e.g. profile.php).
+	//   2. Last-focused window from the saved session.
+	//   3. Dashboard fallback.
+	$target = '';
+	if ( ! empty( $_GET['target'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$target = wpdm_sanitize_portal_target( wp_unslash( (string) $_GET['target'] ) ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+	}
+	if ( '' === $target ) {
+		$target = wpdm_portal_entry_url( $user_id );
+	}
 
 	// Flag the forward so the shell can stamp the address bar back to
 	// /wp-desktop/ via history.replaceState once it has loaded.
@@ -215,7 +226,19 @@ function wpdm_redirect_plain_admin_to_portal() {
 		return;
 	}
 
-	wp_safe_redirect( wpdm_portal_url() );
+	// Preserve the original target on the portal redirect. Without this,
+	// navigating to a specific admin page (profile.php, plugins.php, any
+	// deep link) loses the user's intent — the portal would forward them
+	// to whichever window was last focused instead of the page they asked
+	// for. The portal handler reads `target`, validates it's same-origin
+	// wp-admin, and uses it as the entry URL.
+	$portal_url = wpdm_portal_url();
+	$target     = isset( $_SERVER['REQUEST_URI'] ) ? wp_unslash( $_SERVER['REQUEST_URI'] ) : '';
+	if ( is_string( $target ) && '' !== $target ) {
+		$portal_url = add_query_arg( 'target', rawurlencode( $target ), $portal_url );
+	}
+
+	wp_safe_redirect( $portal_url );
 	exit;
 }
 add_action( 'admin_init', 'wpdm_redirect_plain_admin_to_portal' );
@@ -261,4 +284,76 @@ function wpdm_portal_entry_url( $user_id ) {
 	}
 
 	return $fallback;
+}
+
+/**
+ * Validates and normalizes a `target` query arg on the portal URL.
+ *
+ * Accepts a raw request-URI-shaped string (path + optional query, e.g.
+ * `/wp-admin/profile.php?foo=bar`) and returns a fully-qualified admin
+ * URL if — and only if — it resolves to a same-origin `wp-admin/` path.
+ * Everything else returns an empty string so the caller falls back to
+ * the saved-session entry URL.
+ *
+ * Strips `wp_desktop` and the portal flag from the query so the target
+ * doesn't chain us into a chromeless standalone load or an infinite
+ * redirect loop.
+ *
+ * @since 0.6.0
+ *
+ * @param string $raw Raw value from `$_GET['target']` (already unslashed).
+ * @return string A safe absolute admin URL, or '' if the input is invalid.
+ */
+function wpdm_sanitize_portal_target( $raw ) {
+	if ( ! is_string( $raw ) || '' === $raw ) {
+		return '';
+	}
+
+	// Reject URIs with a scheme or protocol-relative prefix — we only
+	// accept relative paths so there's no way to redirect off-site.
+	if ( preg_match( '#^([a-z][a-z0-9+.-]*:|//)#i', $raw ) ) {
+		return '';
+	}
+
+	// Must be an absolute path starting with /.
+	if ( '/' !== $raw[0] ) {
+		return '';
+	}
+
+	$path  = wp_parse_url( $raw, PHP_URL_PATH );
+	$query = wp_parse_url( $raw, PHP_URL_QUERY );
+	if ( ! is_string( $path ) || '' === $path ) {
+		return '';
+	}
+
+	$admin_path = wp_parse_url( admin_url(), PHP_URL_PATH );
+	$admin_path = is_string( $admin_path ) ? $admin_path : '/wp-admin/';
+	if ( 0 !== strpos( $path, $admin_path ) ) {
+		return '';
+	}
+
+	$file = substr( $path, strlen( $admin_path ) );
+	$file = ltrim( (string) $file, '/' );
+	if ( '' === $file ) {
+		$file = 'index.php';
+	}
+	// Disallow traversal and nested paths — the admin area is a single
+	// flat directory of .php files from WP's perspective.
+	if ( false !== strpos( $file, '..' ) || false !== strpos( $file, '/' ) ) {
+		return '';
+	}
+	if ( ! preg_match( '/^[a-z0-9_-]+\.php$/i', $file ) ) {
+		return '';
+	}
+
+	$target = admin_url( $file );
+	if ( is_string( $query ) && '' !== $query ) {
+		parse_str( $query, $args );
+		unset( $args['wp_desktop'], $args[ WPDM_PORTAL_FLAG ], $args['target'] );
+		if ( ! empty( $args ) ) {
+			$target = add_query_arg( $args, $target );
+		}
+	}
+
+	return $target;
 }

@@ -47,6 +47,7 @@
 
 /* Title bar. */
 .wp-desktop-window__titlebar {
+	position: relative;
 	display: flex;
 	align-items: center;
 	height: var(--wp-desktop-titlebar-height);
@@ -66,9 +67,9 @@
 
 /* Window icon in title bar. */
 .wp-desktop-window__icon {
-	font-size: 16px;
-	width: 16px;
-	height: 16px;
+	font-size: 18px;
+	width: 18px;
+	height: 18px;
 	flex-shrink: 0;
 }
 
@@ -78,8 +79,8 @@
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	font-size: 13px;
-	font-weight: 400;
+	font-size: 14px;
+	font-weight: 500;
 	line-height: var(--wp-desktop-titlebar-height);
 }
 
@@ -108,10 +109,10 @@
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	width: 26px;
-	height: 26px;
+	width: 30px;
+	height: 30px;
 	border: none;
-	border-radius: 4px;
+	border-radius: 5px;
 	cursor: pointer;
 	padding: 0;
 	background: transparent;
@@ -167,6 +168,108 @@
 .wp-desktop-window:not(.wp-desktop-window--focused) .wp-desktop-window__btn--close:hover {
 	color: #fff;
 	background: #d63638;
+}
+
+/* ---------------------------------------------------------------
+ * Title-bar actions menu (leading edge, before icon + title).
+ *
+ * Trigger is a standard `.wp-desktop-window__btn` — inherits focused /
+ * unfocused coloring from the existing control-button rules. The only
+ * bespoke rule is margin: it sits at the leading edge so a small trailing
+ * gap separates it from the icon without affecting overall title-bar gap.
+ *
+ * Panel is an absolute dropdown anchored to the title bar (which is now
+ * position: relative). Visibility is driven by the `hidden` attribute on
+ * the element itself — no separate `--open` class to keep in sync with
+ * aria-expanded.
+ * --------------------------------------------------------------- */
+/*
+ * ⋯ button sits between the screen-meta cluster and the window
+ * controls, as the "last page-level chrome" item. When present it
+ * takes over the divider duty: screen-meta drops its own trailing
+ * divider, and the controls container gains a leading one — so a
+ * single clean line always sits between page chrome and window
+ * chrome regardless of which combination is visible.
+ */
+.wp-desktop-window__titlebar:has(.wp-desktop-window__menu-btn) .wp-desktop-window__screen-meta {
+	margin-inline-end: 0;
+	padding-inline-end: 0;
+	border-inline-end: none;
+}
+
+.wp-desktop-window__titlebar:has(.wp-desktop-window__menu-btn) .wp-desktop-window__controls {
+	margin-inline-start: 8px;
+	padding-inline-start: 8px;
+	border-inline-start: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.wp-desktop-window:not(.wp-desktop-window--focused) .wp-desktop-window__titlebar:has(.wp-desktop-window__menu-btn) .wp-desktop-window__controls {
+	border-inline-start-color: rgba(0, 0, 0, 0.1);
+}
+
+.wp-desktop-window__menu-panel {
+	position: absolute;
+	top: calc(var(--wp-desktop-titlebar-height) + 2px);
+	inset-inline-end: 60px;
+	min-width: 220px;
+	padding: 4px;
+	background: var(--wp-desktop-window-bg);
+	color: #1d2327;
+	border: 1px solid var(--wp-desktop-window-border);
+	border-radius: 8px;
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18), 0 2px 6px rgba(0, 0, 0, 0.08);
+	z-index: 2;
+}
+
+.wp-desktop-window__menu-panel[hidden] {
+	display: none;
+}
+
+.wp-desktop-window__menu-item {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	width: 100%;
+	min-height: 32px;
+	padding: 6px 10px;
+	border: none;
+	border-radius: 6px;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	font-size: 13px;
+	line-height: 1.3;
+	text-align: start;
+	cursor: pointer;
+	transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+.wp-desktop-window__menu-item:hover,
+.wp-desktop-window__menu-item:focus-visible {
+	background: rgba(0, 0, 0, 0.06);
+	color: #000;
+	outline: none;
+}
+
+.wp-desktop-window__menu-item:focus-visible {
+	outline: 2px solid var(--wp-admin-theme-color, #2271b1);
+	outline-offset: -2px;
+}
+
+.wp-desktop-window__menu-icon {
+	flex-shrink: 0;
+	width: 18px;
+	height: 18px;
+	font-size: 18px;
+	line-height: 1;
+	color: var(--wp-admin-theme-color, #2271b1);
+}
+
+.wp-desktop-window__menu-label {
+	flex: 1;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
 }
 
 /* ---------------------------------------------------------------

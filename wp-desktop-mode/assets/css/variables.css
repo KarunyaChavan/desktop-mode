@@ -1,8 +1,16 @@
 /**
  * Desktop Mode — CSS Custom Properties.
  *
- * All design tokens for the desktop shell. Color scheme overrides
- * can redefine these variables to theme the entire desktop.
+ * All design tokens for the desktop shell. Per-scheme blocks below
+ * retune the accent + titlebar colors to match the user's WordPress
+ * admin color scheme — the shell root gets a `data-wp-desktop-scheme`
+ * attribute in PHP so the right block wins before first paint.
+ *
+ * Palette source: wp-admin/css/colors/<scheme>/colors.scss in Core.
+ * We read the `base` color as the focused title bar background (same
+ * visual weight as the admin sidebar the user is used to) and the
+ * `highlight` color as `--wp-admin-theme-color`, which Core publishes
+ * as the accent — buttons, tabs, focus rings.
  *
  * @since 6.9.0
  */
@@ -19,12 +27,17 @@
 	--wp-desktop-window-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), 0 2px 8px rgba(0, 0, 0, 0.15);
 	--wp-desktop-window-shadow-focused: 0 12px 48px rgba(0, 0, 0, 0.4), 0 4px 12px rgba(0, 0, 0, 0.2);
 
-	/* Title bar */
+	/* Title bar — focused bg/color resolve via the scheme overrides below. */
 	--wp-desktop-titlebar-bg: #f0f0f1;
-	--wp-desktop-titlebar-bg-focused: #2271b1;
+	--wp-desktop-titlebar-bg-focused: var(--wp-admin-theme-color, #2271b1);
 	--wp-desktop-titlebar-color: #50575e;
 	--wp-desktop-titlebar-color-focused: #fff;
-	--wp-desktop-titlebar-height: 36px;
+	--wp-desktop-titlebar-height: 40px;
+
+	/* Admin accent. Each scheme block below retunes this; the fallback
+	 * matches the legacy hardcoded value so nothing regresses if the
+	 * root has no data-wp-desktop-scheme attribute (e.g. tests). */
+	--wp-admin-theme-color: #2271b1;
 
 	/* Resize handle */
 	--wp-desktop-resize-size: 12px;
@@ -40,4 +53,77 @@
 	--wp-desktop-z-dock: 200;
 	--wp-desktop-z-adminbar: 9991;
 	--wp-desktop-z-fullscreen: 99999;
+}
+
+/*
+ * Per-scheme overrides. Scoped to `.wp-desktop-shell[data-wp-desktop-scheme]`
+ * so the variables only affect the shell subtree — we don't want to touch
+ * Gutenberg or other nested contexts that also read `--wp-admin-theme-color`.
+ *
+ * Setting the vars on the shell root means any descendant (title bar,
+ * dock chip, tab underlines, focus rings) that references them inherits
+ * the right hue without further plumbing.
+ */
+
+/* Fresh — default WP blue. */
+.wp-desktop-shell[data-wp-desktop-scheme="fresh"] {
+	--wp-admin-theme-color: #2271b1;
+	--wp-desktop-titlebar-bg-focused: #1d2327;
+	--wp-desktop-titlebar-color-focused: #fff;
+}
+
+/* Light — pale sidebar, teal accent. */
+.wp-desktop-shell[data-wp-desktop-scheme="light"] {
+	--wp-admin-theme-color: #04a4cc;
+	--wp-desktop-titlebar-bg-focused: #e5e5e5;
+	--wp-desktop-titlebar-color-focused: #333;
+}
+
+/* Modern — vivid indigo accent, near-black sidebar. */
+.wp-desktop-shell[data-wp-desktop-scheme="modern"] {
+	--wp-admin-theme-color: #3858e9;
+	--wp-desktop-titlebar-bg-focused: #1e1e1e;
+	--wp-desktop-titlebar-color-focused: #f3f1f1;
+}
+
+/* Blue. */
+.wp-desktop-shell[data-wp-desktop-scheme="blue"] {
+	--wp-admin-theme-color: #096484;
+	--wp-desktop-titlebar-bg-focused: #52accc;
+	--wp-desktop-titlebar-color-focused: #e5f8ff;
+}
+
+/* Coffee. */
+.wp-desktop-shell[data-wp-desktop-scheme="coffee"] {
+	--wp-admin-theme-color: #c7a589;
+	--wp-desktop-titlebar-bg-focused: #59524c;
+	--wp-desktop-titlebar-color-focused: #ece6f6;
+}
+
+/* Ectoplasm. */
+.wp-desktop-shell[data-wp-desktop-scheme="ectoplasm"] {
+	--wp-admin-theme-color: #a3b745;
+	--wp-desktop-titlebar-bg-focused: #523f6d;
+	--wp-desktop-titlebar-color-focused: #ece6f6;
+}
+
+/* Midnight. */
+.wp-desktop-shell[data-wp-desktop-scheme="midnight"] {
+	--wp-admin-theme-color: #e14d43;
+	--wp-desktop-titlebar-bg-focused: #363b3f;
+	--wp-desktop-titlebar-color-focused: #f1f2f3;
+}
+
+/* Ocean. */
+.wp-desktop-shell[data-wp-desktop-scheme="ocean"] {
+	--wp-admin-theme-color: #9ebaa0;
+	--wp-desktop-titlebar-bg-focused: #738e96;
+	--wp-desktop-titlebar-color-focused: #f2fcff;
+}
+
+/* Sunrise. */
+.wp-desktop-shell[data-wp-desktop-scheme="sunrise"] {
+	--wp-admin-theme-color: #dd823b;
+	--wp-desktop-titlebar-bg-focused: #cf4944;
+	--wp-desktop-titlebar-color-focused: #f3f1f1;
 }

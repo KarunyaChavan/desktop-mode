@@ -117,9 +117,11 @@ Exposed instance of the `WindowManager` class.
 **Methods:**
 
 ```typescript
-manager.open( config: { id: string; url: string; title: string; icon?: string; x?: number; y?: number; width?: number; height?: number; initialState?: WindowState; submenu?: { title: string; url: string }[] } ): Window;
+manager.open( config: { id: string; baseId?: string; multi?: boolean; url: string; title: string; icon?: string; x?: number; y?: number; width?: number; height?: number; initialState?: WindowState; submenu?: { title: string; url: string }[] } ): Window;
+manager.openNew( config: /* same shape as open() */ ): Window;
 manager.focus( win: Window ): void;
 manager.getById( id: string ): Window | undefined;
+manager.getByBaseId( baseId: string ): Window | undefined;
 manager.getAll(): Window[];
 manager.getFocused(): Window | undefined;
 manager.snapshot(): Session;
@@ -138,7 +140,23 @@ document.addEventListener( 'wp-desktop-init', () => {
 } );
 ```
 
-Opening the same `id` again focuses the existing window and restores it if minimized.
+Calling `open()` with an id (or `baseId`) that's already on screen focuses the existing window and restores it if minimized.
+
+**Multi-instance windows.** When `multi: true` is passed, the window gets an extra actions menu in its title bar (leading edge, before the icon) whose "Open another" item calls `openNew()`. `openNew()` always creates a fresh window — even when one with the same `baseId` is already open — assigning a suffixed id (`${baseId}-2`, `${baseId}-3`, …) so every instance can be tracked independently while the dock still groups them under the same icon.
+
+```javascript
+// Open a second Posts list alongside the first.
+window.wp.desktop.windowManager.openNew( {
+    id:      'edit-php',
+    baseId:  'edit-php',
+    url:     '/wp-admin/edit.php',
+    title:   'Posts',
+    icon:    'dashicons-admin-post',
+    multi:   true,
+} );
+```
+
+The server-side `wp_desktop_dock_item_multi` filter controls which admin pages ship with `multi: true` by default — see the [Hooks reference](./hooks-reference.md#wp_desktop_dock_item_multi--stable).
 
 ---
 

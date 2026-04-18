@@ -139,6 +139,15 @@ function wpdm_sanitize_session( $session ) {
 				continue;
 			}
 
+			// `baseId` groups multi-instance windows of the same admin page
+			// (e.g. `edit-php`, `edit-php-2`, `edit-php-3` all share baseId
+			// `edit-php`). Optional — older sessions predate the field and
+			// the client falls back to `id` when missing.
+			$base_id = isset( $win['baseId'] ) ? sanitize_key( (string) $win['baseId'] ) : '';
+			if ( '' === $base_id ) {
+				$base_id = $id;
+			}
+
 			$url = isset( $win['url'] ) ? esc_url_raw( (string) $win['url'] ) : '';
 			// Only allow URLs that land inside our own wp-admin — both
 			// a safety net against storing arbitrary origins in user meta
@@ -163,6 +172,7 @@ function wpdm_sanitize_session( $session ) {
 
 			$clean['windows'][] = array(
 				'id'     => $id,
+				'baseId' => $base_id,
 				'url'    => $url,
 				'title'  => isset( $win['title'] ) ? wp_strip_all_tags( (string) $win['title'] ) : '',
 				'icon'   => isset( $win['icon'] ) ? sanitize_html_class( (string) $win['icon'] ) : 'dashicons-admin-generic',

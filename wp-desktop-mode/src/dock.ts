@@ -28,6 +28,8 @@ export interface DockItem {
 	badge: number;
 	/** Submenu items. */
 	submenu: { title: string; url: string }[];
+	/** Whether this admin page supports multiple open windows. */
+	multi?: boolean;
 }
 
 /**
@@ -79,37 +81,94 @@ export class Dock {
 	}
 
 	/**
-	 * Create a single dock icon button.
+	 * Create a single dock icon tile.
+	 *
+	 * A tile is a vertical stack: the primary icon button, plus — for
+	 * multi-capable pages — an instance rail rendered below it showing one
+	 * dot per open window and a trailing "+" to open another. The rail is
+	 * hydrated by {@link updateActiveStates}; here we only place the empty
+	 * container so the DOM is stable.
 	 */
 	private createItemButton( item: DockItem ): HTMLElement {
-		const btn = document.createElement( 'button' );
-		btn.className = 'wp-desktop-dock__item';
-		btn.setAttribute( 'type', 'button' );
-		btn.setAttribute( 'aria-label', item.title );
-		btn.dataset.menuSlug = item.id;
+		const tile = document.createElement( 'div' );
+		tile.className = 'wp-desktop-dock__item';
+		tile.dataset.menuSlug = item.id;
+		if ( item.multi ) {
+			tile.classList.add( 'wp-desktop-dock__item--multi' );
+		}
 
-		// Icon.
+		// Primary button — the icon body. Focuses existing or opens first.
+		const primary = document.createElement( 'button' );
+		primary.className = 'wp-desktop-dock__item-primary';
+		primary.setAttribute( 'type', 'button' );
+		primary.setAttribute( 'aria-label', item.title );
+
 		const iconEl = this.createIcon( item.icon );
-		btn.appendChild( iconEl );
+		primary.appendChild( iconEl );
 
-		// Badge.
 		if ( item.badge > 0 ) {
 			const badge = document.createElement( 'span' );
 			badge.className = 'wp-desktop-dock__badge';
 			badge.textContent = String( item.badge );
 			badge.setAttribute( 'aria-label', `${ item.badge } updates` );
-			btn.appendChild( badge );
+			primary.appendChild( badge );
 		}
 
-		// Click → open or focus window.
-		btn.addEventListener( 'click', () => {
+		primary.addEventListener( 'click', () => {
 			this.openPage( item );
 		} );
 
-		// Tooltip.
-		this.bindTooltip( btn, item.title );
+		tile.appendChild( primary );
 
-		return btn;
+		if ( item.multi ) {
+			// "Open another" chip floats off the right edge of the tile.
+			// Hidden until ≥1 instance is open — nothing to add
+			// alongside otherwise. Instance switching happens via the
+			// per-window controls, not the dock.
+			const addBtn = document.createElement( 'button' );
+			addBtn.type = 'button';
+			addBtn.className = 'wp-desktop-dock__item-new';
+			addBtn.hidden = true;
+			addBtn.setAttribute( 'aria-label', `Open another ${ item.title }` );
+			addBtn.innerHTML =
+				'<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" focusable="false">' +
+				'<path d="M6 2v8M2 6h8" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>' +
+				'</svg>';
+			addBtn.addEventListener( 'click', ( e: Event ) => {
+				e.stopPropagation();
+				this.openNewInstance( item );
+			} );
+
+			// Override the tile's shared tooltip while hovering the chip:
+			// the default says the page name, but on the chip we want the
+			// action verb. On pointerleave back into the tile we restore
+			// the default text; leaving the tile entirely hides the
+			// tooltip as usual. Touch devices never fire pointerenter
+			// without an immediate click, so this is effectively
+			// desktop-only by nature.
+			addBtn.addEventListener( 'pointerenter', () => {
+				const rect = addBtn.getBoundingClientRect();
+				this.tooltip.textContent = `Open new ${ item.title }`;
+				this.tooltip.style.top = `${ rect.top + rect.height / 2 - 14 }px`;
+				this.tooltip.classList.add( 'wp-desktop-dock__tooltip--visible' );
+			} );
+			addBtn.addEventListener( 'pointerleave', ( e: PointerEvent ) => {
+				const next = e.relatedTarget as Node | null;
+				if ( next && tile.contains( next ) ) {
+					const rect = tile.getBoundingClientRect();
+					this.tooltip.textContent = item.title;
+					this.tooltip.style.top = `${ rect.top + rect.height / 2 - 14 }px`;
+					return;
+				}
+				this.tooltip.classList.remove( 'wp-desktop-dock__tooltip--visible' );
+			} );
+
+			tile.appendChild( addBtn );
+		}
+
+		this.bindTooltip( tile, item.title );
+
+		return tile;
 	}
 
 	/**
@@ -178,15 +237,34 @@ export class Dock {
 	 * Open an admin page in a window (or focus if already open).
 	 */
 	private openPage( item: DockItem ): void {
-		// Derive window ID from the menu slug.
-		const windowId = this.deriveWindowId( item.url );
+		const baseId = this.deriveWindowId( item.url );
 
 		this.windowManager.open( {
-			id: windowId,
+			id: baseId,
+			baseId,
 			url: item.url,
 			title: item.title,
 			icon: item.icon.startsWith( 'dashicons-' ) ? item.icon : 'dashicons-admin-generic',
 			submenu: item.submenu,
+			multi: !! item.multi,
+		} );
+	}
+
+	/**
+	 * Open a brand-new instance of a multi-capable page, even if one is
+	 * already open. Invoked by the "+" chip on the dock icon.
+	 */
+	private openNewInstance( item: DockItem ): void {
+		const baseId = this.deriveWindowId( item.url );
+
+		this.windowManager.openNew( {
+			id: baseId,
+			baseId,
+			url: item.url,
+			title: item.title,
+			icon: item.icon.startsWith( 'dashicons-' ) ? item.icon : 'dashicons-admin-generic',
+			submenu: item.submenu,
+			multi: true,
 		} );
 	}
 
@@ -215,27 +293,42 @@ export class Dock {
 	}
 
 	/**
-	 * Update the active/focused CSS classes on dock items based on open windows.
+	 * Update the active/focused classes and multi-instance rail on every
+	 * dock item in response to a window lifecycle event.
+	 *
+	 * For singletons the rail is absent; "active" means "the one window
+	 * is open". For multi-capable items, active means "≥1 instance is
+	 * open" and focused means "the focused window belongs to this item".
 	 */
 	private updateActiveStates(): void {
-		const openWindows = this.windowManager.getAll();
 		const focused = this.windowManager.getFocused();
-
-		// Build a set of open window IDs.
-		const openIds = new Set( openWindows.map( ( w ) => w.id ) );
+		const focusedBaseId = focused ? ( focused.config.baseId || focused.id ) : null;
 
 		for ( const item of this.items ) {
-			const btn = this.itemElements.get( item.id );
-			if ( ! btn ) {
+			const tile = this.itemElements.get( item.id );
+			if ( ! tile ) {
 				continue;
 			}
 
-			const windowId = this.deriveWindowId( item.url );
-			const isOpen = openIds.has( windowId );
-			const isFocused = focused && focused.id === windowId;
+			const baseId = this.deriveWindowId( item.url );
+			const instances = item.multi
+				? this.windowManager.getAllByBaseId( baseId )
+				: [];
+			const singleOpen = ! item.multi && !! this.windowManager.getById( baseId );
+			const isOpen = item.multi ? instances.length > 0 : singleOpen;
+			const isFocused = focusedBaseId === baseId;
 
-			btn.classList.toggle( 'wp-desktop-dock__item--active', isOpen );
-			btn.classList.toggle( 'wp-desktop-dock__item--focused', !! isFocused );
+			tile.classList.toggle( 'wp-desktop-dock__item--active', isOpen );
+			tile.classList.toggle( 'wp-desktop-dock__item--focused', isFocused );
+
+			if ( item.multi ) {
+				const addBtn = tile.querySelector<HTMLElement>(
+					'.wp-desktop-dock__item-new'
+				);
+				if ( addBtn ) {
+					addBtn.hidden = instances.length === 0;
+				}
+			}
 		}
 	}
 }

@@ -265,6 +265,7 @@ function wpdm_build_dock_items() {
 			'url'     => $url,
 			'badge'   => $badge,
 			'submenu' => $sub_items,
+			'multi'   => wpdm_dock_item_is_multi( $item[2] ),
 		);
 
 		/**
@@ -344,6 +345,59 @@ function wpdm_sanitize_dock_icon( $icon ) {
 	}
 
 	return $fallback;
+}
+
+/**
+ * Decides whether a given admin page should support multiple open windows.
+ *
+ * List-style screens (Posts, Pages, custom post types, Media, Users,
+ * Comments, taxonomy terms) often benefit from being open more than once:
+ * a writer may want to read one post while drafting another, compare two
+ * users side-by-side, pick media from one window and drop it into a draft
+ * in another. Singleton-ish screens (Dashboard, Settings, Tools, Profile)
+ * have a single logical state — opening two makes no sense.
+ *
+ * The default rule matches the base filename of the menu slug against a
+ * known list. Plugin authors can override via the
+ * `wp_desktop_dock_item_multi` filter to mark any custom page as multi
+ * (or force a stock list page into singleton mode).
+ *
+ * @since 0.5.0
+ *
+ * @param string $menu_slug The raw menu slug (e.g. `edit.php`, `upload.php`,
+ *                          or `my-plugin-page`). Query strings are preserved
+ *                          so `edit.php?post_type=page` resolves correctly.
+ * @return bool True if this page supports multiple simultaneous windows.
+ */
+function wpdm_dock_item_is_multi( $menu_slug ) {
+	// Multi-capable admin files. Match by the base file regardless of
+	// any query string (post_type, taxonomy, page, paged, etc.) so every
+	// CPT and every taxonomy inherits the same rule as their parent.
+	$multi_files = array(
+		'edit.php',
+		'edit-tags.php',
+		'upload.php',
+		'users.php',
+		'edit-comments.php',
+	);
+
+	$base = strtok( (string) $menu_slug, '?' );
+	$multi = in_array( $base, $multi_files, true );
+
+	/**
+	 * Filters whether a dock item supports multiple open windows.
+	 *
+	 * Return true to let the user open more than one window of this page.
+	 * A "+" affordance appears on the dock icon and a "Open another" action
+	 * becomes available in the window's title-bar menu. Singletons (false)
+	 * always focus the existing window when re-opened.
+	 *
+	 * @since 0.5.0
+	 *
+	 * @param bool   $multi     Whether this page is multi-capable.
+	 * @param string $menu_slug The menu slug (e.g. `edit.php?post_type=page`).
+	 */
+	return (bool) apply_filters( 'wp_desktop_dock_item_multi', $multi, $menu_slug );
 }
 
 /**

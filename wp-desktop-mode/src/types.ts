@@ -15,6 +15,20 @@ export type WindowState = 'normal' | 'maximized' | 'minimized' | 'fullscreen' | 
 export interface WindowConfig {
 	/** Unique window identifier, derived from the admin page slug. */
 	id: string;
+	/**
+	 * Grouping key shared across every instance of the same admin page.
+	 * For the first instance `baseId` equals `id`; additional instances
+	 * carry suffixed ids (`${baseId}-2`, `${baseId}-3`, ...) while keeping
+	 * the same baseId so the dock can group them.
+	 */
+	baseId?: string;
+	/**
+	 * Whether this page supports multiple simultaneous windows. When true,
+	 * the title-bar menu exposes an "Open another" action and the dock
+	 * icon gets a secondary "+" tap target. Singletons (false/undefined)
+	 * always reuse the existing window.
+	 */
+	multi?: boolean;
 	/** The admin page URL to load in the iframe. */
 	url: string;
 	/** Window title displayed in the title bar. */
@@ -78,6 +92,13 @@ export interface DockItemConfig {
 	badge: number;
 	/** Submenu items. */
 	submenu: { title: string; url: string }[];
+	/**
+	 * Whether this admin page supports multiple open windows. Determined
+	 * server-side — list screens (Posts, Pages, Media, Users, Comments,
+	 * taxonomies) are true by default; Settings / Tools / Dashboard are
+	 * false. Filterable via `wp_desktop_dock_item_multi`.
+	 */
+	multi?: boolean;
 }
 
 /**
@@ -88,6 +109,12 @@ export interface DockItemConfig {
  */
 export interface SessionWindow {
 	id: string;
+	/**
+	 * Grouping key for multi-instance windows. Optional for back-compat
+	 * with sessions saved before the field existed — restore falls back
+	 * to the id when missing.
+	 */
+	baseId?: string;
 	url: string;
 	title: string;
 	icon: string;

@@ -1,0 +1,154 @@
+# WP Desktop Mode
+
+A WordPress plugin that reimagines `/wp-admin` as a desktop operating system. Admin screens open as draggable, resizable, minimizable **windows** on a **desktop**, with a left-edge **dock** built from the admin menu. Purely opt-in per user — the classic admin stays untouched for everyone else, and deactivating the plugin restores vanilla Core exactly.
+
+Zero Core patches. Every feature is wired through public WordPress hooks.
+
+---
+
+## What it does today
+
+- **Per-user opt-in** — toggle in the admin bar flips the `wp_desktop_mode` user meta. Off by default.
+- **Desktop shell** — fixed viewport shell with a wallpaper area, rendered over `/wp-admin` only for users who opted in.
+- **Windows** — each admin page loads in its own `<iframe>` with `?wp_desktop=1`, which strips the admin bar, side menu, and footer ("chromeless" mode). Windows drag, resize, minimize, maximize, and close. Positions/sizes persist.
+- **Dock** — icon-only vertical strip on the left edge, built from the admin `$menu` global, with badges and per-window submenu tab strips for in-window nav.
+- **Session persistence** — window stack (position, size, focus, state) is saved via a REST endpoint and rebuilt on next load, so layout survives reloads without a flash of default state.
+- **postMessage bridge** — typed contract between parent shell and iframes for title changes, navigation, focus, and color-scheme propagation.
+- **Public hook API** — filters and actions for dock items, window args, shell config, body classes, chromeless styles, and lifecycle events. Documented in [`wp-desktop-mode/docs/`](./wp-desktop-mode/docs/README.md).
+
+## Where it's going
+
+The plugin is mid-build. Phases 0–2 (opt-in, shell + single window, dock) have landed. Remaining:
+
+- **Phase 3** — taskbar, multi-window orchestration, edge-snapping.
+- **Phase 4** — polish: color-scheme-aware CSS variables, View Transitions animations, accessibility audit.
+- **Phase 5–6** — responsive: a purpose-built **mobile phone-OS** experience (home grid, full-screen apps, app switcher, gesture nav, bottom tab bar) and a **tablet hybrid** (split view, slide-over). `wp.desktop.mode` exposes `'desktop' | 'tablet' | 'mobile'`; same codebase, three experiences.
+- **Phase 7** — **native windows** that render directly in the parent DOM (no iframe) via `wp_register_desktop_window()`. Validated by **Jorvy**, a tiny companion plugin (Marvel quotes, Hello-Dolly style) used as the end-to-end smoke test for the native-window API.
+- **Phase 8 — the North Star**: **cross-window drag and drop**. Drag a photo from the Media window directly into the Gutenberg editor in the Post window. Implemented as a coordinated `postMessage` "lift-and-drop" bridge, since browsers block cross-iframe native DnD.
+
+See [`wp-desktop-mode/docs/architecture.md`](./wp-desktop-mode/docs/architecture.md) for how the pieces fit together and [`wp-desktop-mode/docs/hooks-reference.md`](./wp-desktop-mode/docs/hooks-reference.md) for the hook surface (current and planned).
+
+---
+
+## Repository layout
+
+```
+alcazaba-plugin/
+├── README.md                        # (this file)
+└── wp-desktop-mode/                 # the plugin itself
+    ├── wp-desktop-mode.php          # bootstrap: header, constants, require_once of includes/
+    ├── includes/                    # PHP (helpers, ajax, admin-bar, assets, render, portal, session)
+    ├── assets/                      # compiled CSS + JS (Vite output)
+    ├── src/                         # TypeScript source — compiled by the plugin's own Vite
+    ├── docs/                        # developer-facing docs (source of truth for plugin authors)
+    ├── tests/phpunit/               # PHPUnit, @group desktop-mode
+    ├── package.json                 # plugin-local devDeps (vite, typescript)
+    ├── vite.config.js               # Vite lib-mode: src/desktop.ts → assets/js/desktop[.min].js (IIFE)
+    └── tsconfig.json
+```
+
+---
+
+## How to run it
+
+### 1. Install dependencies
+
+From the plugin directory:
+
+```bash
+cd wp-desktop-mode
+npm install
+```
+
+### 2. Build the TypeScript bundle
+
+The plugin uses **[Vite](https://vitejs.dev/)** in library mode. esbuild handles transpile and minify, so builds finish in ~70 ms per bundle.
+
+**Full build** — produces both bundles:
+
+```bash
+npm run build
+```
+
+Writes:
+
+- `assets/js/desktop.js` — unminified IIFE, loaded when `SCRIPT_DEBUG` is `true`.
+- `assets/js/desktop.min.js` — esbuild-minified IIFE, loaded otherwise.
+
+**Development watch** — auto-recompiles the unminified bundle on save:
+
+```bash
+npm run dev
+```
+
+Leave it running in a separate terminal; refresh the browser after each save. Set `define( 'SCRIPT_DEBUG', true )` in `wp-config.php` so WordPress picks up the unminified bundle during development.
+
+### 3. Start a WordPress environment
+
+The plugin is developed against a WordPress Core checkout used as a Docker-based dev host. From that parent repository's root:
+
+```bash
+npm run env:start      # boot Docker (nginx + PHP + MySQL)
+npm run env:install    # install WordPress
+```
+
+Site: **http://localhost:8889**
+Admin: **http://localhost:8889/wp-admin/**
+Credentials: `admin` / `password`
+
+Stop the environment:
+
+```bash
+npm run env:stop
+```
+
+### 4. Activate & toggle
+
+1. Log in at `/wp-admin`.
+2. **Plugins → WP Desktop Mode → Activate**.
+3. Click the **desktop** icon in the admin bar's top-right corner.
+4. The admin reloads inside the desktop shell.
+
+Click the same icon again to return to classic admin.
+
+### 5. Run the tests
+
+From the plugin directory:
+
+```bash
+npm run test:php        # PHPUnit, @group desktop-mode
+```
+
+Or, inside the Docker container:
+
+```bash
+docker exec wordpress-alcazaba-php-1 bash -c \
+  'export WP_TESTS_DIR=/var/www/tests/phpunit && cd /var/www && \
+   vendor/bin/phpunit -c src/wp-content/plugins/wp-desktop-mode/tests/phpunit/phpunit.xml.dist \
+   --group desktop-mode'
+```
+
+---
+
+## Requirements
+
+- WordPress **6.0+**
+- PHP **7.4+**
+
+## For plugin authors
+
+**This plugin is built to be extended.** Every significant behavior is hookable — drop an icon on the desktop, add a dock item, gate desktop mode by role, react to window events, or register a native window, all from your own plugin with zero patches here.
+
+**See [`wp-desktop-mode/docs/`](./wp-desktop-mode/docs/README.md) — the developer documentation index.**
+
+Quick links:
+
+- [Getting Started](./wp-desktop-mode/docs/getting-started.md) — the five-minute tour for plugin authors.
+- [Architecture](./wp-desktop-mode/docs/architecture.md) — how the pieces fit together.
+- [Hooks Reference](./wp-desktop-mode/docs/hooks-reference.md) — every action and filter we fire, with signatures and examples.
+- [JavaScript Reference](./wp-desktop-mode/docs/javascript-reference.md) — CustomEvents, `window.wp.desktop` API, and the iframe `postMessage` bridge.
+- [Examples](./wp-desktop-mode/docs/examples/) — copy-paste recipes.
+
+## License
+
+GPLv2 or later. See [LICENSE](https://www.gnu.org/licenses/gpl-2.0.html).

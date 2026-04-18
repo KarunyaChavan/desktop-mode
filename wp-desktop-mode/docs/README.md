@@ -11,6 +11,7 @@ If you are **building a plugin** that interacts with the desktop shell — opens
 3. **[Hooks Reference](./hooks-reference.md)** — every PHP action and filter, with signatures, defaults, and minimal examples.
 4. **[JavaScript Reference](./javascript-reference.md)** — CustomEvents on `document`, the `window.wp.desktop` API, and the iframe `postMessage` bridge.
 5. **[Examples](./examples/README.md)** — recipes you can copy into a plugin.
+6. **[Native Windows & Framework Interop (Phase 7 proposal)](./native-windows-proposal.md)** — *Planned.* Public API for `wp_register_desktop_window()`, Web Components as first-class, and how React / Vue / Svelte plug in without the shell taking a framework dependency.
 
 ## Conventions used in this docs folder
 

@@ -417,6 +417,170 @@
 	background: var(--wp-desktop-window-bg);
 }
 
+/*
+ * Native window body — fills the window but lets its contents scroll
+ * independently. Iframe bodies use `overflow: hidden` so the iframe
+ * controls its own scroll; native bodies render real document content
+ * that needs the parent to manage overflow.
+ */
+.wp-desktop-window__body--native {
+	overflow: auto;
+	color: #1d2327;
+	background: var(--wp-desktop-window-bg);
+}
+
+/* ---------------------------------------------------------------
+ * OS Settings native panel.
+ *
+ * A three-section preferences panel: wallpaper, accent, dock size.
+ * Styled to read as a first-class native module, not a web page —
+ * large touch targets, generous whitespace, WP-admin typography.
+ * --------------------------------------------------------------- */
+.wp-desktop-os-settings {
+	padding: 20px 24px 24px;
+	font-size: 13px;
+	line-height: 1.5;
+}
+
+.wp-desktop-os-settings__intro {
+	margin: 0 0 16px;
+	color: #50575e;
+}
+
+.wp-desktop-os-settings__section {
+	margin: 0 0 20px;
+	padding: 16px 16px 18px;
+	background: #f6f7f7;
+	border: 1px solid #dcdcde;
+	border-radius: 8px;
+}
+
+.wp-desktop-os-settings__heading {
+	margin: 0 0 4px;
+	font-size: 14px;
+	font-weight: 600;
+	color: #1d2327;
+}
+
+.wp-desktop-os-settings__desc {
+	margin: 0 0 12px;
+	color: #646970;
+	font-size: 12px;
+}
+
+.wp-desktop-os-settings__grid {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 10px;
+}
+
+.wp-desktop-os-settings__grid--wallpapers .wp-desktop-os-settings__swatch {
+	width: calc((100% - 20px) / 3);
+	aspect-ratio: 16 / 9;
+}
+
+.wp-desktop-os-settings__swatch {
+	position: relative;
+	display: flex;
+	align-items: flex-end;
+	justify-content: flex-start;
+	padding: 6px 8px;
+	border: 2px solid transparent;
+	border-radius: 8px;
+	cursor: pointer;
+	overflow: hidden;
+	transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.wp-desktop-os-settings__swatch:hover {
+	transform: translateY(-1px);
+}
+
+.wp-desktop-os-settings__swatch:focus-visible {
+	outline: 2px solid var(--wp-admin-theme-color, #2271b1);
+	outline-offset: 2px;
+}
+
+.wp-desktop-os-settings__swatch[aria-pressed="true"] {
+	border-color: var(--wp-admin-theme-color, #2271b1);
+	box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.9) inset;
+}
+
+.wp-desktop-os-settings__swatch--accent {
+	width: 36px;
+	height: 36px;
+	border-radius: 50%;
+	padding: 0;
+}
+
+.wp-desktop-os-settings__swatch-label {
+	color: #fff;
+	font-size: 11px;
+	font-weight: 600;
+	text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+}
+
+.wp-desktop-os-settings__segmented {
+	display: inline-flex;
+	background: #fff;
+	border: 1px solid #dcdcde;
+	border-radius: 6px;
+	overflow: hidden;
+}
+
+.wp-desktop-os-settings__segment {
+	padding: 6px 14px;
+	border: none;
+	background: transparent;
+	color: #50575e;
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+	transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.wp-desktop-os-settings__segment + .wp-desktop-os-settings__segment {
+	border-inline-start: 1px solid #dcdcde;
+}
+
+.wp-desktop-os-settings__segment:hover {
+	background: rgba(0, 0, 0, 0.04);
+	color: #1d2327;
+}
+
+.wp-desktop-os-settings__segment[aria-checked="true"] {
+	background: var(--wp-admin-theme-color, #2271b1);
+	color: #fff;
+}
+
+.wp-desktop-os-settings__segment:focus-visible {
+	outline: 2px solid var(--wp-admin-theme-color, #2271b1);
+	outline-offset: -2px;
+}
+
+.wp-desktop-os-settings__footer {
+	display: flex;
+	justify-content: flex-end;
+	margin-top: 12px;
+}
+
+.wp-desktop-os-settings__reset {
+	padding: 6px 12px;
+	border: 1px solid #dcdcde;
+	border-radius: 4px;
+	background: #fff;
+	color: #50575e;
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+	transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.wp-desktop-os-settings__reset:hover {
+	border-color: var(--wp-admin-theme-color, #2271b1);
+	color: var(--wp-admin-theme-color, #2271b1);
+}
+
 /* Resize handle (bottom-right corner). */
 .wp-desktop-window__resize-handle {
 	position: absolute;

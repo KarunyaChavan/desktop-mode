@@ -12,8 +12,12 @@
 
 import { WindowManager } from './window-manager';
 import { Dock } from './dock';
+import { OsSettings } from './settings';
 import { deriveWindowId } from './utils';
 import type { DesktopConfig, SessionWindow } from './types';
+
+/** Stable id for the OS Settings native window. */
+const OS_SETTINGS_WINDOW_ID = 'wp-desktop-os-settings';
 
 declare global {
 	interface Window {
@@ -50,12 +54,42 @@ function init(): void {
 
 	const manager = new WindowManager( desktopArea );
 
+	// OS Settings — shell-level preferences. Apply saved values before
+	// the first window paints so the user never sees the default palette
+	// when their saved accent differs.
+	const osSettings = new OsSettings();
+	osSettings.apply();
+
 	// Dock.
 	const dockEl = document.getElementById( 'wp-desktop-dock' );
 	let dock: Dock | null = null;
 	if ( dockEl && config.dockItems ) {
 		dock = new Dock( dockEl, manager, config.dockItems, config.adminUrl );
 		desktopArea.classList.add( 'wp-desktop-area--with-dock' );
+
+		// System tile at the bottom of the dock — last icon, after WP
+		// Settings. Clicking opens the native OS Settings window; the
+		// window manager focuses any existing instance instead of
+		// stacking a second.
+		dock.appendSystemItem( {
+			id: OS_SETTINGS_WINDOW_ID,
+			title: 'OS Settings',
+			icon: 'dashicons-desktop',
+			isOpen: () => !! manager.getById( OS_SETTINGS_WINDOW_ID ),
+			onOpen: () => {
+				manager.open( {
+					id: OS_SETTINGS_WINDOW_ID,
+					baseId: OS_SETTINGS_WINDOW_ID,
+					url: '#os-settings',
+					title: 'OS Settings',
+					icon: 'dashicons-desktop',
+					native: true,
+					render: ( body ) => osSettings.renderPanel( body ),
+					width: 560,
+					height: 560,
+				} );
+			},
+		} );
 	}
 
 	// Bootstrap: restore session (if any), then open/focus the current

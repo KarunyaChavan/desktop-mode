@@ -13,6 +13,34 @@ import type { WindowManager } from './window-manager';
 import { deriveWindowId } from './utils';
 
 /**
+ * A JS-registered dock tile appended below the admin-menu items.
+ *
+ * System items don't come from the PHP `$menu` globals — they're shell-
+ * level affordances (OS Settings, future: Jorvy, desktop widgets) that
+ * know how to open themselves. The dock doesn't call into WindowManager
+ * for these; it just invokes the supplied `onOpen` handler, which is
+ * free to open a native window, route to a URL, or anything else.
+ *
+ * Kept visually separated from menu items by a dividing line so users
+ * distinguish "admin pages" from "shell affordances".
+ */
+export interface SystemDockItem {
+	/** Unique dock-internal id (for active-state tracking). */
+	id: string;
+	/** Display label (tooltip). */
+	title: string;
+	/** Icon — dashicons class, data URI, or URL. */
+	icon: string;
+	/** Handler invoked on click. */
+	onOpen: () => void;
+	/**
+	 * Optional predicate: returns true when the system item currently
+	 * has an open window. Drives the active-dot indicator on the tile.
+	 */
+	isOpen?: () => boolean;
+}
+
+/**
  * A single dock item from the PHP menu data.
  */
 export interface DockItem {
@@ -44,6 +72,9 @@ export class Dock {
 	private tooltip: HTMLElement;
 	private itemElements: Map<string, HTMLElement> = new Map();
 	private adminUrl: string;
+	private systemItems: SystemDockItem[] = [];
+	private systemItemElements: Map<string, HTMLElement> = new Map();
+	private systemSeparator: HTMLElement | null = null;
 
 	constructor(
 		container: HTMLElement,
@@ -67,6 +98,31 @@ export class Dock {
 	}
 
 	/**
+	 * Append a JS-registered system item to the dock.
+	 *
+	 * System items render after the menu-derived items, separated by a
+	 * hairline divider. Use for shell affordances that don't live in
+	 * the admin menu: OS Settings today, Jorvy and desktop widgets
+	 * later. Callers supply their own `onOpen` — the dock doesn't
+	 * assume the item opens a window at all.
+	 */
+	public appendSystemItem( item: SystemDockItem ): void {
+		this.systemItems.push( item );
+
+		if ( ! this.systemSeparator ) {
+			this.systemSeparator = document.createElement( 'div' );
+			this.systemSeparator.className = 'wp-desktop-dock__separator';
+			this.systemSeparator.setAttribute( 'aria-hidden', 'true' );
+			this.container.appendChild( this.systemSeparator );
+		}
+
+		const tile = this.createSystemItemButton( item );
+		this.systemItemElements.set( item.id, tile );
+		this.container.appendChild( tile );
+		this.updateActiveStates();
+	}
+
+	/**
 	 * Render the dock contents.
 	 */
 	private render(): void {
@@ -78,6 +134,31 @@ export class Dock {
 			this.itemElements.set( item.id, btn );
 			this.container.appendChild( btn );
 		}
+	}
+
+	/**
+	 * Create a tile for a JS-registered system item. Structurally simpler
+	 * than a menu tile — no submenu, no multi-instance rail, no badge —
+	 * but uses the same base classes so the hover / focus / active
+	 * styling is shared.
+	 */
+	private createSystemItemButton( item: SystemDockItem ): HTMLElement {
+		const tile = document.createElement( 'div' );
+		tile.className = 'wp-desktop-dock__item wp-desktop-dock__item--system';
+		tile.dataset.systemId = item.id;
+
+		const primary = document.createElement( 'button' );
+		primary.className = 'wp-desktop-dock__item-primary';
+		primary.setAttribute( 'type', 'button' );
+		primary.setAttribute( 'aria-label', item.title );
+
+		primary.appendChild( this.createIcon( item.icon ) );
+		primary.addEventListener( 'click', () => item.onOpen() );
+
+		tile.appendChild( primary );
+		this.bindTooltip( tile, item.title );
+
+		return tile;
 	}
 
 	/**
@@ -329,6 +410,20 @@ export class Dock {
 					addBtn.hidden = instances.length === 0;
 				}
 			}
+		}
+
+		// System items — active dot driven by the caller's predicate. No
+		// focus indicator: the OS Settings window can be focused like any
+		// other, and the regular tile styling picks that up naturally.
+		for ( const sys of this.systemItems ) {
+			const tile = this.systemItemElements.get( sys.id );
+			if ( ! tile ) {
+				continue;
+			}
+			const isOpen = sys.isOpen ? sys.isOpen() : false;
+			const isFocused = !! focused && focused.id === sys.id;
+			tile.classList.toggle( 'wp-desktop-dock__item--active', isOpen );
+			tile.classList.toggle( 'wp-desktop-dock__item--focused', isFocused );
 		}
 	}
 }

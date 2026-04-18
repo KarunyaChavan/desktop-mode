@@ -267,7 +267,13 @@ export class WindowManager {
 	 */
 	public snapshot(): Session {
 		const focused = this.getFocused();
-		const windows: SessionWindow[] = this.stack.map( ( w ) => {
+		// Native windows aren't persistable — their `render` callback is
+		// a JS closure, not something we can serialize and rehydrate
+		// server-side. Skip them from both the window list and the
+		// focused id so a freshly booted shell doesn't try (and fail) to
+		// restore a window it can't reconstruct.
+		const persistable = this.stack.filter( ( w ) => ! w.config.native );
+		const windows: SessionWindow[] = persistable.map( ( w ) => {
 			const snap = w.getSnapshot();
 			return {
 				id: w.id,
@@ -282,10 +288,11 @@ export class WindowManager {
 				height: snap.height,
 			};
 		} );
+		const focusedId = focused && ! focused.config.native ? focused.id : '';
 
 		return {
 			windows,
-			focused: focused ? focused.id : '',
+			focused: focusedId,
 			updated: Math.floor( Date.now() / 1000 ),
 		};
 	}

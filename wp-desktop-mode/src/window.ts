@@ -85,6 +85,9 @@ function createControlButton( variant: string, label: string, svgInner: string )
 function createWindowElement( config: WindowConfig ): HTMLElement {
 	const el = document.createElement( 'div' );
 	el.className = 'wp-desktop-window';
+	if ( config.native ) {
+		el.classList.add( 'wp-desktop-window--native' );
+	}
 	el.id = `wp-window-${ config.id }`;
 	el.setAttribute( 'role', 'dialog' );
 	el.setAttribute( 'aria-labelledby', `wp-window-title-${ config.id }` );
@@ -177,7 +180,11 @@ function createWindowElement( config: WindowConfig ): HTMLElement {
 	controls.appendChild( btnMin );
 	controls.appendChild( btnMax );
 	controls.appendChild( btnFocus );
-	controls.appendChild( btnDetach );
+	// Detach opens the window's URL in a classic admin tab — it has no
+	// meaning for native windows, which have no admin URL to hand off.
+	if ( ! config.native ) {
+		controls.appendChild( btnDetach );
+	}
 	controls.appendChild( btnClose );
 
 	// Screen meta buttons container (populated when iframe reports available panels).
@@ -201,14 +208,21 @@ function createWindowElement( config: WindowConfig ): HTMLElement {
 	const body = document.createElement( 'div' );
 	body.className = 'wp-desktop-window__body';
 
-	const iframe = document.createElement( 'iframe' );
-	iframe.className = 'wp-desktop-window__iframe';
-	iframe.setAttribute( 'name', `wp-desktop-frame-${ config.id }` );
+	// Native windows own the body contents via {@link WindowConfig.render}
+	// — called from the Window constructor after mount. Skip the iframe
+	// plumbing entirely.
+	if ( ! config.native ) {
+		const iframe = document.createElement( 'iframe' );
+		iframe.className = 'wp-desktop-window__iframe';
+		iframe.setAttribute( 'name', `wp-desktop-frame-${ config.id }` );
 
-	const chromelessSrc = withChromelessParam( config.url );
-	iframe.src = chromelessSrc ?? 'about:blank';
+		const chromelessSrc = withChromelessParam( config.url );
+		iframe.src = chromelessSrc ?? 'about:blank';
 
-	body.appendChild( iframe );
+		body.appendChild( iframe );
+	} else {
+		body.classList.add( 'wp-desktop-window__body--native' );
+	}
 
 	// Resize handle.
 	const resizeHandle = document.createElement( 'div' );
@@ -256,7 +270,11 @@ export class Window {
 	public readonly id: string;
 	public readonly config: WindowConfig;
 	public readonly element: HTMLElement;
-	public readonly iframe: HTMLIFrameElement;
+	/**
+	 * Iframe for iframe-backed windows. Null for native windows, which
+	 * render into the body directly via {@link WindowConfig.render}.
+	 */
+	public readonly iframe: HTMLIFrameElement | null;
 	public state: WindowState = 'normal';
 
 	private titleBar: HTMLElement;
@@ -304,12 +322,26 @@ export class Window {
 		this.id = config.id;
 		this.config = config;
 		this.element = createWindowElement( config );
-		this.iframe = this.element.querySelector( '.wp-desktop-window__iframe' ) as HTMLIFrameElement;
+		this.iframe = config.native
+			? null
+			: ( this.element.querySelector( '.wp-desktop-window__iframe' ) as HTMLIFrameElement );
 		this.titleBar = this.element.querySelector( '.wp-desktop-window__titlebar' ) as HTMLElement;
 		this.titleEl = this.element.querySelector( '.wp-desktop-window__title' ) as HTMLElement;
 		this.boundOnMessage = this.onMessage.bind( this );
 
 		this.bindEvents();
+
+		// Native windows: let the module fill the body. We call render()
+		// before the opening animation so the first frame shows the
+		// rendered UI rather than an empty flash.
+		if ( config.native && config.render ) {
+			const body = this.element.querySelector(
+				'.wp-desktop-window__body'
+			) as HTMLElement | null;
+			if ( body ) {
+				config.render( body );
+			}
+		}
 
 		// Session-restored minimized windows must paint already-minimized on
 		// the first frame — otherwise the user sees the opening fade-in
@@ -321,7 +353,9 @@ export class Window {
 		if ( config.initialState === 'minimized' ) {
 			this.state = 'minimized';
 			this.element.classList.add( 'wp-desktop-window--minimized' );
-			this.iframe.style.visibility = 'hidden';
+			if ( this.iframe ) {
+				this.iframe.style.visibility = 'hidden';
+			}
 			return;
 		}
 
@@ -375,6 +409,9 @@ export class Window {
 	 * load).
 	 */
 	public getCurrentUrl(): string {
+		if ( ! this.iframe ) {
+			return this.config.url;
+		}
 		try {
 			const href = this.iframe.contentWindow?.location.href;
 			if ( href && href !== 'about:blank' ) {
@@ -406,7 +443,10 @@ export class Window {
 		const btnMin = this.element.querySelector( '.wp-desktop-window__btn--minimize' ) as HTMLElement;
 		const btnMax = this.element.querySelector( '.wp-desktop-window__btn--maximize' ) as HTMLElement;
 		const btnFocus = this.element.querySelector( '.wp-desktop-window__btn--focus' ) as HTMLElement;
-		const btnDetach = this.element.querySelector( '.wp-desktop-window__btn--detach' ) as HTMLElement;
+		// Native windows skip the detach button entirely.
+		const btnDetach = this.element.querySelector(
+			'.wp-desktop-window__btn--detach'
+		) as HTMLElement | null;
 		const btnClose = this.element.querySelector( '.wp-desktop-window__btn--close' ) as HTMLElement;
 
 		// Title-bar actions menu (multi-capable windows only — button
@@ -456,7 +496,7 @@ export class Window {
 			e.stopPropagation();
 			this.toggleFullscreen();
 		} );
-		btnDetach.addEventListener( 'click', ( e: Event ) => {
+		btnDetach?.addEventListener( 'click', ( e: Event ) => {
 			e.stopPropagation();
 			this.detach();
 		} );
@@ -470,38 +510,45 @@ export class Window {
 			this.toggleMaximize();
 		} );
 
-		// Tab strip — clicks navigate the iframe in place.
-		const tabs = this.element.querySelector( '.wp-desktop-window__tabs' );
-		if ( tabs ) {
-			tabs.addEventListener( 'click', ( e: Event ) => {
-				const target = ( e.target as HTMLElement ).closest( '.wp-desktop-window__tab' ) as HTMLElement | null;
-				if ( ! target || ! target.dataset.url ) {
-					return;
-				}
-				e.stopPropagation();
-				const next = withChromelessParam( target.dataset.url );
-				if ( next ) {
-					this.iframe.src = next;
+		// Iframe-only wiring: tab strip, load listener, and postMessage
+		// bridge all presuppose an iframe. Native windows have none of
+		// those affordances, so skip this whole block.
+		if ( this.iframe ) {
+			const iframe = this.iframe;
+
+			// Tab strip — clicks navigate the iframe in place.
+			const tabs = this.element.querySelector( '.wp-desktop-window__tabs' );
+			if ( tabs ) {
+				tabs.addEventListener( 'click', ( e: Event ) => {
+					const target = ( e.target as HTMLElement ).closest( '.wp-desktop-window__tab' ) as HTMLElement | null;
+					if ( ! target || ! target.dataset.url ) {
+						return;
+					}
+					e.stopPropagation();
+					const next = withChromelessParam( target.dataset.url );
+					if ( next ) {
+						iframe.src = next;
+					}
+				} );
+			}
+
+			// Sync the active tab whenever the iframe finishes a navigation.
+			// Reading iframe.contentWindow.location is safe because we only
+			// allow same-origin URLs; cross-origin would have thrown earlier.
+			iframe.addEventListener( 'load', () => {
+				try {
+					const href = iframe.contentWindow?.location.href;
+					if ( href ) {
+						this.syncActiveTab( href );
+					}
+				} catch {
+					/* Cross-origin or detached frame — ignore. */
 				}
 			} );
+
+			// Listen for postMessage from iframe.
+			window.addEventListener( 'message', this.boundOnMessage );
 		}
-
-		// Sync the active tab whenever the iframe finishes a navigation.
-		// Reading iframe.contentWindow.location is safe because we only
-		// allow same-origin URLs; cross-origin would have thrown earlier.
-		this.iframe.addEventListener( 'load', () => {
-			try {
-				const href = this.iframe.contentWindow?.location.href;
-				if ( href ) {
-					this.syncActiveTab( href );
-				}
-			} catch {
-				/* Cross-origin or detached frame — ignore. */
-			}
-		} );
-
-		// Listen for postMessage from iframe.
-		window.addEventListener( 'message', this.boundOnMessage );
 	}
 
 	/**
@@ -530,7 +577,7 @@ export class Window {
 		if ( event.origin !== window.location.origin ) {
 			return;
 		}
-		if ( event.source !== this.iframe.contentWindow ) {
+		if ( ! this.iframe || event.source !== this.iframe.contentWindow ) {
 			return;
 		}
 
@@ -592,7 +639,7 @@ export class Window {
 			// the button's --active class.
 			btn.addEventListener( 'click', ( e: Event ) => {
 				e.stopPropagation();
-				this.iframe.contentWindow?.postMessage(
+				this.iframe?.contentWindow?.postMessage(
 					{ type: 'wp-desktop-toggle-panel', panel },
 					window.location.origin
 				);
@@ -762,11 +809,16 @@ export class Window {
 		this.element.classList.add( 'wp-desktop-window--minimized' );
 
 		// After the transition completes, hide the iframe to save resources.
-		this.element.addEventListener( 'transitionend', ( e: TransitionEvent ) => {
-			if ( e.propertyName === 'opacity' && this.state === 'minimized' ) {
-				this.iframe.style.visibility = 'hidden';
-			}
-		}, { once: true } );
+		// Native windows don't have an iframe to hide — opacity: 0 on the
+		// window element already stops paint work.
+		if ( this.iframe ) {
+			const iframe = this.iframe;
+			this.element.addEventListener( 'transitionend', ( e: TransitionEvent ) => {
+				if ( e.propertyName === 'opacity' && this.state === 'minimized' ) {
+					iframe.style.visibility = 'hidden';
+				}
+			}, { once: true } );
+		}
 
 		this.onMinimize?.( this );
 		this.emitChange( 'state' );
@@ -777,7 +829,9 @@ export class Window {
 	 */
 	public restore(): void {
 		// Restore iframe visibility before the animation starts.
-		this.iframe.style.visibility = '';
+		if ( this.iframe ) {
+			this.iframe.style.visibility = '';
+		}
 
 		this.element.classList.remove( 'wp-desktop-window--minimized' );
 		if ( this.state === 'minimized' ) {

@@ -145,23 +145,23 @@
 
 /* Dashicon inside dock item. */
 .wp-desktop-dock__item .dashicons {
-	font-size: 20px;
-	width: 20px;
-	height: 20px;
+	font-size: var(--wp-desktop-dock-icon-size, 20px);
+	width: var(--wp-desktop-dock-icon-size, 20px);
+	height: var(--wp-desktop-dock-icon-size, 20px);
 	line-height: 1;
 }
 
 /* SVG icon (for custom post types with data:image/svg+xml icons). */
 .wp-desktop-dock__item-svg {
-	width: 20px;
-	height: 20px;
+	width: var(--wp-desktop-dock-icon-size, 20px);
+	height: var(--wp-desktop-dock-icon-size, 20px);
 	display: block;
 	fill: currentColor;
 }
 
 .wp-desktop-dock__item img.wp-desktop-dock__item-img {
-	width: 20px;
-	height: 20px;
+	width: var(--wp-desktop-dock-icon-size, 20px);
+	height: var(--wp-desktop-dock-icon-size, 20px);
 	display: block;
 	opacity: 0.7;
 	transition: opacity 0.15s ease;
@@ -217,3 +217,23 @@
  * No margin needed — the dock and desktop area are flex siblings
  * inside .wp-desktop-shell__body, so layout is automatic.
  */
+
+/*
+ * Hairline between admin-menu tiles and JS-registered system tiles
+ * (OS Settings today, Jorvy / widgets later). Auto-margined to push
+ * system items to the bottom of the dock so they always sit as the
+ * last cluster, regardless of how many menu items are above.
+ */
+.wp-desktop-dock__separator {
+	width: 60%;
+	height: 1px;
+	margin: 8px auto 4px;
+	background: var(--wp-desktop-dock-border);
+	flex-shrink: 0;
+	margin-top: auto;
+}
+
+/* System tiles — same footprint as menu tiles, no badges, no rails. */
+.wp-desktop-dock__item--system .wp-desktop-dock__item-primary {
+	color: rgba(255, 255, 255, 0.8);
+}

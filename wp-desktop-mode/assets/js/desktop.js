@@ -66,6 +66,9 @@ var wpDesktop = function(exports) {
   function createWindowElement(config) {
     const el = document.createElement("div");
     el.className = "wp-desktop-window";
+    if (config.native) {
+      el.classList.add("wp-desktop-window--native");
+    }
     el.id = `wp-window-${config.id}`;
     el.setAttribute("role", "dialog");
     el.setAttribute("aria-labelledby", `wp-window-title-${config.id}`);
@@ -133,7 +136,9 @@ var wpDesktop = function(exports) {
     controls.appendChild(btnMin);
     controls.appendChild(btnMax);
     controls.appendChild(btnFocus);
-    controls.appendChild(btnDetach);
+    if (!config.native) {
+      controls.appendChild(btnDetach);
+    }
     controls.appendChild(btnClose);
     const screenMeta = document.createElement("div");
     screenMeta.className = "wp-desktop-window__screen-meta";
@@ -147,12 +152,16 @@ var wpDesktop = function(exports) {
     titleBar.appendChild(controls);
     const body = document.createElement("div");
     body.className = "wp-desktop-window__body";
-    const iframe = document.createElement("iframe");
-    iframe.className = "wp-desktop-window__iframe";
-    iframe.setAttribute("name", `wp-desktop-frame-${config.id}`);
-    const chromelessSrc = withChromelessParam(config.url);
-    iframe.src = chromelessSrc ?? "about:blank";
-    body.appendChild(iframe);
+    if (!config.native) {
+      const iframe = document.createElement("iframe");
+      iframe.className = "wp-desktop-window__iframe";
+      iframe.setAttribute("name", `wp-desktop-frame-${config.id}`);
+      const chromelessSrc = withChromelessParam(config.url);
+      iframe.src = chromelessSrc ?? "about:blank";
+      body.appendChild(iframe);
+    } else {
+      body.classList.add("wp-desktop-window__body--native");
+    }
     const resizeHandle = document.createElement("div");
     resizeHandle.className = "wp-desktop-window__resize-handle";
     el.appendChild(titleBar);
@@ -205,15 +214,25 @@ var wpDesktop = function(exports) {
       this.id = config.id;
       this.config = config;
       this.element = createWindowElement(config);
-      this.iframe = this.element.querySelector(".wp-desktop-window__iframe");
+      this.iframe = config.native ? null : this.element.querySelector(".wp-desktop-window__iframe");
       this.titleBar = this.element.querySelector(".wp-desktop-window__titlebar");
       this.titleEl = this.element.querySelector(".wp-desktop-window__title");
       this.boundOnMessage = this.onMessage.bind(this);
       this.bindEvents();
+      if (config.native && config.render) {
+        const body = this.element.querySelector(
+          ".wp-desktop-window__body"
+        );
+        if (body) {
+          config.render(body);
+        }
+      }
       if (config.initialState === "minimized") {
         this.state = "minimized";
         this.element.classList.add("wp-desktop-window--minimized");
-        this.iframe.style.visibility = "hidden";
+        if (this.iframe) {
+          this.iframe.style.visibility = "hidden";
+        }
         return;
       }
       this.element.classList.add("wp-desktop-window--opening");
@@ -257,6 +276,9 @@ var wpDesktop = function(exports) {
      * load).
      */
     getCurrentUrl() {
+      if (!this.iframe) {
+        return this.config.url;
+      }
       try {
         const href = this.iframe.contentWindow?.location.href;
         if (href && href !== "about:blank") {
@@ -279,7 +301,9 @@ var wpDesktop = function(exports) {
       const btnMin = this.element.querySelector(".wp-desktop-window__btn--minimize");
       const btnMax = this.element.querySelector(".wp-desktop-window__btn--maximize");
       const btnFocus = this.element.querySelector(".wp-desktop-window__btn--focus");
-      const btnDetach = this.element.querySelector(".wp-desktop-window__btn--detach");
+      const btnDetach = this.element.querySelector(
+        ".wp-desktop-window__btn--detach"
+      );
       const btnClose = this.element.querySelector(".wp-desktop-window__btn--close");
       const menuBtn = this.element.querySelector(
         ".wp-desktop-window__menu-btn"
@@ -323,7 +347,7 @@ var wpDesktop = function(exports) {
         e.stopPropagation();
         this.toggleFullscreen();
       });
-      btnDetach.addEventListener("click", (e) => {
+      btnDetach?.addEventListener("click", (e) => {
         e.stopPropagation();
         this.detach();
       });
@@ -334,30 +358,33 @@ var wpDesktop = function(exports) {
       this.titleBar.addEventListener("dblclick", () => {
         this.toggleMaximize();
       });
-      const tabs = this.element.querySelector(".wp-desktop-window__tabs");
-      if (tabs) {
-        tabs.addEventListener("click", (e) => {
-          const target = e.target.closest(".wp-desktop-window__tab");
-          if (!target || !target.dataset.url) {
-            return;
-          }
-          e.stopPropagation();
-          const next = withChromelessParam(target.dataset.url);
-          if (next) {
-            this.iframe.src = next;
+      if (this.iframe) {
+        const iframe = this.iframe;
+        const tabs = this.element.querySelector(".wp-desktop-window__tabs");
+        if (tabs) {
+          tabs.addEventListener("click", (e) => {
+            const target = e.target.closest(".wp-desktop-window__tab");
+            if (!target || !target.dataset.url) {
+              return;
+            }
+            e.stopPropagation();
+            const next = withChromelessParam(target.dataset.url);
+            if (next) {
+              iframe.src = next;
+            }
+          });
+        }
+        iframe.addEventListener("load", () => {
+          try {
+            const href = iframe.contentWindow?.location.href;
+            if (href) {
+              this.syncActiveTab(href);
+            }
+          } catch {
           }
         });
+        window.addEventListener("message", this.boundOnMessage);
       }
-      this.iframe.addEventListener("load", () => {
-        try {
-          const href = this.iframe.contentWindow?.location.href;
-          if (href) {
-            this.syncActiveTab(href);
-          }
-        } catch {
-        }
-      });
-      window.addEventListener("message", this.boundOnMessage);
     }
     /**
      * Update the active tab to whichever submenu URL matches the iframe's
@@ -383,7 +410,7 @@ var wpDesktop = function(exports) {
       if (event.origin !== window.location.origin) {
         return;
       }
-      if (event.source !== this.iframe.contentWindow) {
+      if (!this.iframe || event.source !== this.iframe.contentWindow) {
         return;
       }
       const data = event.data;
@@ -433,7 +460,7 @@ var wpDesktop = function(exports) {
         btn.innerHTML = `<span class="dashicons ${cfg.icon}" aria-hidden="true"></span>`;
         btn.addEventListener("click", (e) => {
           e.stopPropagation();
-          this.iframe.contentWindow?.postMessage(
+          this.iframe?.contentWindow?.postMessage(
             { type: "wp-desktop-toggle-panel", panel },
             window.location.origin
           );
@@ -571,11 +598,14 @@ var wpDesktop = function(exports) {
     minimize() {
       this.state = "minimized";
       this.element.classList.add("wp-desktop-window--minimized");
-      this.element.addEventListener("transitionend", (e) => {
-        if (e.propertyName === "opacity" && this.state === "minimized") {
-          this.iframe.style.visibility = "hidden";
-        }
-      }, { once: true });
+      if (this.iframe) {
+        const iframe = this.iframe;
+        this.element.addEventListener("transitionend", (e) => {
+          if (e.propertyName === "opacity" && this.state === "minimized") {
+            iframe.style.visibility = "hidden";
+          }
+        }, { once: true });
+      }
       this.onMinimize?.(this);
       this.emitChange("state");
     }
@@ -583,7 +613,9 @@ var wpDesktop = function(exports) {
      * Restore the window from minimized state.
      */
     restore() {
-      this.iframe.style.visibility = "";
+      if (this.iframe) {
+        this.iframe.style.visibility = "";
+      }
       this.element.classList.remove("wp-desktop-window--minimized");
       if (this.state === "minimized") {
         this.state = "normal";
@@ -1061,7 +1093,8 @@ var wpDesktop = function(exports) {
      */
     snapshot() {
       const focused = this.getFocused();
-      const windows = this.stack.map((w) => {
+      const persistable = this.stack.filter((w) => !w.config.native);
+      const windows = persistable.map((w) => {
         const snap = w.getSnapshot();
         return {
           id: w.id,
@@ -1076,9 +1109,10 @@ var wpDesktop = function(exports) {
           height: snap.height
         };
       });
+      const focusedId = focused && !focused.config.native ? focused.id : "";
       return {
         windows,
-        focused: focused ? focused.id : "",
+        focused: focusedId,
         updated: Math.floor(Date.now() / 1e3)
       };
     }
@@ -1086,6 +1120,9 @@ var wpDesktop = function(exports) {
   class Dock {
     constructor(container, windowManager, items, adminUrl) {
       this.itemElements = /* @__PURE__ */ new Map();
+      this.systemItems = [];
+      this.systemItemElements = /* @__PURE__ */ new Map();
+      this.systemSeparator = null;
       this.container = container;
       this.windowManager = windowManager;
       this.items = items;
@@ -1098,6 +1135,28 @@ var wpDesktop = function(exports) {
       this.bindWindowEvents();
     }
     /**
+     * Append a JS-registered system item to the dock.
+     *
+     * System items render after the menu-derived items, separated by a
+     * hairline divider. Use for shell affordances that don't live in
+     * the admin menu: OS Settings today, Jorvy and desktop widgets
+     * later. Callers supply their own `onOpen` — the dock doesn't
+     * assume the item opens a window at all.
+     */
+    appendSystemItem(item) {
+      this.systemItems.push(item);
+      if (!this.systemSeparator) {
+        this.systemSeparator = document.createElement("div");
+        this.systemSeparator.className = "wp-desktop-dock__separator";
+        this.systemSeparator.setAttribute("aria-hidden", "true");
+        this.container.appendChild(this.systemSeparator);
+      }
+      const tile = this.createSystemItemButton(item);
+      this.systemItemElements.set(item.id, tile);
+      this.container.appendChild(tile);
+      this.updateActiveStates();
+    }
+    /**
      * Render the dock contents.
      */
     render() {
@@ -1107,6 +1166,26 @@ var wpDesktop = function(exports) {
         this.itemElements.set(item.id, btn);
         this.container.appendChild(btn);
       }
+    }
+    /**
+     * Create a tile for a JS-registered system item. Structurally simpler
+     * than a menu tile — no submenu, no multi-instance rail, no badge —
+     * but uses the same base classes so the hover / focus / active
+     * styling is shared.
+     */
+    createSystemItemButton(item) {
+      const tile = document.createElement("div");
+      tile.className = "wp-desktop-dock__item wp-desktop-dock__item--system";
+      tile.dataset.systemId = item.id;
+      const primary = document.createElement("button");
+      primary.className = "wp-desktop-dock__item-primary";
+      primary.setAttribute("type", "button");
+      primary.setAttribute("aria-label", item.title);
+      primary.appendChild(this.createIcon(item.icon));
+      primary.addEventListener("click", () => item.onOpen());
+      tile.appendChild(primary);
+      this.bindTooltip(tile, item.title);
+      return tile;
     }
     /**
      * Create a single dock icon tile.
@@ -1306,8 +1385,266 @@ var wpDesktop = function(exports) {
           }
         }
       }
+      for (const sys of this.systemItems) {
+        const tile = this.systemItemElements.get(sys.id);
+        if (!tile) {
+          continue;
+        }
+        const isOpen = sys.isOpen ? sys.isOpen() : false;
+        const isFocused = !!focused && focused.id === sys.id;
+        tile.classList.toggle("wp-desktop-dock__item--active", isOpen);
+        tile.classList.toggle("wp-desktop-dock__item--focused", isFocused);
+      }
     }
   }
+  const STORAGE_KEY = "wp-desktop-os-settings";
+  const WALLPAPERS = [
+    {
+      id: "dark",
+      label: "Graphite",
+      value: "linear-gradient(135deg, #1d2327 0%, #2c3338 50%, #1d2327 100%)"
+    },
+    {
+      id: "aurora",
+      label: "Aurora",
+      value: "linear-gradient(135deg, #1a2980 0%, #26d0ce 100%)"
+    },
+    {
+      id: "sunset",
+      label: "Sunset",
+      value: "linear-gradient(135deg, #ff512f 0%, #dd2476 100%)"
+    },
+    {
+      id: "forest",
+      label: "Forest",
+      value: "linear-gradient(135deg, #134e5e 0%, #71b280 100%)"
+    },
+    {
+      id: "mono",
+      label: "Mono",
+      value: "#1d2327"
+    }
+  ];
+  const ACCENTS = [
+    { id: "wp-blue", label: "WordPress Blue", value: "#2271b1" },
+    { id: "indigo", label: "Indigo", value: "#3858e9" },
+    { id: "teal", label: "Teal", value: "#04a4cc" },
+    { id: "emerald", label: "Emerald", value: "#059669" },
+    { id: "amber", label: "Amber", value: "#d97706" },
+    { id: "rose", label: "Rose", value: "#e11d48" }
+  ];
+  const DOCK_SIZES = [
+    { id: "compact", label: "Compact", width: 48, icon: 18 },
+    { id: "default", label: "Default", width: 56, icon: 20 },
+    { id: "large", label: "Large", width: 72, icon: 26 }
+  ];
+  const DEFAULTS = {
+    wallpaper: "dark",
+    accent: "wp-blue",
+    dockSize: "default"
+  };
+  class OsSettings {
+    constructor() {
+      this.state = this.load();
+    }
+    /**
+     * Apply the current state to the shell. Safe to call repeatedly —
+     * subsequent calls just reset the same CSS variables.
+     */
+    apply() {
+      const shell = document.getElementById("wp-desktop-shell");
+      if (!shell) {
+        return;
+      }
+      const wallpaper = WALLPAPERS.find((w) => w.id === this.state.wallpaper) ?? WALLPAPERS[0];
+      const accent = ACCENTS.find((a) => a.id === this.state.accent) ?? ACCENTS[0];
+      const dockSize = DOCK_SIZES.find((d) => d.id === this.state.dockSize) ?? DOCK_SIZES[1];
+      shell.style.setProperty("--wp-desktop-bg", wallpaper.value);
+      shell.style.setProperty("--wp-admin-theme-color", accent.value);
+      shell.style.setProperty("--wp-desktop-dock-width", `${dockSize.width}px`);
+      shell.style.setProperty("--wp-desktop-dock-icon-size", `${dockSize.icon}px`);
+    }
+    /**
+     * Render the settings panel into the given native-window body.
+     *
+     * Builds three pickers (wallpaper, accent, dock size) and wires
+     * each to save/apply on change. The panel is a one-shot build per
+     * window open — closing and re-opening renders a fresh tree.
+     */
+    renderPanel(body) {
+      body.classList.add("wp-desktop-os-settings");
+      body.innerHTML = "";
+      const intro = document.createElement("p");
+      intro.className = "wp-desktop-os-settings__intro";
+      intro.textContent = "Personalize your desktop. Changes apply instantly and are saved to this browser.";
+      body.appendChild(intro);
+      body.appendChild(
+        this.buildWallpaperSection(() => this.apply())
+      );
+      body.appendChild(
+        this.buildAccentSection(() => this.apply())
+      );
+      body.appendChild(
+        this.buildDockSizeSection(() => this.apply())
+      );
+      const footer = document.createElement("div");
+      footer.className = "wp-desktop-os-settings__footer";
+      const reset = document.createElement("button");
+      reset.type = "button";
+      reset.className = "wp-desktop-os-settings__reset";
+      reset.textContent = "Reset to defaults";
+      reset.addEventListener("click", () => {
+        this.state = { ...DEFAULTS };
+        this.save();
+        this.apply();
+        this.renderPanel(body);
+      });
+      footer.appendChild(reset);
+      body.appendChild(footer);
+    }
+    /**
+     * Build the wallpaper section — a grid of preview swatches. Clicking
+     * a swatch sets the wallpaper, saves, and fires the apply callback so
+     * the desktop updates live.
+     */
+    buildWallpaperSection(onChange) {
+      const section = this.buildSection(
+        "Wallpaper",
+        "The backdrop behind your windows."
+      );
+      const grid = document.createElement("div");
+      grid.className = "wp-desktop-os-settings__grid wp-desktop-os-settings__grid--wallpapers";
+      for (const wp of WALLPAPERS) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "wp-desktop-os-settings__swatch wp-desktop-os-settings__swatch--wallpaper";
+        btn.setAttribute("aria-label", wp.label);
+        btn.setAttribute("aria-pressed", this.state.wallpaper === wp.id ? "true" : "false");
+        btn.dataset.id = wp.id;
+        btn.style.background = wp.value;
+        const label = document.createElement("span");
+        label.className = "wp-desktop-os-settings__swatch-label";
+        label.textContent = wp.label;
+        btn.appendChild(label);
+        btn.addEventListener("click", () => {
+          this.state.wallpaper = wp.id;
+          this.save();
+          onChange();
+          this.refreshSelected(grid, wp.id);
+        });
+        grid.appendChild(btn);
+      }
+      section.appendChild(grid);
+      return section;
+    }
+    buildAccentSection(onChange) {
+      const section = this.buildSection(
+        "Accent color",
+        "Used in focused window title bars, buttons, and focus rings."
+      );
+      const grid = document.createElement("div");
+      grid.className = "wp-desktop-os-settings__grid wp-desktop-os-settings__grid--accents";
+      for (const accent of ACCENTS) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "wp-desktop-os-settings__swatch wp-desktop-os-settings__swatch--accent";
+        btn.setAttribute("aria-label", accent.label);
+        btn.setAttribute("aria-pressed", this.state.accent === accent.id ? "true" : "false");
+        btn.dataset.id = accent.id;
+        btn.style.background = accent.value;
+        btn.title = accent.label;
+        btn.addEventListener("click", () => {
+          this.state.accent = accent.id;
+          this.save();
+          onChange();
+          this.refreshSelected(grid, accent.id);
+        });
+        grid.appendChild(btn);
+      }
+      section.appendChild(grid);
+      return section;
+    }
+    buildDockSizeSection(onChange) {
+      const section = this.buildSection(
+        "Dock size",
+        "Width of the dock and size of its icons."
+      );
+      const group = document.createElement("div");
+      group.className = "wp-desktop-os-settings__segmented";
+      group.setAttribute("role", "radiogroup");
+      for (const size of DOCK_SIZES) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "wp-desktop-os-settings__segment";
+        btn.setAttribute("role", "radio");
+        btn.setAttribute("aria-checked", this.state.dockSize === size.id ? "true" : "false");
+        btn.dataset.id = size.id;
+        btn.textContent = size.label;
+        btn.addEventListener("click", () => {
+          this.state.dockSize = size.id;
+          this.save();
+          onChange();
+          this.refreshSelected(group, size.id, "aria-checked");
+        });
+        group.appendChild(btn);
+      }
+      section.appendChild(group);
+      return section;
+    }
+    /**
+     * Helper: builds a `<section>` wrapper with a heading + description.
+     */
+    buildSection(title, description) {
+      const section = document.createElement("section");
+      section.className = "wp-desktop-os-settings__section";
+      const heading = document.createElement("h3");
+      heading.className = "wp-desktop-os-settings__heading";
+      heading.textContent = title;
+      section.appendChild(heading);
+      const desc = document.createElement("p");
+      desc.className = "wp-desktop-os-settings__desc";
+      desc.textContent = description;
+      section.appendChild(desc);
+      return section;
+    }
+    /**
+     * Flip the pressed state on whichever button in the group matches the
+     * given id. Extracted so each picker can stay terse.
+     */
+    refreshSelected(container, id, attr = "aria-pressed") {
+      container.querySelectorAll("[data-id]").forEach((el) => {
+        el.setAttribute(attr, el.dataset.id === id ? "true" : "false");
+      });
+    }
+    /**
+     * Read state from localStorage, merged over defaults. Invalid or
+     * unknown values fall back silently — a user editing their storage
+     * by hand shouldn't brick the panel.
+     */
+    load() {
+      try {
+        const raw = window.localStorage.getItem(STORAGE_KEY);
+        if (!raw) {
+          return { ...DEFAULTS };
+        }
+        const parsed = JSON.parse(raw);
+        return {
+          wallpaper: WALLPAPERS.some((w) => w.id === parsed.wallpaper) ? parsed.wallpaper : DEFAULTS.wallpaper,
+          accent: ACCENTS.some((a) => a.id === parsed.accent) ? parsed.accent : DEFAULTS.accent,
+          dockSize: DOCK_SIZES.some((d) => d.id === parsed.dockSize) ? parsed.dockSize : DEFAULTS.dockSize
+        };
+      } catch {
+        return { ...DEFAULTS };
+      }
+    }
+    save() {
+      try {
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(this.state));
+      } catch {
+      }
+    }
+  }
+  const OS_SETTINGS_WINDOW_ID = "wp-desktop-os-settings";
   const SESSION_SAVE_DEBOUNCE_MS = 500;
   const VIEWPORT_CLAMP_MARGIN = 12;
   function init() {
@@ -1320,11 +1657,32 @@ var wpDesktop = function(exports) {
       return;
     }
     const manager = new WindowManager(desktopArea);
+    const osSettings = new OsSettings();
+    osSettings.apply();
     const dockEl = document.getElementById("wp-desktop-dock");
     let dock = null;
     if (dockEl && config.dockItems) {
       dock = new Dock(dockEl, manager, config.dockItems, config.adminUrl);
       desktopArea.classList.add("wp-desktop-area--with-dock");
+      dock.appendSystemItem({
+        id: OS_SETTINGS_WINDOW_ID,
+        title: "OS Settings",
+        icon: "dashicons-desktop",
+        isOpen: () => !!manager.getById(OS_SETTINGS_WINDOW_ID),
+        onOpen: () => {
+          manager.open({
+            id: OS_SETTINGS_WINDOW_ID,
+            baseId: OS_SETTINGS_WINDOW_ID,
+            url: "#os-settings",
+            title: "OS Settings",
+            icon: "dashicons-desktop",
+            native: true,
+            render: (body) => osSettings.renderPanel(body),
+            width: 560,
+            height: 560
+          });
+        }
+      });
     }
     const hasSession = !!(config.session && config.session.windows && config.session.windows.length > 0);
     if (hasSession) {

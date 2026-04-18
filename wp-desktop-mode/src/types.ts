@@ -59,6 +59,24 @@ export interface WindowConfig {
 	 * or maximized window comes back in the same shape the user left it.
 	 */
 	initialState?: WindowState;
+	/**
+	 * Native window flag. When true, the window's body is rendered
+	 * directly in the parent DOM via {@link WindowConfig.render} instead
+	 * of loading {@link WindowConfig.url} in an iframe. Native windows
+	 * inherit the full chrome (drag/resize/minimize/maximize) but skip
+	 * iframe-only affordances (detach-to-tab, screen-meta bridge, tab
+	 * strip, postMessage listener). Used for desktop-shell-native panels
+	 * like OS Settings where an iframe would be wasteful and where the
+	 * module wants direct access to the shell.
+	 */
+	native?: boolean;
+	/**
+	 * Render callback for native windows. Invoked once after the window
+	 * element mounts; receives the empty `.wp-desktop-window__body` and
+	 * fills it with whatever DOM the module wants. Ignored when
+	 * `native` is falsy.
+	 */
+	render?: ( body: HTMLElement ) => void;
 }
 
 /**

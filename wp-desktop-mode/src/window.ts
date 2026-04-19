@@ -1320,6 +1320,47 @@ export class Window {
 	}
 
 	/**
+	 * Enter maximized state idempotently.
+	 *
+	 * Different from `toggleMaximize` in that it's a one-way: a
+	 * caller that wants the window maximized can call this without
+	 * worrying about the current state. No-op if already maximized.
+	 *
+	 * Used by the Overview-exit path so clicking a thumbnail can
+	 * animate directly from the grid position to maximized in one
+	 * co-animation, rather than the two chained animations a
+	 * `toggleMaximize` call would produce (first back-to-normal,
+	 * then normal-to-maximized).
+	 */
+	public maximize(): void {
+		if ( this.state === 'maximized' ) {
+			return;
+		}
+		const parent = this.element.parentElement;
+		if ( ! parent ) {
+			return;
+		}
+		// `offsetLeft` / `offsetWidth` etc. ignore CSS transforms,
+		// so even if the caller has applied an overview transform,
+		// the saved geometry captures the pre-transform inline
+		// position that un-maximize will later restore to.
+		this.savedGeometry = {
+			x: this.element.offsetLeft,
+			y: this.element.offsetTop,
+			width: this.element.offsetWidth,
+			height: this.element.offsetHeight,
+		};
+		this.element.classList.add( 'wp-desktop-window--maximized' );
+		this.element.style.left = '0px';
+		this.element.style.top = '0px';
+		this.element.style.width = `${ parent.clientWidth }px`;
+		this.element.style.height = `${ parent.clientHeight }px`;
+		this.state = 'maximized';
+		this.emitChange( 'state' );
+		doAction( HOOKS.WINDOW_MAXIMIZED, { windowId: this.id } );
+	}
+
+	/**
 	 * Toggle between maximized and normal states.
 	 */
 	public toggleMaximize(): void {
@@ -1673,6 +1714,17 @@ export class Window {
 			height: this.element.offsetHeight,
 			state: this.state,
 		};
+	}
+
+	/**
+	 * Number of external sub-tabs currently open on this window.
+	 * Zero for windows that haven't had any external-link clicks.
+	 * Exposed publicly (rather than via the snapshot) so callers
+	 * like the Overview label renderer can decorate thumbnails
+	 * without paying the cost of a full serialization pass.
+	 */
+	public getExternalTabCount(): number {
+		return this.externalTabs.size;
 	}
 
 	/**

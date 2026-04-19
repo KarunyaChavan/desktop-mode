@@ -9,6 +9,23 @@
 
 /* Base window. */
 .wp-desktop-window {
+	/*
+	 * border-box sizing is essential for pixel-perfect maximize.
+	 * `Window.maximize()` sets inline `width = parent.clientWidth`,
+	 * which is the area's inner width. Under content-box sizing, the
+	 * window's 1px border would add 2 extra pixels to the rendered
+	 * element, pushing its right + bottom borders past the
+	 * overflow-hidden boundary of `.wp-desktop-area` and making them
+	 * look clipped/offscreen. With border-box, width/height INCLUDE
+	 * the border, so `width = clientWidth` fits exactly.
+	 *
+	 * WP admin CSS does set `*, *::before, *::after { box-sizing:
+	 * border-box }` globally, but setting it explicitly here
+	 * insulates us from stylesheets or embeds that might reset the
+	 * universal rule — the correctness of maximize geometry is too
+	 * important to depend on ambient CSS.
+	 */
+	box-sizing: border-box;
 	position: absolute;
 	display: flex;
 	flex-direction: column;
@@ -1378,6 +1395,219 @@
 
 .wp-desktop-window--opening {
 	animation: wp-desktop-window-open 0.2s ease forwards;
+}
+
+/* ---------------------------------------------------------------
+ * Overview mode — zoom out, see every window at once.
+ *
+ * The window's `left/top/width/height` stays untouched; we animate
+ * via `transform` (translate + scale) so layout is a GPU-composite
+ * pass, not a reflow. `transform-origin: top left` makes translate
+ * and scale compose cleanly — a target coordinate maps to the
+ * window's top-left corner pre-scale.
+ *
+ * Iframes go `pointer-events: none` so clicks hit the window
+ * wrapper (and bubble to the desktop-area click handler) instead
+ * of the iframe content — which would otherwise eat the click.
+ * --------------------------------------------------------------- */
+.wp-desktop-area--overview {
+	/* Darken the backdrop and tint it so windows feel like they're
+	 * floating over a neutral canvas, not the wallpaper. */
+	background-color: rgba( 0, 0, 0, 0.45 );
+	transition: background-color 0.28s ease;
+}
+
+.wp-desktop-window--overview {
+	transform-origin: top left;
+	transition:
+		transform 0.28s cubic-bezier( 0.2, 0, 0.2, 1 ),
+		box-shadow 0.2s ease,
+		opacity 0.2s ease;
+	cursor: pointer;
+	/* Hover effects apply a thick outline rather than another
+	 * transform (which would fight the layout's own transform).
+	 * Box-shadow is composite-only, so it's cheap. */
+	box-shadow: 0 10px 30px rgba( 0, 0, 0, 0.35 );
+}
+
+.wp-desktop-window--overview .wp-desktop-window__iframe,
+.wp-desktop-window--overview .wp-desktop-window__iframe--external {
+	pointer-events: none;
+}
+
+.wp-desktop-window--overview:hover {
+	box-shadow:
+		0 14px 38px rgba( 0, 0, 0, 0.45 ),
+		0 0 0 3px var( --wp-admin-theme-color, #2271b1 );
+	z-index: 1;
+}
+
+/*
+ * Mission-Control-style dimming: once ANY window is hovered, every
+ * OTHER window dims and desaturates slightly — creating a clear
+ * focal point without needing the hovered one to grow or lift.
+ * `:has()` lands in every evergreen browser we target (Chrome 105,
+ * Safari 15.4, Firefox 121+); older engines miss the dimming but
+ * keep the accent-ring affordance, so it degrades gracefully.
+ */
+.wp-desktop-area--overview:has( .wp-desktop-window--overview:hover )
+	.wp-desktop-window--overview:not( :hover ) {
+	opacity: 0.5;
+	filter: brightness( 0.75 );
+	transition:
+		transform 0.28s cubic-bezier( 0.2, 0, 0.2, 1 ),
+		opacity 0.18s ease,
+		filter 0.18s ease;
+}
+
+/*
+ * Dock slides out smoothly during overview — width collapses (the
+ * flex row reflows so the area grows into the freed space) while
+ * the dock itself slides left and fades. `display: none` would have
+ * been abrupt in both directions; animating the flex width does the
+ * heavy lifting and the user sees a single continuous motion.
+ *
+ * `overflow: hidden` on the transitioning dock keeps its icons from
+ * leaking past the shrinking boundary. `pointer-events: none` comes
+ * in immediately on overview enter so stray clicks mid-animation
+ * can't open a window behind the user's back.
+ */
+#wp-desktop-dock {
+	transition:
+		width 0.28s cubic-bezier( 0.2, 0, 0.2, 1 ),
+		min-width 0.28s cubic-bezier( 0.2, 0, 0.2, 1 ),
+		padding 0.28s cubic-bezier( 0.2, 0, 0.2, 1 ),
+		transform 0.28s cubic-bezier( 0.2, 0, 0.2, 1 ),
+		opacity 0.22s ease;
+	overflow: hidden;
+}
+
+.wp-desktop-shell--overview #wp-desktop-dock {
+	width: 0;
+	min-width: 0;
+	padding-inline: 0;
+	padding-block: 0;
+	transform: translateX( -16px );
+	opacity: 0;
+	pointer-events: none;
+}
+
+@media ( prefers-reduced-motion: reduce ) {
+	#wp-desktop-dock {
+		transition-duration: 0.01ms;
+	}
+}
+
+/* ---------------------------------------------------------------
+ * Overview thumbnail labels.
+ *
+ * Sit outside each window's transform (as absolute-positioned
+ * siblings in the desktop area) so they stay readable at any
+ * thumbnail scale — an icon-sized thumbnail still has its
+ * full-size caption hovering above it.
+ *
+ * Layout: one line, icon + title (+ optional meta). Horizontal
+ * center-of-thumbnail alignment is handled via the label's
+ * own flex + width set in JS to match the scaled thumbnail.
+ * --------------------------------------------------------------- */
+.wp-desktop-overview-label {
+	position: absolute;
+	height: 28px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	padding: 0 10px;
+	color: #fff;
+	font-size: 13px;
+	font-weight: 500;
+	line-height: 1;
+	letter-spacing: 0.01em;
+	text-shadow: 0 1px 3px rgba( 0, 0, 0, 0.55 );
+	white-space: nowrap;
+	pointer-events: none;
+	opacity: 0;
+	transform: translateY( 4px );
+	transition:
+		opacity 0.22s ease 0.06s,
+		transform 0.28s cubic-bezier( 0.2, 0, 0.2, 1 ) 0.06s;
+	z-index: 2;
+}
+
+/*
+ * Active labels fade/slide in once the area enters overview mode.
+ * The short delay on `transition-*` lets the thumbnails start
+ * moving first, so labels appear to "catch up" rather than race
+ * ahead of their windows.
+ */
+.wp-desktop-area--overview .wp-desktop-overview-label {
+	opacity: 1;
+	transform: translateY( 0 );
+}
+
+/* On exit, flip the animation off. */
+.wp-desktop-overview-label--out {
+	opacity: 0 !important;
+	transform: translateY( -4px ) !important;
+	transition-delay: 0s !important;
+}
+
+.wp-desktop-overview-label__icon {
+	font-size: 16px;
+	width: 16px;
+	height: 16px;
+	line-height: 1;
+	flex-shrink: 0;
+	opacity: 0.9;
+}
+
+.wp-desktop-overview-label__title {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.wp-desktop-overview-label__meta {
+	color: rgba( 255, 255, 255, 0.7 );
+	font-weight: 400;
+	flex-shrink: 0;
+}
+
+/*
+ * Dim labels when another window is hovered. DOM order places
+ * each label immediately after its window, so the adjacent-
+ * sibling selector picks out exactly the label belonging to the
+ * hovered window and keeps it bright; all other labels fall under
+ * the `:has()` rule and dim.
+ */
+.wp-desktop-area--overview:has( .wp-desktop-window--overview:hover )
+	.wp-desktop-overview-label {
+	opacity: 0.45;
+	transform: translateY( 0 );
+}
+
+.wp-desktop-window--overview:hover + .wp-desktop-overview-label {
+	opacity: 1 !important;
+}
+
+@media ( prefers-reduced-motion: reduce ) {
+	.wp-desktop-overview-label {
+		transition-duration: 0.01ms;
+		transition-delay: 0s;
+	}
+}
+
+/*
+ * Focused-window label overlay is not strictly needed — the title
+ * bar stays visible in the scaled thumbnail. If we later want a
+ * cleaner label (to combat tiny text on 8+-window grids), slot it
+ * in here via a ::after pseudo-element.
+ */
+
+@media ( prefers-reduced-motion: reduce ) {
+	.wp-desktop-area--overview,
+	.wp-desktop-window--overview {
+		transition-duration: 0.01ms;
+	}
 }
 
 /*

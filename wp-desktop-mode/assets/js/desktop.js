@@ -129,6 +129,42 @@ var wpDesktop = function(exports) {
     /** Action, fires when iframe title updates change the window title. */
     WINDOW_TITLE_CHANGED: "wp-desktop.window.title-changed",
     // ------------------------------------------------------------------
+    // Overview / Arrange lifecycle actions.
+    //
+    // The "Arrange" admin-bar menu drives two layout algorithms —
+    // Cascade (instantly reposition every window in a staggered
+    // stack) and Overview (zoom-out grid view with click-to-focus).
+    // These hooks surface the state transitions so plugins can
+    // instrument analytics, apply custom transitions, override
+    // thumbnail decorations, etc. All actions; a filter for
+    // mutating the overview layout may be added later if plugins
+    // want to reorder or group thumbnails.
+    // ------------------------------------------------------------------
+    /** Action, fires before the overview enter animation starts. */
+    OVERVIEW_ENTERING: "wp-desktop.overview.entering",
+    /** Action, fires once the overview enter animation has completed. */
+    OVERVIEW_ENTERED: "wp-desktop.overview.entered",
+    /**
+     * Action, fires at the start of the overview-exit animation.
+     * Payload: `{ windowId?: string, reason: 'select' | 'cancel' }` —
+     * `windowId` set when the user clicked a thumbnail (reason
+     * 'select'); omitted when the user pressed Escape or clicked
+     * the backdrop (reason 'cancel').
+     */
+    OVERVIEW_EXITING: "wp-desktop.overview.exiting",
+    /** Action, fires once the overview-exit animation has settled. */
+    OVERVIEW_EXITED: "wp-desktop.overview.exited",
+    /** Action, fires when the cursor enters a thumbnail. Payload `{ windowId }`. */
+    OVERVIEW_WINDOW_HOVER: "wp-desktop.overview.window-hover",
+    /** Action, fires when the cursor leaves a thumbnail. Payload `{ windowId }`. */
+    OVERVIEW_WINDOW_UNHOVER: "wp-desktop.overview.window-unhover",
+    /** Action, fires the instant a thumbnail click is registered (before exit + maximize kick in). Payload `{ windowId }`. */
+    OVERVIEW_WINDOW_CLICK: "wp-desktop.overview.window-click",
+    /** Action, fires before cascade computes + applies new positions. Payload `{ windowCount }`. */
+    ARRANGE_CASCADE_STARTING: "wp-desktop.arrange.cascade.starting",
+    /** Action, fires after cascade has positioned every window. Payload `{ windowCount }`. */
+    ARRANGE_CASCADE_APPLIED: "wp-desktop.arrange.cascade.applied",
+    // ------------------------------------------------------------------
     // Shell-level lifecycle actions.
     // ------------------------------------------------------------------
     /**
@@ -1120,6 +1156,42 @@ var wpDesktop = function(exports) {
       }
     }
     /**
+     * Enter maximized state idempotently.
+     *
+     * Different from `toggleMaximize` in that it's a one-way: a
+     * caller that wants the window maximized can call this without
+     * worrying about the current state. No-op if already maximized.
+     *
+     * Used by the Overview-exit path so clicking a thumbnail can
+     * animate directly from the grid position to maximized in one
+     * co-animation, rather than the two chained animations a
+     * `toggleMaximize` call would produce (first back-to-normal,
+     * then normal-to-maximized).
+     */
+    maximize() {
+      if (this.state === "maximized") {
+        return;
+      }
+      const parent = this.element.parentElement;
+      if (!parent) {
+        return;
+      }
+      this.savedGeometry = {
+        x: this.element.offsetLeft,
+        y: this.element.offsetTop,
+        width: this.element.offsetWidth,
+        height: this.element.offsetHeight
+      };
+      this.element.classList.add("wp-desktop-window--maximized");
+      this.element.style.left = "0px";
+      this.element.style.top = "0px";
+      this.element.style.width = `${parent.clientWidth}px`;
+      this.element.style.height = `${parent.clientHeight}px`;
+      this.state = "maximized";
+      this.emitChange("state");
+      doAction(HOOKS.WINDOW_MAXIMIZED, { windowId: this.id });
+    }
+    /**
      * Toggle between maximized and normal states.
      */
     toggleMaximize() {
@@ -1432,6 +1504,16 @@ var wpDesktop = function(exports) {
       };
     }
     /**
+     * Number of external sub-tabs currently open on this window.
+     * Zero for windows that haven't had any external-link clicks.
+     * Exposed publicly (rather than via the snapshot) so callers
+     * like the Overview label renderer can decorate thumbnails
+     * without paying the cost of a full serialization pass.
+     */
+    getExternalTabCount() {
+      return this.externalTabs.size;
+    }
+    /**
      * Serializable snapshot of this window's external sub-tabs.
      * Iteration order follows the `Map`'s insertion order, which
      * matches the tab strip's left-to-right order — so restoring
@@ -1460,7 +1542,52 @@ var wpDesktop = function(exports) {
       this.stack = [];
       this.cascadeIndex = 0;
       this.onToggleStartupRequested = null;
+      this.desktopResizeObserver = null;
+      this.overviewActive = false;
+      this.overviewSnapshot = /* @__PURE__ */ new Map();
+      this.overviewLabels = /* @__PURE__ */ new Map();
+      this.overviewClickHandler = null;
+      this.overviewKeyHandler = null;
+      this.overviewMouseHandler = null;
+      this.lastOverviewHoverId = null;
       this.desktop = desktop;
+      if (typeof ResizeObserver !== "undefined") {
+        this.desktopResizeObserver = new ResizeObserver(
+          () => this.reflowMaximizedWindows()
+        );
+        this.desktopResizeObserver.observe(desktop);
+      }
+    }
+    /**
+     * Re-apply maximize bounds to any window currently in
+     * `state === 'maximized'`. Called from the desktop-area
+     * ResizeObserver so the user can shrink the browser window
+     * without the maximized content refusing to follow.
+     *
+     * Skipped during overview mode: there, windows carry CSS
+     * transforms for the thumbnail layout, and touching their
+     * inline geometry would desync the live transform math.
+     * Overview exit re-applies maximize correctly via its own path.
+     *
+     * Fullscreen windows aren't touched either — they're
+     * `position: fixed; inset: 0` in CSS, so the viewport naturally
+     * sizes them without JS involvement.
+     */
+    reflowMaximizedWindows() {
+      if (this.overviewActive) {
+        return;
+      }
+      for (const w of this.stack) {
+        if (w.state !== "maximized") {
+          continue;
+        }
+        const parent = w.element.parentElement;
+        if (!parent) {
+          continue;
+        }
+        w.element.style.width = `${parent.clientWidth}px`;
+        w.element.style.height = `${parent.clientHeight}px`;
+      }
     }
     /**
      * Open a new window — or focus an existing one — for the given page.
@@ -1668,6 +1795,301 @@ var wpDesktop = function(exports) {
     getFocused() {
       return this.stack.length > 0 ? this.stack[this.stack.length - 1] : void 0;
     }
+    // ==========================================================
+    // Window-arrangement layouts
+    // ==========================================================
+    /**
+     * Cascade-lay-out every eligible window from the top-left of the
+     * desktop area, each offset so previous windows' title bars stay
+     * visible. Mirrors the classic Windows/macOS "cascade windows"
+     * behavior; resets any fullscreen/maximized/minimized state
+     * first so the cascade actually takes effect.
+     *
+     * Eligibility:
+     *   - Not native (OS Settings etc. are pinned)
+     *   - Will be restored from minimized so all windows are visible
+     *
+     * Sizing: uniform — 70% of the desktop area's minor axes, capped
+     * so a 4K screen doesn't produce absurdly large windows. Offset
+     * wraps back to the start after enough steps fit — a 20-window
+     * cascade on a 1080p screen reuses the top-left after ~8 steps.
+     */
+    cascade() {
+      const eligible = this.stack.filter((w) => !w.config.native);
+      if (eligible.length === 0) {
+        return;
+      }
+      doAction(HOOKS.ARRANGE_CASCADE_STARTING, {
+        windowCount: eligible.length
+      });
+      for (const w of eligible) {
+        if (w.state === "fullscreen") {
+          w.toggleFullscreen();
+        }
+        if (w.state === "maximized") {
+          w.toggleMaximize();
+        }
+        if (w.state === "minimized") {
+          w.restore();
+        }
+      }
+      const rect = this.desktop.getBoundingClientRect();
+      const padding = 30;
+      const offset = 30;
+      const targetWidth = Math.min(Math.round(rect.width * 0.7), 1100);
+      const targetHeight = Math.min(Math.round(rect.height * 0.75), 750);
+      const maxStepsX = Math.max(
+        1,
+        Math.floor((rect.width - targetWidth - padding) / offset)
+      );
+      const maxStepsY = Math.max(
+        1,
+        Math.floor((rect.height - targetHeight - padding) / offset)
+      );
+      const maxSteps = Math.min(maxStepsX, maxStepsY);
+      eligible.forEach((w, i) => {
+        const step2 = i % Math.max(1, maxSteps);
+        w.element.style.left = `${padding + step2 * offset}px`;
+        w.element.style.top = `${padding + step2 * offset}px`;
+        w.element.style.width = `${targetWidth}px`;
+        w.element.style.height = `${targetHeight}px`;
+      });
+      const focused = this.getFocused();
+      if (focused && !focused.config.native) {
+        this.focus(focused);
+      }
+      document.dispatchEvent(
+        new CustomEvent("wp-desktop-window-changed", {
+          detail: { reason: "cascade" }
+        })
+      );
+      doAction(HOOKS.ARRANGE_CASCADE_APPLIED, {
+        windowCount: eligible.length
+      });
+    }
+    /**
+     * Enter overview mode — animate every eligible window to a
+     * grid thumbnail layout. Clicking a thumbnail exits overview
+     * and fullscreens the clicked window. Pressing Escape or
+     * clicking the backdrop exits without selection.
+     */
+    enterOverview() {
+      if (this.overviewActive) {
+        return;
+      }
+      const eligible = this.stack.filter(
+        (w) => !w.config.native && w.state !== "minimized"
+      );
+      if (eligible.length === 0) {
+        return;
+      }
+      this.overviewActive = true;
+      doAction(HOOKS.OVERVIEW_ENTERING, {});
+      this.overviewSnapshot.clear();
+      for (const w of eligible) {
+        this.overviewSnapshot.set(w.id, {
+          transform: w.element.style.transform || "",
+          transition: w.element.style.transition || ""
+        });
+      }
+      for (const w of eligible) {
+        if (w.state === "fullscreen") {
+          w.toggleFullscreen();
+        }
+      }
+      const dockEl = document.getElementById("wp-desktop-dock");
+      const dockWidth = dockEl ? dockEl.offsetWidth : 0;
+      const currentRect = this.desktop.getBoundingClientRect();
+      const targetRect = new DOMRect(
+        currentRect.left - dockWidth,
+        currentRect.top,
+        currentRect.width + dockWidth,
+        currentRect.height
+      );
+      this.desktop.classList.add("wp-desktop-area--overview");
+      const shell = document.getElementById("wp-desktop-shell");
+      shell?.classList.add("wp-desktop-shell--overview");
+      const layout = computeOverviewLayout(eligible, targetRect);
+      this.overviewLabels.clear();
+      for (const item of layout) {
+        const el = item.win.element;
+        el.classList.add("wp-desktop-window--overview");
+        const dx = item.x - el.offsetLeft;
+        const dy = item.y - el.offsetTop;
+        el.style.transform = `translate(${dx}px, ${dy}px) scale(${item.scale})`;
+        const label = this.createOverviewLabel(item);
+        el.insertAdjacentElement("afterend", label);
+        this.overviewLabels.set(item.win.id, label);
+      }
+      this.overviewClickHandler = (e) => {
+        const target = e.target;
+        const winEl = target?.closest(".wp-desktop-window--overview");
+        if (winEl) {
+          e.preventDefault();
+          e.stopPropagation();
+          const id = winEl.id.replace(/^wp-window-/, "");
+          const selected = this.getById(id);
+          doAction(HOOKS.OVERVIEW_WINDOW_CLICK, { windowId: id });
+          this.exitOverview(selected, true);
+          return;
+        }
+        if (target === this.desktop) {
+          this.exitOverview();
+        }
+      };
+      this.overviewKeyHandler = (e) => {
+        if (e.key === "Escape") {
+          this.exitOverview();
+        }
+      };
+      this.desktop.addEventListener("click", this.overviewClickHandler, true);
+      document.addEventListener("keydown", this.overviewKeyHandler);
+      this.lastOverviewHoverId = null;
+      this.overviewMouseHandler = (e) => {
+        const target = e.target;
+        const winEl = target?.closest(
+          ".wp-desktop-window--overview"
+        );
+        const newId = winEl ? winEl.id.replace(/^wp-window-/, "") : null;
+        if (newId === this.lastOverviewHoverId) {
+          return;
+        }
+        if (this.lastOverviewHoverId) {
+          doAction(HOOKS.OVERVIEW_WINDOW_UNHOVER, {
+            windowId: this.lastOverviewHoverId
+          });
+        }
+        if (newId) {
+          doAction(HOOKS.OVERVIEW_WINDOW_HOVER, { windowId: newId });
+        }
+        this.lastOverviewHoverId = newId;
+      };
+      this.desktop.addEventListener("mouseover", this.overviewMouseHandler);
+      window.setTimeout(() => {
+        if (this.overviewActive) {
+          doAction(HOOKS.OVERVIEW_ENTERED, {});
+        }
+      }, 300);
+    }
+    /**
+     * Build the floating caption that sits above an overview
+     * thumbnail. Carries the window's icon + title, plus a secondary
+     * line with the external-tab count when the window has any — so
+     * users can tell at a glance "oh this one has 3 sub-tabs open"
+     * without expanding a thumbnail.
+     *
+     * Label sits OUTSIDE the window's transform (as a sibling in the
+     * desktop area), so scaling the thumbnail has no effect on its
+     * text size.
+     */
+    createOverviewLabel(item) {
+      const label = document.createElement("div");
+      label.className = "wp-desktop-overview-label";
+      label.dataset.windowId = item.win.id;
+      const thumbW = item.win.element.offsetWidth * item.scale;
+      label.style.left = `${item.x}px`;
+      label.style.top = `${item.y - 34}px`;
+      label.style.width = `${thumbW}px`;
+      const iconClass = item.win.config.icon || "dashicons-admin-generic";
+      const icon = document.createElement("span");
+      icon.className = `wp-desktop-overview-label__icon dashicons ${iconClass}`;
+      icon.setAttribute("aria-hidden", "true");
+      label.appendChild(icon);
+      const title = document.createElement("span");
+      title.className = "wp-desktop-overview-label__title";
+      title.textContent = item.win.config.title;
+      label.appendChild(title);
+      const tabCount = item.win.getExternalTabCount();
+      if (tabCount > 0) {
+        const meta = document.createElement("span");
+        meta.className = "wp-desktop-overview-label__meta";
+        meta.textContent = tabCount === 1 ? "· 1 open tab" : `· ${tabCount} open tabs`;
+        label.appendChild(meta);
+      }
+      return label;
+    }
+    /**
+     * Exit overview mode. When `selected` is given and `maximize` is
+     * true, the clicked window animates directly from its grid
+     * thumbnail position to maximized bounds — one smooth pass,
+     * no back-to-original-then-forward-to-maximized round trip.
+     *
+     * The trick: the overview transforms are cleared for every
+     * window (transform → ''), which starts a transition on transform.
+     * For the selected window we ALSO call `maximize()` in the same
+     * frame, which changes `left/top/width/height` to cover the
+     * desktop area. Because the base window CSS transitions both
+     * `transform` AND those four geometry properties, the two
+     * transitions run as one composite 280 ms animation: the window
+     * lerps from scaled-grid-position straight to maximized-bounds.
+     */
+    exitOverview(selected, maximize = false) {
+      if (!this.overviewActive) {
+        return;
+      }
+      this.overviewActive = false;
+      doAction(HOOKS.OVERVIEW_EXITING, {
+        windowId: selected && maximize ? selected.id : void 0,
+        reason: selected && maximize ? "select" : "cancel"
+      });
+      this.desktop.classList.remove("wp-desktop-area--overview");
+      const shell = document.getElementById("wp-desktop-shell");
+      shell?.classList.remove("wp-desktop-shell--overview");
+      for (const [id, snap] of this.overviewSnapshot) {
+        const w = this.getById(id);
+        if (!w) {
+          continue;
+        }
+        w.element.style.transform = snap.transform;
+      }
+      if (selected && maximize) {
+        this.focus(selected);
+        selected.maximize();
+      }
+      for (const label of this.overviewLabels.values()) {
+        label.classList.add("wp-desktop-overview-label--out");
+      }
+      const ANIMATION_MS = 280;
+      window.setTimeout(() => {
+        for (const w of this.stack) {
+          w.element.classList.remove("wp-desktop-window--overview");
+        }
+        for (const label of this.overviewLabels.values()) {
+          label.remove();
+        }
+        this.overviewLabels.clear();
+        this.overviewSnapshot.clear();
+        doAction(HOOKS.OVERVIEW_EXITED, {
+          windowId: selected && maximize ? selected.id : void 0,
+          reason: selected && maximize ? "select" : "cancel"
+        });
+      }, ANIMATION_MS);
+      if (this.overviewClickHandler) {
+        this.desktop.removeEventListener(
+          "click",
+          this.overviewClickHandler,
+          true
+        );
+        this.overviewClickHandler = null;
+      }
+      if (this.overviewKeyHandler) {
+        document.removeEventListener("keydown", this.overviewKeyHandler);
+        this.overviewKeyHandler = null;
+      }
+      if (this.overviewMouseHandler) {
+        this.desktop.removeEventListener(
+          "mouseover",
+          this.overviewMouseHandler
+        );
+        this.overviewMouseHandler = null;
+      }
+      if (this.lastOverviewHoverId) {
+        doAction(HOOKS.OVERVIEW_WINDOW_UNHOVER, {
+          windowId: this.lastOverviewHoverId
+        });
+        this.lastOverviewHoverId = null;
+      }
+    }
     /**
      * Serialize the current window stack for session persistence.
      *
@@ -1702,6 +2124,40 @@ var wpDesktop = function(exports) {
         updated: Math.floor(Date.now() / 1e3)
       };
     }
+  }
+  function computeOverviewLayout(windows, rect) {
+    const n = windows.length;
+    if (n === 0) {
+      return [];
+    }
+    const cols = Math.ceil(Math.sqrt(n));
+    const rows = Math.ceil(n / cols);
+    const padding = 40;
+    const gap = 24;
+    const labelReserve = 34;
+    const cellWidth = (rect.width - padding * 2 - gap * (cols - 1)) / cols;
+    const cellHeight = (rect.height - padding * 2 - gap * (rows - 1)) / rows;
+    const thumbCellHeight = Math.max(40, cellHeight - labelReserve);
+    return windows.map((win, i) => {
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      const cellX = padding + col * (cellWidth + gap);
+      const cellY = padding + row * (cellHeight + gap) + labelReserve;
+      const sourceW = win.element.offsetWidth;
+      const sourceH = win.element.offsetHeight;
+      const scale = Math.min(
+        cellWidth / sourceW,
+        thumbCellHeight / sourceH
+      );
+      const scaledW = sourceW * scale;
+      const scaledH = sourceH * scale;
+      return {
+        win,
+        x: cellX + (cellWidth - scaledW) / 2,
+        y: cellY + (thumbCellHeight - scaledH) / 2,
+        scale
+      };
+    });
   }
   class Dock {
     constructor(container, windowManager, items, adminUrl) {

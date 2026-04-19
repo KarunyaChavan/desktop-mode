@@ -298,6 +298,22 @@ wp.hooks.addAction( 'wp-desktop.init', 'my-plugin/boot', () => {
 | `wp-desktop.wallpaper.mount-failed` | action | Stable | `{ id, error }` |
 | `wp-desktop.wallpaper.visibility` | action | Stable | `{ id, state: 'visible' \| 'hidden' }` |
 
+#### Arrange & Overview
+
+Fired by the admin-bar "Arrange" menu's layout algorithms. The overview hooks come in pairs (enter/exit, hover/unhover) so plugins can maintain accurate state counts.
+
+| Hook | Kind | Status | Payload |
+|---|---|---|---|
+| `wp-desktop.overview.entering` | action | Stable | `{}` — before the enter animation starts |
+| `wp-desktop.overview.entered` | action | Stable | `{}` — fires ~300 ms later, after the grid settles |
+| `wp-desktop.overview.exiting` | action | Stable | `{ windowId?: string, reason: 'select' \| 'cancel' }` |
+| `wp-desktop.overview.exited` | action | Stable | same payload as `exiting` |
+| `wp-desktop.overview.window-hover` | action | Stable | `{ windowId }` |
+| `wp-desktop.overview.window-unhover` | action | Stable | `{ windowId }` |
+| `wp-desktop.overview.window-click` | action | Stable | `{ windowId }` — fires just before `exiting` when a thumbnail is clicked |
+| `wp-desktop.arrange.cascade.starting` | action | Stable | `{ windowCount }` |
+| `wp-desktop.arrange.cascade.applied` | action | Stable | `{ windowCount }` |
+
 #### Window lifecycle
 
 All window actions include at minimum `{ windowId: string }` — additional fields called out in the payload column.

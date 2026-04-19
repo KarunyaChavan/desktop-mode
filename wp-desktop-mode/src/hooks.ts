@@ -203,6 +203,45 @@ export const HOOKS = {
 	WINDOW_TITLE_CHANGED: 'wp-desktop.window.title-changed',
 
 	// ------------------------------------------------------------------
+	// Overview / Arrange lifecycle actions.
+	//
+	// The "Arrange" admin-bar menu drives two layout algorithms —
+	// Cascade (instantly reposition every window in a staggered
+	// stack) and Overview (zoom-out grid view with click-to-focus).
+	// These hooks surface the state transitions so plugins can
+	// instrument analytics, apply custom transitions, override
+	// thumbnail decorations, etc. All actions; a filter for
+	// mutating the overview layout may be added later if plugins
+	// want to reorder or group thumbnails.
+	// ------------------------------------------------------------------
+
+	/** Action, fires before the overview enter animation starts. */
+	OVERVIEW_ENTERING: 'wp-desktop.overview.entering',
+	/** Action, fires once the overview enter animation has completed. */
+	OVERVIEW_ENTERED: 'wp-desktop.overview.entered',
+	/**
+	 * Action, fires at the start of the overview-exit animation.
+	 * Payload: `{ windowId?: string, reason: 'select' | 'cancel' }` —
+	 * `windowId` set when the user clicked a thumbnail (reason
+	 * 'select'); omitted when the user pressed Escape or clicked
+	 * the backdrop (reason 'cancel').
+	 */
+	OVERVIEW_EXITING: 'wp-desktop.overview.exiting',
+	/** Action, fires once the overview-exit animation has settled. */
+	OVERVIEW_EXITED: 'wp-desktop.overview.exited',
+	/** Action, fires when the cursor enters a thumbnail. Payload `{ windowId }`. */
+	OVERVIEW_WINDOW_HOVER: 'wp-desktop.overview.window-hover',
+	/** Action, fires when the cursor leaves a thumbnail. Payload `{ windowId }`. */
+	OVERVIEW_WINDOW_UNHOVER: 'wp-desktop.overview.window-unhover',
+	/** Action, fires the instant a thumbnail click is registered (before exit + maximize kick in). Payload `{ windowId }`. */
+	OVERVIEW_WINDOW_CLICK: 'wp-desktop.overview.window-click',
+
+	/** Action, fires before cascade computes + applies new positions. Payload `{ windowCount }`. */
+	ARRANGE_CASCADE_STARTING: 'wp-desktop.arrange.cascade.starting',
+	/** Action, fires after cascade has positioned every window. Payload `{ windowCount }`. */
+	ARRANGE_CASCADE_APPLIED: 'wp-desktop.arrange.cascade.applied',
+
+	// ------------------------------------------------------------------
 	// Shell-level lifecycle actions.
 	// ------------------------------------------------------------------
 	/**

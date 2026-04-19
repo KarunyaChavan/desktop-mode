@@ -11,16 +11,22 @@
 		"vendor:pixi": "node -e \"require('fs').cpSync('node_modules/pixi.js/dist/pixi.min.js', 'assets/vendor/pixi.min.js')\"",
 		"lint": "eslint 'src/**/*.ts'",
 		"lint:fix": "eslint 'src/**/*.ts' --fix",
+		"test": "npm run test:js",
+		"test:js": "vitest run",
+		"test:js:watch": "vitest",
 		"test:php": "phpunit --configuration tests/phpunit/phpunit.xml.dist"
 	},
 	"devDependencies": {
 		"@typescript-eslint/eslint-plugin": "^7.18.0",
 		"@typescript-eslint/parser": "^7.18.0",
+		"@vitest/ui": "^4.1.4",
 		"@wordpress/eslint-plugin": "^21.6.0",
 		"eslint": "^8.57.1",
 		"eslint-import-resolver-typescript": "^4.4.4",
+		"jsdom": "^25.0.1",
 		"typescript": "5.9.3",
-		"vite": "^5.4.10"
+		"vite": "^5.4.10",
+		"vitest": "^2.1.9"
 	},
 	"dependencies": {
 		"pixi.js": "^8.18.1"

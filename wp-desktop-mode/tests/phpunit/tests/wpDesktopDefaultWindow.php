@@ -1,0 +1,267 @@
+
+<?php
+/**
+ * Tests for the default-window preference module.
+ *
+ * Covers the user-meta helpers (get/set), URL validation
+ * ({@see wpdm_validate_default_window_url}), portal integration
+ * (entry URL honors preference), and the REST endpoint.
+ *
+ * @package WordPress
+ * @subpackage UnitTests
+ *
+ * @group desktop-mode
+ * @group desktop-mode-default-window
+ */
+class Tests_DesktopMode_WpDefaultWindow extends WP_UnitTestCase {
+
+	protected static $admin_id;
+
+	public static function wpSetUpBeforeClass( WP_UnitTest_Factory $factory ) {
+		self::$admin_id = $factory->user->create( array( 'role' => 'administrator' ) );
+	}
+
+	public function tear_down() {
+		delete_user_meta( self::$admin_id, WPDM_DEFAULT_WINDOW_META );
+		delete_user_meta( self::$admin_id, 'wp_desktop_mode' );
+		delete_user_meta( self::$admin_id, WPDM_SESSION_META_KEY );
+		parent::tear_down();
+	}
+
+	/**
+	 * @covers ::wpdm_get_default_window
+	 */
+	public function test_get_returns_sane_defaults_for_unconfigured_user() {
+		$pref = wpdm_get_default_window( self::$admin_id );
+
+		$this->assertTrue( $pref['enabled'] );
+		$this->assertSame( admin_url( 'index.php' ), $pref['url'] );
+	}
+
+	/**
+	 * @covers ::wpdm_get_default_window
+	 */
+	public function test_get_falls_back_when_meta_value_is_not_an_array() {
+		update_user_meta( self::$admin_id, WPDM_DEFAULT_WINDOW_META, 'garbage' );
+
+		$pref = wpdm_get_default_window( self::$admin_id );
+
+		$this->assertTrue( $pref['enabled'] );
+		$this->assertSame( admin_url( 'index.php' ), $pref['url'] );
+	}
+
+	/**
+	 * @covers ::wpdm_set_default_window
+	 */
+	public function test_set_stores_an_enabled_preference_with_url() {
+		$ok = wpdm_set_default_window( self::$admin_id, admin_url( 'edit.php' ) );
+
+		$this->assertTrue( $ok );
+		$pref = wpdm_get_default_window( self::$admin_id );
+		$this->assertTrue( $pref['enabled'] );
+		$this->assertStringContainsString( 'edit.php', $pref['url'] );
+	}
+
+	/**
+	 * @covers ::wpdm_set_default_window
+	 */
+	public function test_set_null_disables_the_preference() {
+		wpdm_set_default_window( self::$admin_id, admin_url( 'edit.php' ) );
+		wpdm_set_default_window( self::$admin_id, null );
+
+		$pref = wpdm_get_default_window( self::$admin_id );
+		$this->assertFalse( $pref['enabled'] );
+		// URL stays at the dashboard fallback for the portal's
+		// http-level forward target — only the shell honors the
+		// `enabled` flag for auto-open.
+		$this->assertSame( admin_url( 'index.php' ), $pref['url'] );
+	}
+
+	/**
+	 * @covers ::wpdm_set_default_window
+	 */
+	public function test_set_rejects_invalid_user_id() {
+		$this->assertFalse( wpdm_set_default_window( 0, admin_url( 'edit.php' ) ) );
+		$this->assertFalse( wpdm_set_default_window( -1, admin_url( 'edit.php' ) ) );
+	}
+
+	/**
+	 * @covers ::wpdm_validate_default_window_url
+	 */
+	public function test_validate_accepts_same_origin_admin_url() {
+		$clean = wpdm_validate_default_window_url( admin_url( 'edit.php?post_type=page' ) );
+
+		$this->assertNotSame( '', $clean );
+		$this->assertStringContainsString( 'edit.php', $clean );
+	}
+
+	/**
+	 * @covers ::wpdm_validate_default_window_url
+	 */
+	public function test_validate_rejects_cross_origin_url() {
+		$this->assertSame(
+			'',
+			wpdm_validate_default_window_url( 'https://evil.example.com/wp-admin/edit.php' )
+		);
+	}
+
+	/**
+	 * @covers ::wpdm_validate_default_window_url
+	 */
+	public function test_validate_rejects_non_admin_paths() {
+		$this->assertSame(
+			'',
+			wpdm_validate_default_window_url( home_url( '/some-front-end-page/' ) )
+		);
+	}
+
+	/**
+	 * @covers ::wpdm_validate_default_window_url
+	 */
+	public function test_validate_rejects_non_http_schemes() {
+		$this->assertSame(
+			'',
+			wpdm_validate_default_window_url( 'javascript:alert(1)' )
+		);
+		$this->assertSame(
+			'',
+			wpdm_validate_default_window_url( 'file:///etc/passwd' )
+		);
+	}
+
+	/**
+	 * @covers ::wpdm_validate_default_window_url
+	 */
+	public function test_validate_preserves_query_string() {
+		$clean = wpdm_validate_default_window_url( admin_url( 'edit.php?post_type=page&orderby=date' ) );
+
+		$this->assertStringContainsString( 'post_type=page', $clean );
+		$this->assertStringContainsString( 'orderby=date', $clean );
+	}
+
+	/**
+	 * Portal-integration: when the preference is disabled, the
+	 * entry URL falls back to the stored URL (still a real admin
+	 * page — the shell respects `enabled=false` and skips
+	 * auto-opening at the JS layer).
+	 *
+	 * @covers ::wpdm_portal_entry_url
+	 */
+	public function test_portal_entry_url_honors_disabled_preference() {
+		wpdm_set_default_window( self::$admin_id, null );
+
+		$url = wpdm_portal_entry_url( self::$admin_id );
+
+		// Portal still needs SOMETHING to forward to — verify it's
+		// the Dashboard as the neutral fallback.
+		$this->assertSame( admin_url( 'index.php' ), $url );
+	}
+
+	/**
+	 * @covers ::wpdm_portal_entry_url
+	 */
+	public function test_portal_entry_url_uses_configured_preference() {
+		wpdm_set_default_window( self::$admin_id, admin_url( 'plugins.php' ) );
+
+		$url = wpdm_portal_entry_url( self::$admin_id );
+
+		$this->assertStringContainsString( 'plugins.php', $url );
+	}
+
+	/**
+	 * REST endpoint: happy path — string URL sets the preference.
+	 *
+	 * @covers ::wpdm_rest_set_default_window
+	 */
+	public function test_rest_set_default_window_with_url() {
+		wp_set_current_user( self::$admin_id );
+
+		$request = new WP_REST_Request( 'POST', '/wp-desktop/v1/default-window' );
+		$request->set_header( 'Content-Type', 'application/json' );
+		$request->set_body( wp_json_encode( array( 'url' => admin_url( 'tools.php' ) ) ) );
+
+		$response = rest_do_request( $request );
+
+		$this->assertSame( 200, $response->get_status() );
+		$data = $response->get_data();
+		$this->assertTrue( $data['enabled'] );
+		$this->assertStringContainsString( 'tools.php', $data['url'] );
+	}
+
+	/**
+	 * REST endpoint: null url disables the preference (this is the
+	 * path that hit an HTTP 400 under the old multi-type schema).
+	 *
+	 * @covers ::wpdm_rest_set_default_window
+	 */
+	public function test_rest_set_default_window_with_null() {
+		wp_set_current_user( self::$admin_id );
+		wpdm_set_default_window( self::$admin_id, admin_url( 'edit.php' ) );
+
+		$request = new WP_REST_Request( 'POST', '/wp-desktop/v1/default-window' );
+		$request->set_header( 'Content-Type', 'application/json' );
+		$request->set_body( wp_json_encode( array( 'url' => null ) ) );
+
+		$response = rest_do_request( $request );
+
+		$this->assertSame( 200, $response->get_status() );
+		$data = $response->get_data();
+		$this->assertFalse( $data['enabled'] );
+	}
+
+	/**
+	 * REST endpoint: missing url key is treated the same as null.
+	 *
+	 * @covers ::wpdm_rest_set_default_window
+	 */
+	public function test_rest_set_default_window_with_missing_url() {
+		wp_set_current_user( self::$admin_id );
+		wpdm_set_default_window( self::$admin_id, admin_url( 'edit.php' ) );
+
+		$request = new WP_REST_Request( 'POST', '/wp-desktop/v1/default-window' );
+		$request->set_header( 'Content-Type', 'application/json' );
+		$request->set_body( wp_json_encode( new stdClass() ) );
+
+		$response = rest_do_request( $request );
+
+		$this->assertSame( 200, $response->get_status() );
+		$data = $response->get_data();
+		$this->assertFalse( $data['enabled'] );
+	}
+
+	/**
+	 * REST endpoint: a bad URL (cross-origin) returns a 400 error.
+	 *
+	 * @covers ::wpdm_rest_set_default_window
+	 */
+	public function test_rest_rejects_cross_origin_url() {
+		wp_set_current_user( self::$admin_id );
+
+		$request = new WP_REST_Request( 'POST', '/wp-desktop/v1/default-window' );
+		$request->set_header( 'Content-Type', 'application/json' );
+		$request->set_body(
+			wp_json_encode( array( 'url' => 'https://attacker.example/wp-admin/edit.php' ) )
+		);
+
+		$response = rest_do_request( $request );
+
+		$this->assertSame( 400, $response->get_status() );
+	}
+
+	/**
+	 * REST endpoint: logged-out request is rejected.
+	 *
+	 * @covers ::wpdm_rest_set_default_window
+	 */
+	public function test_rest_rejects_anonymous() {
+		wp_set_current_user( 0 );
+
+		$request = new WP_REST_Request( 'POST', '/wp-desktop/v1/default-window' );
+		$request->set_header( 'Content-Type', 'application/json' );
+		$request->set_body( wp_json_encode( array( 'url' => admin_url( 'index.php' ) ) ) );
+
+		$response = rest_do_request( $request );
+
+		$this->assertGreaterThanOrEqual( 400, $response->get_status() );
+	}
+}

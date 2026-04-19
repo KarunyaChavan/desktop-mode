@@ -10,11 +10,34 @@
 export type WindowState = 'normal' | 'maximized' | 'minimized' | 'fullscreen' | 'snapped-left' | 'snapped-right';
 
 /**
+ * A virtual desktop ("Space" in macOS terminology).
+ *
+ * Each desktop owns its own set of windows. Only one desktop is
+ * "active" at a time; the active desktop's windows are visible, every
+ * other desktop's windows stay mounted but display-suppressed so
+ * switching is instant and doesn't lose iframe state.
+ *
+ * @public
+ */
+export interface Desktop {
+	/** Unique identifier — `default-1`, `desktop-2`, … */
+	id: string;
+	/** Human-readable label, shown beneath the overview top-bar tile. */
+	label: string;
+}
+
+/**
  * Configuration for a desktop window.
  */
 export interface WindowConfig {
 	/** Unique window identifier, derived from the admin page slug. */
 	id: string;
+	/**
+	 * Virtual-desktop assignment. When omitted on construction, the
+	 * window joins the manager's currently active desktop. Mutated by
+	 * the manager's switch / close logic when desktops are reorganised.
+	 */
+	desktopId?: string;
 	/**
 	 * Grouping key shared across every instance of the same admin page.
 	 * For the first instance `baseId` equals `id`; additional instances
@@ -133,6 +156,12 @@ export interface SessionWindow {
 	 * to the id when missing.
 	 */
 	baseId?: string;
+	/**
+	 * Virtual-desktop assignment. Optional for back-compat with
+	 * sessions saved before multi-desktop support — restore falls back
+	 * to the active desktop when missing.
+	 */
+	desktopId?: string;
 	url: string;
 	title: string;
 	icon: string;
@@ -153,9 +182,15 @@ export interface SessionWindow {
 /**
  * The user's saved desktop session — open windows, focused id, last-write
  * timestamp. Restored by the shell on load; written back debounced.
+ *
+ * `desktops` + `activeDesktop` are post-multi-desktop additions and
+ * carry sane defaults from the server side, so older clients reading
+ * a fresh session never miss them.
  */
 export interface Session {
 	windows: SessionWindow[];
+	desktops: Desktop[];
+	activeDesktop: string;
 	focused: string;
 	updated: number;
 }

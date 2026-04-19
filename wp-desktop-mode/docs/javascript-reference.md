@@ -313,6 +313,58 @@ Fired by the admin-bar "Arrange" menu's layout algorithms. The overview hooks co
 | `wp-desktop.overview.window-click` | action | Stable | `{ windowId }` — fires just before `exiting` when a thumbnail is clicked |
 | `wp-desktop.arrange.cascade.starting` | action | Stable | `{ windowCount }` |
 | `wp-desktop.arrange.cascade.applied` | action | Stable | `{ windowCount }` |
+| `wp-desktop.arrange.tile.starting` | action | Stable | `{ windowCount, cols, rows }` — before tile lays out the grid |
+| `wp-desktop.arrange.tile.applied` | action | Stable | `{ windowCount, cols, rows }` |
+| `wp-desktop.arrange.tile.dimensions` | filter | Stable | filters `{ cols, rows }`; context `{ windowCount, areaWidth, areaHeight }`. Override the auto-chosen grid (e.g., force a 3-column newsroom layout). Returns must be positive integers and `cols * rows >= windowCount`, otherwise the filter is ignored. |
+| `wp-desktop.arrange.snap.changed` | action | Stable | `{ enabled }` — fires when the user toggles "Snap to grid" |
+| `wp-desktop.arrange.snap.cell-size` | filter | Stable | filters `{ cellWidth, cellHeight }`; context `{ areaWidth, areaHeight }`. Override the auto-computed snap cell size (e.g., enforce a fixed 100×100 grid). Non-positive returns are ignored. |
+
+#### Virtual desktops ("Spaces")
+
+Each user can have multiple desktops, each owning its own set of windows. Switching desktops swaps which windows are visible without destroying any. The overview top bar surfaces tile-per-desktop UI for switching, creating, and closing.
+
+| Hook | Kind | Status | Payload |
+|---|---|---|---|
+| `wp-desktop.desktop.created` | action | Stable | `{ desktopId }` — fires after a new desktop joins the registry |
+| `wp-desktop.desktop.closed` | action | Stable | `{ desktopId, migratedTo }` — `migratedTo` is the desktop that received any orphaned windows |
+| `wp-desktop.desktop.switched` | action | Stable | `{ from, to }` — the active desktop changed |
+
+Closing the last remaining desktop is rejected silently (the shell needs at least one). Closing a desktop that has windows migrates them to the surviving desktop on its left (falling back to the right when the leftmost is closed) — no work is silently destroyed.
+
+#### Widgets
+
+Small cards that paint in the right-side column above the wallpaper but beneath every window. Lifecycle mirrors canvas wallpapers — `mount(container)` returns a teardown the layer calls on remove / page unload.
+
+Register via the public helper:
+
+```js
+wp.desktop.registerWidget( {
+    id: 'jorvy/quote',
+    label: 'Marvel Quote',
+    description: 'A random quote, refreshed every 10 seconds.',
+    icon: 'dashicons-format-quote',
+    mount: ( container ) => {
+        const el = document.createElement( 'p' );
+        el.textContent = '"I am Iron Man."';
+        container.appendChild( el );
+        return () => {
+            el.remove();
+        };
+    },
+} );
+```
+
+| Hook | Kind | Status | Payload |
+|---|---|---|---|
+| `wp-desktop.widgets` | filter | Stable | the registry array |
+| `wp-desktop.widget.mounting` | action | Stable | `{ id, container, ctx }` — before paint |
+| `wp-desktop.widget.mounted` | action | Stable | `{ id, container, ctx }` — after paint |
+| `wp-desktop.widget.unmounting` | action | Stable | `{ id }` — before teardown |
+| `wp-desktop.widget.mount-failed` | action | Stable | `{ id, error }` |
+| `wp-desktop.widget.added` | action | Stable | `{ id }` — user added via the picker |
+| `wp-desktop.widget.removed` | action | Stable | `{ id }` — user removed via the card's × |
+
+The `ctx` argument exposes `{ id, pluginUrl }` — the same shape canvas wallpapers receive. Enabled widgets persist per-user in `localStorage` (`wp-desktop-widgets`).
 
 #### Window lifecycle
 

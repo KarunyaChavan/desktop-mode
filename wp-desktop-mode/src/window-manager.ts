@@ -7,8 +7,8 @@
  */
 
 import { Window } from './window';
-import { HOOKS, doAction } from './hooks';
-import type { Session, SessionWindow, WindowConfig } from './types';
+import { HOOKS, applyFilters, doAction } from './hooks';
+import type { Desktop, Session, SessionWindow, WindowConfig } from './types';
 
 /** Base z-index for desktop windows. */
 const BASE_Z_INDEX = 100;
@@ -30,6 +30,22 @@ export class WindowManager {
 
 	/** Counter for cascade positioning. */
 	private cascadeIndex = 0;
+
+	/**
+	 * Virtual desktops ("Spaces"). Always at least one entry — the
+	 * shell can't function with no desktops. Order in the array maps
+	 * to left-to-right order in the overview top bar; new desktops
+	 * are appended.
+	 */
+	private desktops: Desktop[] = [
+		{ id: 'desktop-1', label: 'Desktop 1' },
+	];
+
+	/** Id of the currently active desktop. */
+	private activeDesktopId = 'desktop-1';
+
+	/** Monotonic counter for new desktop ids (`desktop-2`, `-3`, …). */
+	private desktopSeq = 1;
 
 	/**
 	 * Injected by the shell on init — called when a user clicks
@@ -162,6 +178,10 @@ export class WindowManager {
 			minHeight: config.minHeight ?? 200,
 			...config,
 			baseId: config.baseId || config.id,
+			// New windows always join the active desktop. A caller can
+			// pre-seed `desktopId` (e.g. session restore) by passing it
+			// in `config`, which the spread above preserves.
+			desktopId: config.desktopId || this.activeDesktopId,
 		};
 
 		this.cascadeIndex++;
@@ -196,9 +216,11 @@ export class WindowManager {
 		win.onToggleStartup = ( w: Window ) => {
 			this.onToggleStartupRequested?.( w );
 		};
+		win.snapConfigProvider = () => this.getSnapConfig();
 
 		this.stack.push( win );
 		this.desktop.appendChild( win.element );
+		this.applyDesktopVisibility( win );
 		this.focus( win );
 
 		const openedDetail = {
@@ -343,6 +365,167 @@ export class WindowManager {
 	}
 
 	// ==========================================================
+	// Virtual desktops ("Spaces")
+	//
+	// Each desktop owns its own set of windows. Switching desktops
+	// hides the previous group and shows the new one without
+	// destroying anything — iframe state, scroll position, in-page
+	// JS state all survive a switch. Only one desktop is active at
+	// any time.
+	// ==========================================================
+
+	/** Snapshot of the desktop list (display order). */
+	public getDesktops(): Desktop[] {
+		return [ ...this.desktops ];
+	}
+
+	/**
+	 * Currently active desktop. Always defined — there is always at
+	 * least one desktop in the registry.
+	 */
+	public getActiveDesktop(): Desktop {
+		const found = this.desktops.find(
+			( d ) => d.id === this.activeDesktopId,
+		);
+		// Fallback to first if state ever drifts (e.g. activeDesktopId
+		// pointed to a desktop that was removed without re-pointing).
+		return found ?? this.desktops[ 0 ];
+	}
+
+	/** Convenience wrapper used by snapshot serialisation. */
+	public getActiveDesktopId(): string {
+		return this.getActiveDesktop().id;
+	}
+
+	/**
+	 * Show / hide a single window based on whether its desktop matches
+	 * the active one. Centralises the "windows on inactive desktops
+	 * are display:none" rule so any future tweak (e.g. opacity-fade
+	 * instead of hard hide) lives in one place.
+	 *
+	 * Native windows ride along with their desktop just like iframe
+	 * windows — there's no reason "OS Settings opened on Desktop 2"
+	 * should leak into Desktop 1.
+	 */
+	private applyDesktopVisibility( win: Window ): void {
+		const visible = win.config.desktopId === this.activeDesktopId;
+		win.element.style.display = visible ? '' : 'none';
+	}
+
+	/**
+	 * Re-evaluate visibility for every window. Called after the active
+	 * desktop changes or after a window is reassigned to a different
+	 * desktop (e.g. when its previous desktop was closed and its
+	 * windows were migrated to the survivor).
+	 */
+	private refreshDesktopVisibility(): void {
+		for ( const w of this.stack ) {
+			this.applyDesktopVisibility( w );
+		}
+	}
+
+	/**
+	 * Append a brand-new desktop and return it. The new desktop's
+	 * label is auto-numbered (`Desktop 2`, `Desktop 3`, …) using the
+	 * monotonic seq counter so closing + reopening doesn't reuse the
+	 * same id mid-session.
+	 */
+	public createDesktop(): Desktop {
+		this.desktopSeq++;
+		const desktop: Desktop = {
+			id: `desktop-${ this.desktopSeq }`,
+			label: `Desktop ${ this.desktopSeq }`,
+		};
+		this.desktops.push( desktop );
+		doAction( HOOKS.DESKTOP_CREATED, { desktopId: desktop.id } );
+		return desktop;
+	}
+
+	/**
+	 * Switch the active desktop. No-op if `id` is already active or
+	 * doesn't exist. Fires `wp-desktop.desktop.switched` with both
+	 * the leaving and entering desktop ids so plugins can sync per-
+	 * desktop state (active-desktop-aware indicators, custom widgets,
+	 * etc.).
+	 */
+	public switchDesktop( id: string ): void {
+		if ( id === this.activeDesktopId ) {
+			return;
+		}
+		if ( ! this.desktops.some( ( d ) => d.id === id ) ) {
+			return;
+		}
+		const previousId = this.activeDesktopId;
+		this.activeDesktopId = id;
+		this.refreshDesktopVisibility();
+
+		// Re-focus the topmost window on the new desktop. Without
+		// this, focus / z-state would still point at the prior
+		// desktop's window — invisible and confusing if the user
+		// then triggers a dock action that reuses the focused
+		// window's context.
+		const topOnNew = [ ...this.stack ]
+			.reverse()
+			.find( ( w ) => w.config.desktopId === id && w.state !== 'minimized' );
+		if ( topOnNew ) {
+			this.focus( topOnNew );
+		}
+
+		doAction( HOOKS.DESKTOP_SWITCHED, {
+			from: previousId,
+			to: id,
+		} );
+	}
+
+	/**
+	 * Close a desktop. Refuses to close the last remaining desktop —
+	 * the shell needs at least one. Windows on the closed desktop
+	 * migrate to the surviving desktop the user lands on (the one to
+	 * the left in the bar, falling back to the first), so the user
+	 * never silently loses work to a misclick.
+	 */
+	public closeDesktop( id: string ): void {
+		if ( this.desktops.length <= 1 ) {
+			return;
+		}
+		const idx = this.desktops.findIndex( ( d ) => d.id === id );
+		if ( idx === -1 ) {
+			return;
+		}
+		// Pick the destination for orphaned windows — and the next
+		// active desktop if we're closing the active one. Prefer the
+		// neighbour to the left so the user's eye stays anchored;
+		// fall back to the right neighbour at index 0.
+		const survivorIdx = idx > 0 ? idx - 1 : 1;
+		const survivor = this.desktops[ survivorIdx ];
+
+		for ( const w of this.stack ) {
+			if ( w.config.desktopId === id ) {
+				w.config.desktopId = survivor.id;
+			}
+		}
+
+		this.desktops.splice( idx, 1 );
+
+		const wasActive = this.activeDesktopId === id;
+		if ( wasActive ) {
+			this.activeDesktopId = survivor.id;
+			this.refreshDesktopVisibility();
+		} else {
+			// Migrated windows may have been on the *active* desktop
+			// already (they weren't — but refresh is cheap and keeps
+			// the invariant tight even if a future change reorders
+			// these branches).
+			this.refreshDesktopVisibility();
+		}
+
+		doAction( HOOKS.DESKTOP_CLOSED, {
+			desktopId: id,
+			migratedTo: survivor.id,
+		} );
+	}
+
+	// ==========================================================
 	// Window-arrangement layouts
 	// ==========================================================
 
@@ -363,7 +546,14 @@ export class WindowManager {
 	 * cascade on a 1080p screen reuses the top-left after ~8 steps.
 	 */
 	public cascade(): void {
-		const eligible = this.stack.filter( ( w ) => ! w.config.native );
+		// Cascade only the active desktop's windows — windows belonging
+		// to other desktops are hidden and re-laying them out would
+		// invalidate the user's saved geometry there.
+		const eligible = this.stack.filter(
+			( w ) =>
+				! w.config.native &&
+				w.config.desktopId === this.activeDesktopId,
+		);
 		if ( eligible.length === 0 ) {
 			return;
 		}
@@ -432,6 +622,208 @@ export class WindowManager {
 		} );
 	}
 
+	/**
+	 * Tile every eligible window into a uniform grid that covers the
+	 * desktop area — "Show all windows," macOS-style. The grid
+	 * dimensions (cols × rows) are picked to maximise individual
+	 * window size while still fitting all of them, by matching the
+	 * cell aspect ratio to the desktop area's aspect ratio.
+	 *
+	 * Algorithm: among every (cols, rows) pair where `cols * rows ≥ N`,
+	 * pick the one whose cell aspect ratio (areaWidth/cols : areaHeight/rows)
+	 * is closest to the area's aspect ratio. Ties broken by fewer empty
+	 * cells. Capped at 6 cols / 6 rows so a runaway window count
+	 * doesn't produce postage-stamp tiles.
+	 */
+	public tile(): void {
+		const eligible = this.stack.filter(
+			( w ) =>
+				! w.config.native &&
+				w.config.desktopId === this.activeDesktopId,
+		);
+		if ( eligible.length === 0 ) {
+			return;
+		}
+
+		// Normalize state: no fullscreen / maximized / minimized — every
+		// window participates in the tiled grid.
+		for ( const w of eligible ) {
+			if ( w.state === 'fullscreen' ) {
+				w.toggleFullscreen();
+			}
+			if ( w.state === 'maximized' ) {
+				w.toggleMaximize();
+			}
+			if ( w.state === 'minimized' ) {
+				w.restore();
+			}
+		}
+
+		const rect = this.desktop.getBoundingClientRect();
+		const auto = pickGridDimensions(
+			eligible.length,
+			rect.width,
+			rect.height,
+		);
+
+		// Let plugins override the chosen grid. Validate the return:
+		// a non-integer, non-positive, or under-sized grid would
+		// produce a broken layout, so we silently fall back to the
+		// algorithmic choice rather than trust a malformed value.
+		const filtered = applyFilters<
+			{ cols: number; rows: number },
+			[ { windowCount: number; areaWidth: number; areaHeight: number } ]
+		>(
+			HOOKS.ARRANGE_TILE_DIMENSIONS,
+			auto,
+			{
+				windowCount: eligible.length,
+				areaWidth: rect.width,
+				areaHeight: rect.height,
+			},
+		);
+		const { cols, rows } = isValidGrid( filtered, eligible.length )
+			? { cols: Math.floor( filtered.cols ), rows: Math.floor( filtered.rows ) }
+			: auto;
+
+		doAction( HOOKS.ARRANGE_TILE_STARTING, {
+			windowCount: eligible.length,
+			cols,
+			rows,
+		} );
+
+		const padding = 16;
+		const gap = 12;
+		const cellWidth = Math.floor(
+			( rect.width - padding * 2 - gap * ( cols - 1 ) ) / cols,
+		);
+		const cellHeight = Math.floor(
+			( rect.height - padding * 2 - gap * ( rows - 1 ) ) / rows,
+		);
+
+		eligible.forEach( ( w, i ) => {
+			const col = i % cols;
+			const row = Math.floor( i / cols );
+			w.element.style.left = `${ padding + col * ( cellWidth + gap ) }px`;
+			w.element.style.top = `${ padding + row * ( cellHeight + gap ) }px`;
+			w.element.style.width = `${ cellWidth }px`;
+			w.element.style.height = `${ cellHeight }px`;
+		} );
+
+		const focused = this.getFocused();
+		if ( focused && ! focused.config.native ) {
+			this.focus( focused );
+		}
+
+		document.dispatchEvent(
+			new CustomEvent( 'wp-desktop-window-changed', {
+				detail: { reason: 'tile' },
+			} ),
+		);
+
+		doAction( HOOKS.ARRANGE_TILE_APPLIED, {
+			windowCount: eligible.length,
+			cols,
+			rows,
+		} );
+	}
+
+	// ----------------------------------------------------------
+	// Snap to grid — optional drag/resize quantization. Stored on
+	// the manager + persisted to localStorage so the choice survives
+	// page reloads. Windows read snap state via `getSnapConfig()`
+	// which the manager wires onto each new window.
+	// ----------------------------------------------------------
+
+	/** Storage key for the snap-to-grid preference. */
+	private static readonly SNAP_STORAGE_KEY = 'wp-desktop-snap-to-grid';
+
+	/** Whether drag/resize movements snap to the desktop-area grid. */
+	private snapEnabled = ( () => {
+		try {
+			return window.localStorage.getItem(
+				WindowManager.SNAP_STORAGE_KEY,
+			) === '1';
+		} catch {
+			return false;
+		}
+	} )();
+
+	/** Public read for UI (admin-bar checkbox initial state). */
+	public isSnapEnabled(): boolean {
+		return this.snapEnabled;
+	}
+
+	/**
+	 * Toggle (or set) the snap-to-grid preference. Persisted via
+	 * localStorage and broadcast through {@link HOOKS.ARRANGE_SNAP_CHANGED}
+	 * so any external UI mirroring the state stays in sync.
+	 */
+	public setSnapEnabled( enabled: boolean ): void {
+		if ( this.snapEnabled === enabled ) {
+			return;
+		}
+		this.snapEnabled = enabled;
+		try {
+			window.localStorage.setItem(
+				WindowManager.SNAP_STORAGE_KEY,
+				enabled ? '1' : '0',
+			);
+		} catch {
+			/* private mode / storage unavailable — silently degrade */
+		}
+		doAction( HOOKS.ARRANGE_SNAP_CHANGED, { enabled } );
+	}
+
+	/**
+	 * Resolve the live snap config for a window's drag/resize loop.
+	 * Cell sizes scale with the desktop area so a small viewport gets
+	 * a smaller grid (~12 cols × 8 rows) and a 4K monitor gets a
+	 * proportionally finer one.
+	 *
+	 * Each call hits `getBoundingClientRect`, so callers should cache
+	 * the result for the duration of a single drag rather than calling
+	 * once per pointermove.
+	 */
+	public getSnapConfig(): { enabled: boolean; cellWidth: number; cellHeight: number } {
+		if ( ! this.snapEnabled ) {
+			return { enabled: false, cellWidth: 0, cellHeight: 0 };
+		}
+		const rect = this.desktop.getBoundingClientRect();
+		// Aim for roughly 12 columns on landscape, 8 on portrait.
+		// Clamp to reasonable bounds so a 320 px sidebar doesn't
+		// produce 27-pixel cells.
+		const targetCols = rect.width >= rect.height ? 12 : 8;
+		const auto = {
+			cellWidth: Math.max(
+				40,
+				Math.round( rect.width / targetCols ),
+			),
+			cellHeight: Math.max(
+				40,
+				Math.round( rect.height / Math.round( targetCols * 0.66 ) ),
+			),
+		};
+
+		// Filter — plugins can swap in a custom grid (fixed Tetris
+		// blocks, golden-ratio cells, etc.). A non-positive return
+		// is rejected; we'd rather silently use the default than
+		// produce divide-by-zero math downstream.
+		const filtered = applyFilters<
+			{ cellWidth: number; cellHeight: number },
+			[ { areaWidth: number; areaHeight: number } ]
+		>(
+			HOOKS.ARRANGE_SNAP_CELL_SIZE,
+			auto,
+			{ areaWidth: rect.width, areaHeight: rect.height },
+		);
+		const { cellWidth, cellHeight } = isValidCellSize( filtered )
+			? filtered
+			: auto;
+
+		return { enabled: true, cellWidth, cellHeight };
+	}
+
 	// ----------------------------------------------------------
 	// Overview — zoom out to see every window, click one to focus
 	// ----------------------------------------------------------
@@ -491,6 +883,20 @@ export class WindowManager {
 	 * animation settles is the simplest watertight fix.
 	 */
 	private overviewClickBlocker: ( ( e: MouseEvent ) => void ) | null = null;
+
+	/**
+	 * Top-bar element rendered inside the desktop area while overview
+	 * is active. Carries a tile per desktop + a "+ new" tile. Removed
+	 * during overview exit.
+	 */
+	private overviewTopBar: HTMLElement | null = null;
+
+	/**
+	 * Vertical space reserved at the top of the desktop area for the
+	 * overview top bar. Used by `enterOverview` to push the thumbnail
+	 * grid downward so tiles aren't covered by the bar.
+	 */
+	private static readonly OVERVIEW_TOP_BAR_RESERVE = 120;
 	/**
 	 * Delegated mouseover handler — fires hover/unhover hooks as the
 	 * pointer moves between thumbnails. Single listener on the
@@ -510,12 +916,18 @@ export class WindowManager {
 		if ( this.overviewActive ) {
 			return;
 		}
+		// Overview shows only the ACTIVE desktop's windows in the main
+		// grid; windows on other desktops stay hidden underneath. The
+		// top bar (rendered later) gives the user a way to switch.
 		const eligible = this.stack.filter(
-			( w ) => ! w.config.native && w.state !== 'minimized',
+			( w ) =>
+				! w.config.native &&
+				w.state !== 'minimized' &&
+				w.config.desktopId === this.activeDesktopId,
 		);
-		if ( eligible.length === 0 ) {
-			return;
-		}
+		// Even with zero windows on the active desktop we still enter
+		// overview — otherwise an empty desktop would have no way to
+		// reach the top bar to switch to one with windows.
 		this.overviewActive = true;
 
 		doAction( HOOKS.OVERVIEW_ENTERING, {} );
@@ -564,7 +976,20 @@ export class WindowManager {
 		const shell = document.getElementById( 'wp-desktop-shell' );
 		shell?.classList.add( 'wp-desktop-shell--overview' );
 
-		const layout = computeOverviewLayout( eligible, targetRect );
+		// Build + mount the top bar. Belongs INSIDE the desktop area
+		// so it shares the dim backdrop, but its own clicks are
+		// allowed past the click blocker (see below).
+		this.overviewTopBar = this.buildOverviewTopBar();
+		this.desktop.appendChild( this.overviewTopBar );
+
+		// Reserve vertical space at the top for the bar so the grid
+		// shifts down (and shrinks to fit) — thumbnails never land
+		// behind the tile strip.
+		const layout = computeOverviewLayout(
+			eligible,
+			targetRect,
+			WindowManager.OVERVIEW_TOP_BAR_RESERVE,
+		);
 
 		this.overviewLabels.clear();
 		for ( const item of layout ) {
@@ -694,8 +1119,14 @@ export class WindowManager {
 		// Sticky capture-phase click blocker. Stops the browser-
 		// synthesized click that follows every pointerdown+pointerup
 		// pair from ever reaching the desktop area's "minimize every
-		// window" click handler.
+		// window" click handler. Top-bar clicks are exempt — those
+		// are deliberate UI interactions (switch desktop, create,
+		// close) that need their own handlers to fire.
 		this.overviewClickBlocker = ( e: MouseEvent ) => {
+			const target = e.target as HTMLElement | null;
+			if ( target?.closest( '.wp-desktop-overview-top-bar' ) ) {
+				return;
+			}
 			e.stopPropagation();
 			e.preventDefault();
 		};
@@ -756,6 +1187,147 @@ export class WindowManager {
 	 * desktop area), so scaling the thumbnail has no effect on its
 	 * text size.
 	 */
+	/**
+	 * Build the overview top bar — a tile per virtual desktop plus a
+	 * trailing "+" tile that creates a new one. Each tile carries:
+	 *
+	 *  - the desktop's label
+	 *  - a window-count meta line ("3 windows")
+	 *  - an active-state border when the desktop is the current one
+	 *  - a per-tile close button (X) revealed on hover, hidden when
+	 *    only one desktop exists (you can't close the last one)
+	 *
+	 * Tile click → switch + exit overview onto that desktop. The plus
+	 * tile creates a new desktop, switches to it, and exits. The X on
+	 * a tile closes that desktop (without exiting overview, so the
+	 * user can keep reorganising).
+	 */
+	private buildOverviewTopBar(): HTMLElement {
+		const bar = document.createElement( 'div' );
+		bar.className = 'wp-desktop-overview-top-bar';
+
+		const list = document.createElement( 'div' );
+		list.className = 'wp-desktop-overview-top-bar__list';
+		bar.appendChild( list );
+
+		for ( const d of this.desktops ) {
+			list.appendChild( this.buildDesktopTile( d ) );
+		}
+
+		// Trailing "+" tile.
+		const addTile = document.createElement( 'button' );
+		addTile.type = 'button';
+		addTile.className =
+			'wp-desktop-overview-top-bar__tile wp-desktop-overview-top-bar__tile--add';
+		addTile.setAttribute( 'aria-label', 'Add new desktop' );
+		addTile.innerHTML =
+			'<span class="wp-desktop-overview-top-bar__tile-plus" aria-hidden="true">+</span>';
+		addTile.addEventListener( 'click', ( e: MouseEvent ) => {
+			e.preventDefault();
+			e.stopPropagation();
+			const created = this.createDesktop();
+			// Auto-switch to the new desktop AND exit overview onto
+			// it — matches macOS Spaces ergonomics where pressing
+			// "+" lands you on the freshly-created blank space.
+			this.exitOverviewToDesktop( created.id );
+		} );
+		list.appendChild( addTile );
+
+		return bar;
+	}
+
+	/** Build a single desktop tile for the overview top bar. */
+	private buildDesktopTile( d: Desktop ): HTMLElement {
+		const tile = document.createElement( 'button' );
+		tile.type = 'button';
+		tile.className = 'wp-desktop-overview-top-bar__tile';
+		tile.dataset.desktopId = d.id;
+		if ( d.id === this.activeDesktopId ) {
+			tile.classList.add(
+				'wp-desktop-overview-top-bar__tile--active',
+			);
+		}
+		tile.setAttribute( 'aria-label', `Switch to ${ d.label }` );
+
+		const preview = document.createElement( 'span' );
+		preview.className = 'wp-desktop-overview-top-bar__tile-preview';
+		// Window-count badge inside the preview area gives users a
+		// quick "what's on this desktop" hint without needing real
+		// per-window thumbnails (a follow-up enhancement).
+		const count = this.stack.filter(
+			( w ) => w.config.desktopId === d.id && ! w.config.native,
+		).length;
+		if ( count > 0 ) {
+			const badge = document.createElement( 'span' );
+			badge.className = 'wp-desktop-overview-top-bar__tile-count';
+			badge.textContent = String( count );
+			preview.appendChild( badge );
+		}
+		tile.appendChild( preview );
+
+		const label = document.createElement( 'span' );
+		label.className = 'wp-desktop-overview-top-bar__tile-label';
+		label.textContent = d.label;
+		tile.appendChild( label );
+
+		// Close X — hidden via CSS when only one desktop exists, so
+		// users can't soft-lock themselves out of the last one. We
+		// still render the button (rather than omitting) so its
+		// presence/absence doesn't reflow the tile.
+		const closeBtn = document.createElement( 'span' );
+		closeBtn.className = 'wp-desktop-overview-top-bar__tile-close';
+		closeBtn.setAttribute( 'role', 'button' );
+		closeBtn.setAttribute( 'tabindex', '0' );
+		closeBtn.setAttribute( 'aria-label', `Close ${ d.label }` );
+		closeBtn.innerHTML =
+			'<svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
+		closeBtn.addEventListener( 'click', ( e: MouseEvent ) => {
+			// stopPropagation so the parent tile's click handler
+			// doesn't ALSO fire (which would switch + exit on top
+			// of the close).
+			e.preventDefault();
+			e.stopPropagation();
+			this.closeDesktop( d.id );
+			this.refreshOverviewTopBar();
+		} );
+		tile.appendChild( closeBtn );
+
+		tile.addEventListener( 'click', ( e: MouseEvent ) => {
+			e.preventDefault();
+			e.stopPropagation();
+			this.exitOverviewToDesktop( d.id );
+		} );
+
+		return tile;
+	}
+
+	/**
+	 * Re-render the top bar in place. Called after any operation that
+	 * mutates the desktop list (create, close) so the bar reflects
+	 * the new state without a full overview exit/re-enter cycle.
+	 */
+	private refreshOverviewTopBar(): void {
+		if ( ! this.overviewTopBar ) {
+			return;
+		}
+		const fresh = this.buildOverviewTopBar();
+		this.overviewTopBar.replaceWith( fresh );
+		this.overviewTopBar = fresh;
+	}
+
+	/**
+	 * Switch to the given desktop, then exit overview without a
+	 * specific window selection. Used by top-bar tile clicks and the
+	 * post-create flow.
+	 */
+	private exitOverviewToDesktop( desktopId: string ): void {
+		this.switchDesktop( desktopId );
+		// Exit overview WITHOUT selecting a specific window — the
+		// active desktop has its own focus state that the switch
+		// already restored.
+		this.exitOverview();
+	}
+
 	private createOverviewLabel(
 		item: OverviewLayoutItem,
 	): HTMLElement {
@@ -875,6 +1447,14 @@ export class WindowManager {
 			label.classList.add( 'wp-desktop-overview-label--out' );
 		}
 
+		// Top bar fades out in parallel with the windows. Removed
+		// fully when the animation settles (in the setTimeout below).
+		if ( this.overviewTopBar ) {
+			this.overviewTopBar.classList.add(
+				'wp-desktop-overview-top-bar--out',
+			);
+		}
+
 		// After the animation completes, strip the per-window overview
 		// class (kept in place through the transition for the
 		// transform-origin reason noted above) and the labels.
@@ -888,6 +1468,10 @@ export class WindowManager {
 			}
 			this.overviewLabels.clear();
 			this.overviewSnapshot.clear();
+			if ( this.overviewTopBar ) {
+				this.overviewTopBar.remove();
+				this.overviewTopBar = null;
+			}
 			// Click blocker lifts LAST, on the same tick the overview
 			// officially ends. By this point the browser-synthesized
 			// click that followed the user's final pointerup has long
@@ -967,6 +1551,7 @@ export class WindowManager {
 			return {
 				id: w.id,
 				baseId: w.config.baseId || w.id,
+				desktopId: w.config.desktopId || this.activeDesktopId,
 				url: w.getCurrentUrl(),
 				title: w.config.title,
 				icon: w.config.icon,
@@ -982,10 +1567,136 @@ export class WindowManager {
 
 		return {
 			windows,
+			desktops: this.getDesktops(),
+			activeDesktop: this.activeDesktopId,
 			focused: focusedId,
 			updated: Math.floor( Date.now() / 1000 ),
 		};
 	}
+
+	/**
+	 * Replace the in-memory desktops list with a server-restored
+	 * snapshot. Called once during shell boot, BEFORE any windows are
+	 * recreated, so the per-window `desktopId` assignments line up
+	 * with desktop ids that actually exist.
+	 *
+	 * Defends against an empty list — the shell can't function with
+	 * zero desktops, so an empty payload falls back to the default.
+	 * The seq counter advances past the highest numeric suffix in
+	 * the restored list so newly created desktops don't collide.
+	 */
+	public seedDesktops( desktops: Desktop[], activeDesktopId: string ): void {
+		if ( desktops.length === 0 ) {
+			return;
+		}
+		this.desktops = desktops.map( ( d ) => ( { ...d } ) );
+		this.activeDesktopId = desktops.some( ( d ) => d.id === activeDesktopId )
+			? activeDesktopId
+			: desktops[ 0 ].id;
+
+		// Advance the seq counter past the highest existing numeric
+		// suffix (`desktop-3` → seq 3) so the next createDesktop()
+		// produces a fresh id.
+		let highest = 0;
+		for ( const d of desktops ) {
+			const match = d.id.match( /^desktop-(\d+)$/ );
+			if ( match ) {
+				const n = parseInt( match[ 1 ], 10 );
+				if ( Number.isFinite( n ) && n > highest ) {
+					highest = n;
+				}
+			}
+		}
+		this.desktopSeq = Math.max( this.desktopSeq, highest );
+	}
+}
+
+/**
+ * Validate a plugin-supplied grid choice from the
+ * `wp-desktop.arrange.tile.dimensions` filter. Rejects non-finite
+ * numbers, non-positive dimensions, and grids smaller than the
+ * window count (which would silently drop windows).
+ */
+function isValidGrid(
+	candidate: unknown,
+	windowCount: number,
+): candidate is { cols: number; rows: number } {
+	if ( ! candidate || typeof candidate !== 'object' ) {
+		return false;
+	}
+	const c = ( candidate as { cols?: unknown } ).cols;
+	const r = ( candidate as { rows?: unknown } ).rows;
+	if ( typeof c !== 'number' || typeof r !== 'number' ) {
+		return false;
+	}
+	if ( ! Number.isFinite( c ) || ! Number.isFinite( r ) ) {
+		return false;
+	}
+	if ( c < 1 || r < 1 ) {
+		return false;
+	}
+	return Math.floor( c ) * Math.floor( r ) >= windowCount;
+}
+
+/**
+ * Validate a plugin-supplied snap cell size from the
+ * `wp-desktop.arrange.snap.cell-size` filter. Both dimensions must
+ * be positive finite numbers; anything else falls back to the
+ * algorithmic default to avoid divide-by-zero downstream.
+ */
+function isValidCellSize(
+	candidate: unknown,
+): candidate is { cellWidth: number; cellHeight: number } {
+	if ( ! candidate || typeof candidate !== 'object' ) {
+		return false;
+	}
+	const w = ( candidate as { cellWidth?: unknown } ).cellWidth;
+	const h = ( candidate as { cellHeight?: unknown } ).cellHeight;
+	if ( typeof w !== 'number' || typeof h !== 'number' ) {
+		return false;
+	}
+	if ( ! Number.isFinite( w ) || ! Number.isFinite( h ) ) {
+		return false;
+	}
+	return w > 0 && h > 0;
+}
+
+/**
+ * Choose the (cols × rows) grid for `tile()` that maximises
+ * individual window size while still fitting all `n` windows in a
+ * `width × height` area. Scoring: minimise the absolute difference
+ * between the cell aspect ratio and the area aspect ratio, with a
+ * small penalty for empty trailing cells (so 5 windows pick 3×2
+ * over 5×1 when the area is roughly square).
+ *
+ * Capped at 6×6 — beyond that, individual windows are too small to
+ * be useful and the user is better off with cascade or overview.
+ */
+function pickGridDimensions(
+	n: number,
+	width: number,
+	height: number,
+): { cols: number; rows: number } {
+	if ( n <= 1 ) {
+		return { cols: 1, rows: 1 };
+	}
+	const areaAspect = width / Math.max( 1, height );
+	const max = 6;
+	let best = { cols: n, rows: 1, score: Infinity };
+	for ( let cols = 1; cols <= Math.min( max, n ); cols++ ) {
+		const rows = Math.min( max, Math.ceil( n / cols ) );
+		if ( cols * rows < n ) {
+			continue;
+		}
+		const cellAspect = ( width / cols ) / Math.max( 1, height / rows );
+		const aspectDelta = Math.abs( cellAspect - areaAspect );
+		const emptyCells = cols * rows - n;
+		const score = aspectDelta + emptyCells * 0.05;
+		if ( score < best.score ) {
+			best = { cols, rows, score };
+		}
+	}
+	return { cols: best.cols, rows: best.rows };
 }
 
 /**
@@ -1007,6 +1718,7 @@ interface OverviewLayoutItem {
 function computeOverviewLayout(
 	windows: Window[],
 	rect: DOMRect,
+	topInset = 0,
 ): OverviewLayoutItem[] {
 	const n = windows.length;
 	if ( n === 0 ) {
@@ -1034,8 +1746,12 @@ function computeOverviewLayout(
 
 	const cellWidth =
 		( rect.width - padding * 2 - gap * ( cols - 1 ) ) / cols;
+	// `topInset` carves out vertical space for the desktops top bar.
+	// Cells SHRINK to fit the remaining height AND shift down by
+	// `topInset` so the first row's label clears the bar instead of
+	// landing behind it.
 	const cellHeight =
-		( rect.height - padding * 2 - gap * ( rows - 1 ) ) / rows;
+		( rect.height - padding * 2 - topInset - gap * ( rows - 1 ) ) / rows;
 	// Actual space available to the thumbnail inside each cell,
 	// AFTER the label reserve.
 	const thumbCellHeight = Math.max( 40, cellHeight - labelReserve );
@@ -1047,8 +1763,9 @@ function computeOverviewLayout(
 		// cellY is the cell's top; the thumbnail anchors below the
 		// label reserve, so the label (positioned at `item.y - 34`)
 		// lands inside the reserve without overlapping the row above.
+		// `topInset` pushes the entire grid downward.
 		const cellY =
-			padding + row * ( cellHeight + gap ) + labelReserve;
+			topInset + padding + row * ( cellHeight + gap ) + labelReserve;
 
 		// Preserve the window's aspect ratio, fit into the thumbnail
 		// area (not the full cell — the label took the top slice).

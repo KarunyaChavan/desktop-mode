@@ -212,7 +212,20 @@ function wpdm_render_shell() {
 		<div id="wp-desktop-wallpaper" class="wp-desktop-wallpaper" aria-hidden="true"></div>
 		<div class="wp-desktop-shell__body">
 			<nav id="wp-desktop-dock" class="wp-desktop-dock" role="toolbar" aria-label="<?php esc_attr_e( 'Admin navigation', 'wp-desktop-mode' ); ?>"></nav>
-			<div id="wp-desktop-area" class="wp-desktop-area wp-desktop-area--with-dock"></div>
+			<div id="wp-desktop-area" class="wp-desktop-area wp-desktop-area--with-dock">
+				<?php
+				/*
+				 * Widget column — paints above the wallpaper but
+				 * beneath windows (z-index 1 vs. windows at 100+).
+				 * Hosted INSIDE `.wp-desktop-area` so scrolling the
+				 * area (not that we do today) would scroll widgets
+				 * with it, and so the dock/taskbar naturally frame
+				 * it. Empty on first render — JS (`WidgetLayer`)
+				 * populates it on boot.
+				 */
+				?>
+				<aside id="wp-desktop-widgets" class="wp-desktop-widgets" aria-label="<?php esc_attr_e( 'Widgets', 'wp-desktop-mode' ); ?>"></aside>
+			</div>
 		</div>
 	</div>
 	<?php

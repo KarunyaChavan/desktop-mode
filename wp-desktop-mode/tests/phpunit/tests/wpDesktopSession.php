@@ -55,6 +55,130 @@ class Tests_DesktopMode_WpDesktopSession extends WP_UnitTestCase {
 		$this->assertSame( array(), $empty['windows'] );
 		$this->assertSame( '', $empty['focused'] );
 		$this->assertSame( 0, $empty['updated'] );
+		// Empty sessions still ship with one default desktop — the
+		// shell can't function with zero, so the bootstrap shape
+		// must always include `Desktop 1` and a matching active id.
+		$this->assertCount( 1, $empty['desktops'] );
+		$this->assertSame( 'desktop-1', $empty['desktops'][0]['id'] );
+		$this->assertSame( 'Desktop 1', $empty['desktops'][0]['label'] );
+		$this->assertSame( 'desktop-1', $empty['activeDesktop'] );
+	}
+
+	/**
+	 * @covers ::wpdm_sanitize_session
+	 */
+	public function test_sanitize_persists_desktop_list_with_label_trim() {
+		$session = array(
+			'desktops' => array(
+				array( 'id' => 'desktop-1', 'label' => 'Work' ),
+				array( 'id' => 'desktop-2', 'label' => str_repeat( 'X', 100 ) ),
+			),
+			'activeDesktop' => 'desktop-2',
+			'windows'       => array(),
+		);
+
+		$clean = wpdm_sanitize_session( $session );
+
+		$this->assertCount( 2, $clean['desktops'] );
+		$this->assertSame( 'desktop-1', $clean['desktops'][0]['id'] );
+		$this->assertSame( 'Work', $clean['desktops'][0]['label'] );
+		$this->assertSame( 'desktop-2', $clean['desktops'][1]['id'] );
+		// 64-char cap on labels.
+		$this->assertSame( 64, strlen( $clean['desktops'][1]['label'] ) );
+		$this->assertSame( 'desktop-2', $clean['activeDesktop'] );
+	}
+
+	/**
+	 * @covers ::wpdm_sanitize_session
+	 */
+	public function test_sanitize_falls_back_to_default_desktop_when_list_empty() {
+		$clean = wpdm_sanitize_session( array( 'desktops' => array() ) );
+
+		$this->assertCount( 1, $clean['desktops'] );
+		$this->assertSame( 'desktop-1', $clean['desktops'][0]['id'] );
+		$this->assertSame( 'desktop-1', $clean['activeDesktop'] );
+	}
+
+	/**
+	 * @covers ::wpdm_sanitize_session
+	 */
+	public function test_sanitize_active_desktop_must_reference_real_desktop() {
+		// `activeDesktop` points at a desktop that wasn't in the
+		// `desktops` list — sanitizer should fall back to the first
+		// real one rather than persist a dangling reference.
+		$session = array(
+			'desktops'      => array( array( 'id' => 'desktop-1', 'label' => 'A' ) ),
+			'activeDesktop' => 'desktop-99',
+		);
+
+		$clean = wpdm_sanitize_session( $session );
+
+		$this->assertSame( 'desktop-1', $clean['activeDesktop'] );
+	}
+
+	/**
+	 * @covers ::wpdm_sanitize_session
+	 */
+	public function test_sanitize_window_with_known_desktop_id_persists_it() {
+		$session = array(
+			'desktops' => array(
+				array( 'id' => 'desktop-1', 'label' => 'A' ),
+				array( 'id' => 'desktop-2', 'label' => 'B' ),
+			),
+			'activeDesktop' => 'desktop-1',
+			'windows'       => array(
+				$this->make_window( array(
+					'id'        => 'edit-php',
+					'desktopId' => 'desktop-2',
+				) ),
+			),
+		);
+
+		$clean = wpdm_sanitize_session( $session );
+
+		$this->assertCount( 1, $clean['windows'] );
+		$this->assertSame( 'desktop-2', $clean['windows'][0]['desktopId'] );
+	}
+
+	/**
+	 * @covers ::wpdm_sanitize_session
+	 */
+	public function test_sanitize_window_with_unknown_desktop_id_remaps_to_active() {
+		// A window claiming a desktop id that doesn't exist (race
+		// with a desktop close, or a malformed payload) should be
+		// remapped to the active desktop so it remains visible after
+		// restore — losing the window would be the worse UX.
+		$session = array(
+			'desktops'      => array( array( 'id' => 'desktop-1', 'label' => 'A' ) ),
+			'activeDesktop' => 'desktop-1',
+			'windows'       => array(
+				$this->make_window( array(
+					'id'        => 'edit-php',
+					'desktopId' => 'desktop-77',
+				) ),
+			),
+		);
+
+		$clean = wpdm_sanitize_session( $session );
+
+		$this->assertSame( 'desktop-1', $clean['windows'][0]['desktopId'] );
+	}
+
+	/**
+	 * @covers ::wpdm_sanitize_session
+	 */
+	public function test_sanitize_caps_desktops_at_max() {
+		$desktops = array();
+		for ( $i = 1; $i <= ( WPDM_SESSION_MAX_DESKTOPS + 5 ); $i++ ) {
+			$desktops[] = array(
+				'id'    => "desktop-{$i}",
+				'label' => "Desktop {$i}",
+			);
+		}
+
+		$clean = wpdm_sanitize_session( array( 'desktops' => $desktops ) );
+
+		$this->assertCount( WPDM_SESSION_MAX_DESKTOPS, $clean['desktops'] );
 	}
 
 	/**

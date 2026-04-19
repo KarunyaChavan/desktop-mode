@@ -25,6 +25,9 @@ import * as registry from './wallpapers/registry';
 import { WallpaperLayer } from './wallpapers/layer';
 import { registerBuiltInWallpapers } from './wallpapers/built-in';
 import { loadVendorScript } from './wallpapers/vendor-loader';
+import { WidgetLayer } from './widgets/layer';
+import { registerBuiltInWidgets } from './widgets/built-in';
+import * as widgetRegistry from './widgets/registry';
 import {
 	registerModule,
 	loadModules,
@@ -50,6 +53,8 @@ export interface WpDesktopPublicApi {
 	hooks: WpHooks;
 	/** Convenience: register a wallpaper via `wp-desktop.wallpapers` filter. */
 	registerWallpaper: ( def: WallpaperDef ) => void;
+	/** Convenience: register a widget via `wp-desktop.widgets` filter. */
+	registerWidget: ( def: import( './widgets/types' ).WidgetDef ) => void;
 	/** Load a vendor script once, memoized. See `src/wallpapers/vendor-loader.ts`. */
 	loadVendorScript: ( url: string ) => Promise<void>;
 	/**
@@ -130,6 +135,17 @@ function init(): void {
 		wallpaperLayer = new WallpaperLayer( wallpaperEl, pluginUrl );
 	}
 	registerBuiltInWallpapers();
+
+	// Widget layer + registry. Same pattern as wallpapers: register
+	// built-ins synchronously so the `wp-desktop.widgets` filter
+	// already carries them when plugins hook in, then hydrate the
+	// layer which mounts whichever widgets the user last had on.
+	const widgetsEl = document.getElementById( 'wp-desktop-widgets' );
+	let widgetLayer: WidgetLayer | null = null;
+	registerBuiltInWidgets();
+	if ( widgetsEl ) {
+		widgetLayer = new WidgetLayer( widgetsEl, pluginUrl );
+	}
 
 	// Built-in modules: PixiJS is bundled in `assets/vendor/`. Plugins
 	// that want to use it declare `needs: ['pixijs']` on their wallpaper
@@ -302,6 +318,14 @@ function init(): void {
 			// OS Settings open.
 			osSettings.apply();
 		},
+		registerWidget: ( def ) => {
+			widgetRegistry.register( def );
+			// No re-paint needed here: the layer only mounts IDs the
+			// user explicitly enabled, so adding a new def just makes
+			// it available in the next picker open. Plugins wanting
+			// to force a widget on can call
+			// `wp.desktop.widgetLayer.add(id)` — exposed below.
+		},
 		loadVendorScript,
 		registerModule,
 		loadModules,
@@ -322,11 +346,19 @@ function init(): void {
 	// that just registered, this is when it becomes visible.
 	osSettings.apply();
 
-	// Tear down any active canvas wallpaper on page unload. Canvas
-	// wallpapers typically hold tickers / WebGL contexts / rAF loops
-	// that would otherwise compete with the session-beacon flush.
+	// Hydrate widgets AFTER `wp-desktop.init` so plugin-registered
+	// defs are in the registry when the user's saved list is
+	// resolved. Hydration is idempotent — safe if it fires twice
+	// (shouldn't, but defensive).
+	widgetLayer?.hydrate();
+
+	// Tear down any active canvas wallpaper + every mounted widget
+	// on page unload. Both hold intervals / tickers / WebGL
+	// contexts that would otherwise compete with the session-beacon
+	// flush.
 	window.addEventListener( 'pagehide', () => {
 		wallpaperLayer?.teardownActive();
+		widgetLayer?.disposeAll();
 	} );
 
 	// Shell-level lifecycle actions — fired once the public API exists
@@ -412,6 +444,19 @@ function restoreSession(
 ): void {
 	const rect = desktopArea.getBoundingClientRect();
 
+	// Seed desktops + active id BEFORE recreating windows. Windows
+	// pass `desktopId` from the session through to their config; the
+	// manager honours that exactly as long as the desktop already
+	// exists in the registry, otherwise it falls back to the active
+	// desktop. Establishing the registry first preserves the user's
+	// per-desktop window grouping across reloads.
+	if ( Array.isArray( config.session.desktops ) && config.session.desktops.length > 0 ) {
+		manager.seedDesktops(
+			config.session.desktops,
+			config.session.activeDesktop || config.session.desktops[ 0 ].id,
+		);
+	}
+
 	for ( const win of config.session.windows ) {
 		const clamped = clampGeometryToViewport( win, rect );
 		const dockEntry = findDockEntryForUrl( win.url, config );
@@ -419,6 +464,7 @@ function restoreSession(
 		const opened = manager.open( {
 			id: win.id,
 			baseId: win.baseId || win.id,
+			desktopId: win.desktopId,
 			multi: !! dockEntry?.multi,
 			url: win.url,
 			title: win.title,

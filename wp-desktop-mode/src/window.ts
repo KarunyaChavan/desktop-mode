@@ -377,6 +377,16 @@ export class Window {
 	 */
 	public onToggleStartup: ( ( win: Window ) => void ) | null = null;
 
+	/**
+	 * Resolver for the active snap-to-grid config. Wired by the
+	 * window-manager on construction. Returns `enabled: false` when
+	 * snap is off, otherwise the cell dimensions to round drag /
+	 * resize values to.
+	 */
+	public snapConfigProvider:
+		| ( () => { enabled: boolean; cellWidth: number; cellHeight: number } )
+		| null = null;
+
 	/** Bound handler used to close the actions menu on outside clicks. */
 	private boundOnDocumentPointerDown: ( ( e: PointerEvent ) => void ) | null = null;
 
@@ -461,6 +471,42 @@ export class Window {
 				detail: { windowId: this.id, reason, state: this.state },
 			} ),
 		);
+	}
+
+	/**
+	 * Round an `{ x, y, width, height }` rect onto the live snap grid
+	 * when snap-to-grid is enabled, otherwise return it unchanged.
+	 *
+	 * Used by both the un-maximize restore (so geometry saved while
+	 * snap was off doesn't leave the window off-grid when snap is on)
+	 * and any other code path that wants "the current geometry, but
+	 * grid-aligned." Width/height are floored to whole cells to avoid
+	 * crossing the EDGE_MARGIN constraint after rounding up.
+	 */
+	private snapGeometry( g: { x: number; y: number; width: number; height: number } ): {
+		x: number;
+		y: number;
+		width: number;
+		height: number;
+	} {
+		const snap = this.snapConfigProvider?.();
+		if ( ! snap || ! snap.enabled ) {
+			return g;
+		}
+		const width = Math.max(
+			this.config.minWidth,
+			Math.round( g.width / snap.cellWidth ) * snap.cellWidth,
+		);
+		const height = Math.max(
+			this.config.minHeight,
+			Math.round( g.height / snap.cellHeight ) * snap.cellHeight,
+		);
+		return {
+			x: Math.round( g.x / snap.cellWidth ) * snap.cellWidth,
+			y: Math.round( g.y / snap.cellHeight ) * snap.cellHeight,
+			width,
+			height,
+		};
 	}
 
 	/**
@@ -1145,8 +1191,40 @@ export class Window {
 			return;
 		}
 
+		// Auto-unmaximize on drag: macOS / Windows convention. We
+		// restore the saved geometry, then re-position the window so
+		// the cursor lands at the same horizontal RATIO on the new
+		// (smaller) title bar. Without that re-anchor, a drag from
+		// the right edge of a maximized window would feel like the
+		// window jumps to the left mid-grab.
 		if ( this.state === 'maximized' ) {
-			return;
+			const titleRect = this.titleBar.getBoundingClientRect();
+			const cursorRatioX =
+				titleRect.width > 0
+					? ( e.clientX - titleRect.left ) / titleRect.width
+					: 0.5;
+
+			// Lift the maximized class + restore saved geometry. We
+			// don't go through `toggleMaximize()` because that re-emits
+			// state hooks and runs a transition animation; the drag
+			// path just needs the geometry change without the visual
+			// pop.
+			this.element.classList.remove( 'wp-desktop-window--maximized' );
+			const w = this.savedGeometry?.width ?? this.element.offsetWidth;
+			const h = this.savedGeometry?.height ?? this.element.offsetHeight;
+			this.element.style.width = `${ w }px`;
+			this.element.style.height = `${ h }px`;
+			// Anchor the new title bar under the cursor — left edge
+			// computed so cursor stays at the same fractional X on
+			// the (now smaller) title bar; vertical drop snaps the
+			// window so the cursor sits on its title bar.
+			const left = Math.round( e.clientX - w * cursorRatioX );
+			const top = Math.round( e.clientY - titleRect.height / 2 );
+			this.element.style.left = `${ left }px`;
+			this.element.style.top = `${ top }px`;
+			this.state = 'normal';
+			this.emitChange( 'state' );
+			doAction( HOOKS.WINDOW_UNMAXIMIZED, { windowId: this.id } );
 		}
 
 		this.isDragging = true;
@@ -1157,6 +1235,21 @@ export class Window {
 		// Add an overlay to prevent iframe from eating pointer events during drag.
 		this.element.classList.add( 'wp-desktop-window--dragging' );
 		doAction( HOOKS.WINDOW_DRAG_START, { windowId: this.id } );
+
+		// Snapshot snap config once for the duration of the drag so
+		// we don't re-measure the desktop area's bounding rect on
+		// every pointermove. Stays accurate because the desktop
+		// area's size doesn't change mid-drag in practice.
+		const snap = this.snapConfigProvider?.() ?? { enabled: false, cellWidth: 0, cellHeight: 0 };
+		// When snap is on, restore a SHORT transition on left/top so
+		// the cell-to-cell jumps animate instead of teleporting. The
+		// `--dragging` class normally suppresses the base 0.25 s
+		// transition (which would lag the cursor on un-snapped drags);
+		// the `--snap-drag` class re-enables a quicker 80 ms
+		// curve scoped to drag-with-snap.
+		if ( snap.enabled ) {
+			this.element.classList.add( 'wp-desktop-window--snap-drag' );
+		}
 
 		const onDragMove = ( ev: PointerEvent ): void => {
 			if ( ! this.isDragging ) {
@@ -1172,6 +1265,14 @@ export class Window {
 				y = Math.max( EDGE_MARGIN, Math.min( y, desktop.clientHeight - EDGE_MARGIN ) );
 			}
 
+			// Quantise to the live grid when snap is on. Round (not
+			// floor) so the window settles onto the nearest grid
+			// intersection rather than always biasing left/up.
+			if ( snap.enabled ) {
+				x = Math.round( x / snap.cellWidth ) * snap.cellWidth;
+				y = Math.round( y / snap.cellHeight ) * snap.cellHeight;
+			}
+
 			this.element.style.left = `${ x }px`;
 			this.element.style.top = `${ y }px`;
 		};
@@ -1182,6 +1283,7 @@ export class Window {
 			}
 			this.isDragging = false;
 			this.element.classList.remove( 'wp-desktop-window--dragging' );
+			this.element.classList.remove( 'wp-desktop-window--snap-drag' );
 			this.titleBar.removeEventListener( 'pointermove', onDragMove );
 			this.titleBar.removeEventListener( 'pointerup', onDragEnd );
 			this.titleBar.removeEventListener( 'pointercancel', onDragEnd );
@@ -1223,12 +1325,30 @@ export class Window {
 		this.element.classList.add( 'wp-desktop-window--resizing' );
 		doAction( HOOKS.WINDOW_RESIZE_START, { windowId: this.id } );
 
+		const snap = this.snapConfigProvider?.() ?? { enabled: false, cellWidth: 0, cellHeight: 0 };
+		if ( snap.enabled ) {
+			this.element.classList.add( 'wp-desktop-window--snap-drag' );
+		}
+
 		const onResizeMove = ( ev: PointerEvent ): void => {
 			if ( ! this.isResizing ) {
 				return;
 			}
-			const newW = Math.max( this.config.minWidth, this.resizeStartW + ( ev.clientX - this.resizeStartX ) );
-			const newH = Math.max( this.config.minHeight, this.resizeStartH + ( ev.clientY - this.resizeStartY ) );
+			let newW = Math.max( this.config.minWidth, this.resizeStartW + ( ev.clientX - this.resizeStartX ) );
+			let newH = Math.max( this.config.minHeight, this.resizeStartH + ( ev.clientY - this.resizeStartY ) );
+			if ( snap.enabled ) {
+				// Snap dimensions to whole grid cells. Re-clamp to
+				// minWidth/minHeight afterwards because the round-down
+				// could otherwise drop dimensions below the minimum.
+				newW = Math.max(
+					this.config.minWidth,
+					Math.round( newW / snap.cellWidth ) * snap.cellWidth,
+				);
+				newH = Math.max(
+					this.config.minHeight,
+					Math.round( newH / snap.cellHeight ) * snap.cellHeight,
+				);
+			}
 			this.element.style.width = `${ newW }px`;
 			this.element.style.height = `${ newH }px`;
 		};
@@ -1239,6 +1359,7 @@ export class Window {
 			}
 			this.isResizing = false;
 			this.element.classList.remove( 'wp-desktop-window--resizing' );
+			this.element.classList.remove( 'wp-desktop-window--snap-drag' );
 			const handle = this.element.querySelector( '.wp-desktop-window__resize-handle' ) as HTMLElement;
 			handle.removeEventListener( 'pointermove', onResizeMove );
 			handle.removeEventListener( 'pointerup', onResizeEnd );
@@ -1383,10 +1504,17 @@ export class Window {
 			// the next frame so the class-driven border-radius animates in sync.
 			this.element.classList.remove( 'wp-desktop-window--maximized' );
 			if ( this.savedGeometry ) {
-				this.element.style.left = `${ this.savedGeometry.x }px`;
-				this.element.style.top = `${ this.savedGeometry.y }px`;
-				this.element.style.width = `${ this.savedGeometry.width }px`;
-				this.element.style.height = `${ this.savedGeometry.height }px`;
+				const restored = this.snapGeometry( this.savedGeometry );
+				this.element.style.left = `${ restored.x }px`;
+				this.element.style.top = `${ restored.y }px`;
+				this.element.style.width = `${ restored.width }px`;
+				this.element.style.height = `${ restored.height }px`;
+				// Update the savedGeometry IN PLACE to the snapped
+				// values so a subsequent maximize → un-maximize round
+				// trip stays on the grid (otherwise the geometry
+				// would re-snap by a few pixels every other cycle,
+				// drifting until the user notices).
+				this.savedGeometry = restored;
 			}
 			this.state = 'normal';
 			this.emitChange( 'state' );

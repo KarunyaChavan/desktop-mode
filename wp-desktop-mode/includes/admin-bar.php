@@ -98,6 +98,36 @@ function wpdm_admin_bar_toggle( $wp_admin_bar ) {
 				),
 			)
 		);
+		// Snap-to-grid toggle. Renders as a checkbox-style entry that
+		// must NOT dismiss the parent menu on click — see the inline
+		// JS below for the stop-propagation handling. Initial check
+		// state is painted from the persisted preference once the
+		// shell has booted.
+		$wp_admin_bar->add_node(
+			array(
+				'parent' => 'desktop-layout-menu',
+				'id'     => 'desktop-layout-snap',
+				'title'  => '<span class="wpdm-layout-checkbox" aria-hidden="true">☐</span> '
+					. esc_html__( 'Snap to grid', 'wp-desktop-mode' ),
+				'href'   => '#',
+				'meta'   => array(
+					'class' => 'wpdm-layout-snap',
+					'title' => __( 'Snap windows to a grid while dragging or resizing.', 'wp-desktop-mode' ),
+				),
+			)
+		);
+		$wp_admin_bar->add_node(
+			array(
+				'parent' => 'desktop-layout-menu',
+				'id'     => 'desktop-layout-tile',
+				'title'  => esc_html__( 'Tile all windows', 'wp-desktop-mode' ),
+				'href'   => '#',
+				'meta'   => array(
+					'class' => 'wpdm-layout-action',
+					'title' => __( 'Pack every window into an evenly tiled grid that fills the desktop.', 'wp-desktop-mode' ),
+				),
+			)
+		);
 	}
 }
 add_action( 'admin_bar_menu', 'wpdm_admin_bar_toggle', 190 );
@@ -218,26 +248,95 @@ function wpdm_enqueue_toggle_assets() {
 
 	// Layout menu — each child item calls a WindowManager method on
 	// the public shell API. We bind one delegated click listener on
-	// the parent submenu so adding more layouts in the future (tile,
-	// full-width, etc.) is a matter of adding nodes in PHP, not new
-	// JS. `href=#` is set server-side; we preventDefault + intercept.
+	// the parent submenu so adding more layouts in the future
+	// (split, full-width, etc.) is a matter of adding nodes in PHP,
+	// not new JS. `href=#` is set server-side; we preventDefault +
+	// intercept.
+	//
+	// The snap-to-grid checkbox is special: clicking it toggles the
+	// preference AND repaints the box without dismissing the menu
+	// (default WP behaviour would close the submenu on any click,
+	// breaking the "set it and forget it" feel of a checkbox).
 	var layoutMenu = document.getElementById( 'wp-admin-bar-desktop-layout-menu' );
-	if ( layoutMenu ) {
-		layoutMenu.addEventListener( 'click', function( e ) {
-			var link = e.target && e.target.closest ? e.target.closest( '.wpdm-layout-action > .ab-item, .wpdm-layout-action' ) : null;
-			if ( ! link ) return;
-			e.preventDefault();
-			var id = link.closest( '[id^="wp-admin-bar-desktop-layout-"]' );
-			if ( ! id ) return;
-			var wm = window.wp && window.wp.desktop && window.wp.desktop.windowManager;
-			if ( ! wm ) return;
-			if ( id.id === 'wp-admin-bar-desktop-layout-cascade' && typeof wm.cascade === 'function' ) {
-				wm.cascade();
-			} else if ( id.id === 'wp-admin-bar-desktop-layout-overview' && typeof wm.enterOverview === 'function' ) {
-				wm.enterOverview();
-			}
-		} );
+	if ( ! layoutMenu ) return;
+
+	function paintSnapCheckbox( enabled ) {
+		var node = document.querySelector(
+			'#wp-admin-bar-desktop-layout-snap .wpdm-layout-checkbox'
+		);
+		if ( ! node ) return;
+		node.textContent = enabled ? '\u2611' : '\u2610'; // ☑ / ☐
+		var item = document.getElementById( 'wp-admin-bar-desktop-layout-snap' );
+		if ( item ) {
+			item.setAttribute( 'aria-checked', enabled ? 'true' : 'false' );
+			item.setAttribute( 'role', 'menuitemcheckbox' );
+		}
 	}
+
+	function getManager() {
+		return window.wp && window.wp.desktop && window.wp.desktop.windowManager;
+	}
+
+	// Initial paint — wait for the shell to publish the manager,
+	// then mirror the persisted snap preference. Polled rather than
+	// hooked because the inline script ships with the admin bar
+	// (loads early) and the shell's WindowManager arrives later.
+	function initFromManager() {
+		var wm = getManager();
+		if ( ! wm || typeof wm.isSnapEnabled !== 'function' ) {
+			window.setTimeout( initFromManager, 60 );
+			return;
+		}
+		paintSnapCheckbox( wm.isSnapEnabled() );
+	}
+	initFromManager();
+
+	layoutMenu.addEventListener( 'click', function( e ) {
+		var t = e.target;
+		if ( ! t || ! t.closest ) return;
+
+		var snapItem = t.closest( '.wpdm-layout-snap' );
+		if ( snapItem ) {
+			// Stop propagation so WP's own "click closes submenu"
+			// chain never fires. preventDefault keeps the `#` href
+			// from scrolling the page to top.
+			e.preventDefault();
+			e.stopPropagation();
+			var wm = getManager();
+			if ( ! wm || typeof wm.setSnapEnabled !== 'function' ) return;
+			var next = ! wm.isSnapEnabled();
+			wm.setSnapEnabled( next );
+			paintSnapCheckbox( next );
+			return;
+		}
+
+		var actionLink = t.closest( '.wpdm-layout-action > .ab-item, .wpdm-layout-action' );
+		if ( ! actionLink ) return;
+		e.preventDefault();
+		var id = actionLink.closest( '[id^="wp-admin-bar-desktop-layout-"]' );
+		if ( ! id ) return;
+		var manager = getManager();
+		if ( ! manager ) return;
+		if ( id.id === 'wp-admin-bar-desktop-layout-cascade' && typeof manager.cascade === 'function' ) {
+			manager.cascade();
+		} else if ( id.id === 'wp-admin-bar-desktop-layout-overview' && typeof manager.enterOverview === 'function' ) {
+			manager.enterOverview();
+		} else if ( id.id === 'wp-admin-bar-desktop-layout-tile' && typeof manager.tile === 'function' ) {
+			manager.tile();
+		}
+		// After running an action, dismiss the submenu so the user
+		// lands in the newly arranged desktop instead of the menu
+		// hanging open on top. WP's admin bar toggles visibility via
+		// a `.hover` class on the parent `li.menupop` — we remove it
+		// AND blur the active element so a re-hover is required for
+		// the next open. The snap checkbox stays open by design
+		// (it's handled by the earlier branch and never reaches
+		// this close path).
+		layoutMenu.classList.remove( 'hover' );
+		if ( document.activeElement && typeof document.activeElement.blur === 'function' ) {
+			document.activeElement.blur();
+		}
+	} );
 } )();
 JS;
 	wp_add_inline_script( 'admin-bar', $js );

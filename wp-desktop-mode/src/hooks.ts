@@ -240,6 +240,67 @@ export const HOOKS = {
 	ARRANGE_CASCADE_STARTING: 'wp-desktop.arrange.cascade.starting',
 	/** Action, fires after cascade has positioned every window. Payload `{ windowCount }`. */
 	ARRANGE_CASCADE_APPLIED: 'wp-desktop.arrange.cascade.applied',
+	/** Action, fires before tile computes + applies new positions. Payload `{ windowCount, cols, rows }`. */
+	ARRANGE_TILE_STARTING: 'wp-desktop.arrange.tile.starting',
+	/** Action, fires after tile has positioned every window. Payload `{ windowCount, cols, rows }`. */
+	ARRANGE_TILE_APPLIED: 'wp-desktop.arrange.tile.applied',
+	/**
+	 * Filter on the tile-grid dimensions chosen by the built-in
+	 * algorithm. Receives `{ cols, rows }` plus a context arg
+	 * `{ windowCount, areaWidth, areaHeight }`. Plugins can return
+	 * a different `{ cols, rows }` to enforce a custom layout
+	 * (fixed-column newsroom, golden-ratio cells, etc.). Returned
+	 * values are validated — non-positive integers, or a product
+	 * smaller than `windowCount`, fall back to the original.
+	 */
+	ARRANGE_TILE_DIMENSIONS: 'wp-desktop.arrange.tile.dimensions',
+	/** Action, fires when snap-to-grid is toggled. Payload `{ enabled }`. */
+	ARRANGE_SNAP_CHANGED: 'wp-desktop.arrange.snap.changed',
+	/**
+	 * Filter on the snap-grid cell size. Receives
+	 * `{ cellWidth, cellHeight }` plus a context arg
+	 * `{ areaWidth, areaHeight }`. Plugins can return different
+	 * dimensions to enforce a Tetris-style fixed grid, a musical
+	 * staff aspect, etc. Non-positive returns fall back to the
+	 * original.
+	 */
+	ARRANGE_SNAP_CELL_SIZE: 'wp-desktop.arrange.snap.cell-size',
+
+	// ------------------------------------------------------------------
+	// Widgets — the right-side column. Widgets paint above the
+	// wallpaper but beneath windows. Lifecycle mirrors canvas
+	// wallpapers: register via filter, mount/unmount actions bracket
+	// each paint, mount-failed fires on sync throws / async rejects.
+	// ------------------------------------------------------------------
+	/** Filter, receives the widget registry array. */
+	WIDGETS: 'wp-desktop.widgets',
+	/** Action before a widget mounts. Payload `{ id, container, ctx }`. */
+	WIDGET_MOUNTING: 'wp-desktop.widget.mounting',
+	/** Action after a widget mounts successfully. Payload `{ id, container, ctx }`. */
+	WIDGET_MOUNTED: 'wp-desktop.widget.mounted',
+	/** Action before a widget tears down. Payload `{ id }`. */
+	WIDGET_UNMOUNTING: 'wp-desktop.widget.unmounting',
+	/** Action when a widget's mount throws / rejects. Payload `{ id, error }`. */
+	WIDGET_MOUNT_FAILED: 'wp-desktop.widget.mount-failed',
+	/** Action when the user adds a widget via the picker. Payload `{ id }`. */
+	WIDGET_ADDED: 'wp-desktop.widget.added',
+	/** Action when the user removes a widget via the card's × button. Payload `{ id }`. */
+	WIDGET_REMOVED: 'wp-desktop.widget.removed',
+
+	// ------------------------------------------------------------------
+	// Virtual-desktop ("Spaces") lifecycle actions.
+	//
+	// Spaces let users group windows into separate workspaces and flip
+	// between them from the overview top bar. These hooks expose every
+	// state change so plugins can persist per-space state, sync custom
+	// indicators, or react to the user's workspace context.
+	// ------------------------------------------------------------------
+	/** Action, fires when a new desktop is created. Payload `{ desktopId }`. */
+	DESKTOP_CREATED: 'wp-desktop.desktop.created',
+	/** Action, fires when a desktop is closed. Payload `{ desktopId, migratedTo }`. */
+	DESKTOP_CLOSED: 'wp-desktop.desktop.closed',
+	/** Action, fires when the active desktop changes. Payload `{ from, to }`. */
+	DESKTOP_SWITCHED: 'wp-desktop.desktop.switched',
 
 	// ------------------------------------------------------------------
 	// Shell-level lifecycle actions.

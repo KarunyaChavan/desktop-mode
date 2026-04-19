@@ -20,21 +20,40 @@ const WPDM_SESSION_META_KEY = 'wp_desktop_session';
 /** Hard cap on persisted windows — guards against runaway meta size. */
 const WPDM_SESSION_MAX_WINDOWS = 32;
 
+/** Hard cap on persisted desktops ("Spaces"). Generous — power-users
+ * with 8+ desktops are vanishingly rare, and we'd rather drop tail
+ * desktops than balloon user meta. */
+const WPDM_SESSION_MAX_DESKTOPS = 16;
+
 /** Allowed values for a window's state field. */
 const WPDM_SESSION_STATES = array( 'normal', 'minimized', 'maximized', 'fullscreen' );
+
+/** Default desktop entry seeded into empty / corrupt sessions. */
+function wpdm_default_desktop() {
+	return array(
+		'id'    => 'desktop-1',
+		'label' => 'Desktop 1',
+	);
+}
 
 /**
  * Returns the default empty session shape.
  *
+ * Includes a default desktop ("Desktop 1") so the client can always
+ * assume at least one desktop exists at boot — the shell can't
+ * function with zero desktops.
+ *
  * @since 0.4.0
  *
- * @return array{windows: array, focused: string, updated: int}
+ * @return array{windows: array, desktops: array, activeDesktop: string, focused: string, updated: int}
  */
 function wpdm_empty_session() {
 	return array(
-		'windows' => array(),
-		'focused' => '',
-		'updated' => 0,
+		'windows'       => array(),
+		'desktops'      => array( wpdm_default_desktop() ),
+		'activeDesktop' => 'desktop-1',
+		'focused'       => '',
+		'updated'       => 0,
 	);
 }
 
@@ -60,10 +79,21 @@ function wpdm_get_session( $user_id ) {
 		return wpdm_empty_session();
 	}
 
+	// Desktops + activeDesktop are post-0.4.0 additions. Sessions
+	// saved before they existed don't carry either field — fall back
+	// to the single default desktop so older sessions degrade
+	// gracefully rather than booting into a zero-desktop limbo.
+	$desktops      = isset( $raw['desktops'] ) && is_array( $raw['desktops'] )
+		? array_values( $raw['desktops'] )
+		: array( wpdm_default_desktop() );
+	$active_desktop = isset( $raw['activeDesktop'] ) ? (string) $raw['activeDesktop'] : 'desktop-1';
+
 	return array(
-		'windows' => isset( $raw['windows'] ) && is_array( $raw['windows'] ) ? array_values( $raw['windows'] ) : array(),
-		'focused' => isset( $raw['focused'] ) ? (string) $raw['focused'] : '',
-		'updated' => isset( $raw['updated'] ) ? (int) $raw['updated'] : 0,
+		'windows'       => isset( $raw['windows'] ) && is_array( $raw['windows'] ) ? array_values( $raw['windows'] ) : array(),
+		'desktops'      => $desktops,
+		'activeDesktop' => $active_desktop,
+		'focused'       => isset( $raw['focused'] ) ? (string) $raw['focused'] : '',
+		'updated'       => isset( $raw['updated'] ) ? (int) $raw['updated'] : 0,
 	);
 }
 
@@ -127,6 +157,67 @@ function wpdm_sanitize_session( $session ) {
 		$clean['focused'] = sanitize_key( $session['focused'] );
 	}
 
+	// --- Desktops list -------------------------------------------
+	// Build a sanitized desktops array first so we can validate
+	// per-window desktopId against it below — windows assigned to
+	// non-existent desktops are quietly remapped to the active
+	// desktop on restore client-side, but we want server-side
+	// integrity too.
+	$desktop_ids = array();
+	if ( isset( $session['desktops'] ) && is_array( $session['desktops'] ) ) {
+		$clean_desktops = array();
+		foreach ( $session['desktops'] as $d ) {
+			if ( ! is_array( $d ) ) {
+				continue;
+			}
+			$d_id = isset( $d['id'] ) ? sanitize_key( (string) $d['id'] ) : '';
+			if ( '' === $d_id ) {
+				continue;
+			}
+			$d_label = isset( $d['label'] ) ? wp_strip_all_tags( (string) $d['label'] ) : '';
+			if ( '' === $d_label ) {
+				$d_label = $d_id;
+			}
+			// 64-char cap on labels — generous for any sensible
+			// human-typed desktop name, hard ceiling on meta size.
+			if ( strlen( $d_label ) > 64 ) {
+				$d_label = substr( $d_label, 0, 64 );
+			}
+			$clean_desktops[] = array(
+				'id'    => $d_id,
+				'label' => $d_label,
+			);
+			$desktop_ids[] = $d_id;
+			if ( count( $clean_desktops ) >= WPDM_SESSION_MAX_DESKTOPS ) {
+				break;
+			}
+		}
+		if ( ! empty( $clean_desktops ) ) {
+			$clean['desktops'] = $clean_desktops;
+		}
+	}
+	// Always at least one desktop in the persisted shape — guards
+	// against a client clearing every desktop and saving an empty
+	// list.
+	if ( empty( $clean['desktops'] ) ) {
+		$clean['desktops'] = array( wpdm_default_desktop() );
+		$desktop_ids       = array( 'desktop-1' );
+	}
+
+	// --- Active desktop ------------------------------------------
+	if ( isset( $session['activeDesktop'] ) && is_string( $session['activeDesktop'] ) ) {
+		$candidate = sanitize_key( $session['activeDesktop'] );
+		if ( in_array( $candidate, $desktop_ids, true ) ) {
+			$clean['activeDesktop'] = $candidate;
+		}
+	}
+	// Fallback: first valid desktop. Already true via wpdm_empty_session
+	// when the client passed nothing, but guards the case where
+	// activeDesktop named a desktop that didn't survive sanitization.
+	if ( ! in_array( $clean['activeDesktop'], $desktop_ids, true ) ) {
+		$clean['activeDesktop'] = $desktop_ids[ 0 ];
+	}
+
 	if ( isset( $session['windows'] ) && is_array( $session['windows'] ) ) {
 		$admin_url = admin_url();
 		foreach ( $session['windows'] as $win ) {
@@ -170,17 +261,28 @@ function wpdm_sanitize_session( $session ) {
 				$state = 'normal';
 			}
 
+			// Map the window to a known desktop. A client that sends a
+			// desktopId pointing at a non-existent desktop (race with
+			// a desktop close, or a malicious payload) is silently
+			// remapped to the active desktop so the window remains
+			// visible — losing it on restore would be the worse UX.
+			$win_desktop = isset( $win['desktopId'] ) ? sanitize_key( (string) $win['desktopId'] ) : '';
+			if ( '' === $win_desktop || ! in_array( $win_desktop, $desktop_ids, true ) ) {
+				$win_desktop = $clean['activeDesktop'];
+			}
+
 			$entry = array(
-				'id'     => $id,
-				'baseId' => $base_id,
-				'url'    => $url,
-				'title'  => isset( $win['title'] ) ? wp_strip_all_tags( (string) $win['title'] ) : '',
-				'icon'   => isset( $win['icon'] ) ? sanitize_html_class( (string) $win['icon'] ) : 'dashicons-admin-generic',
-				'state'  => $state,
-				'x'      => wpdm_sanitize_session_dimension( $win['x'] ?? 0, -10000, 10000 ),
-				'y'      => wpdm_sanitize_session_dimension( $win['y'] ?? 0, -10000, 10000 ),
-				'width'  => wpdm_sanitize_session_dimension( $win['width'] ?? 800, 0, 20000 ),
-				'height' => wpdm_sanitize_session_dimension( $win['height'] ?? 600, 0, 20000 ),
+				'id'        => $id,
+				'baseId'    => $base_id,
+				'desktopId' => $win_desktop,
+				'url'       => $url,
+				'title'     => isset( $win['title'] ) ? wp_strip_all_tags( (string) $win['title'] ) : '',
+				'icon'      => isset( $win['icon'] ) ? sanitize_html_class( (string) $win['icon'] ) : 'dashicons-admin-generic',
+				'state'     => $state,
+				'x'         => wpdm_sanitize_session_dimension( $win['x'] ?? 0, -10000, 10000 ),
+				'y'         => wpdm_sanitize_session_dimension( $win['y'] ?? 0, -10000, 10000 ),
+				'width'     => wpdm_sanitize_session_dimension( $win['width'] ?? 800, 0, 20000 ),
+				'height'    => wpdm_sanitize_session_dimension( $win['height'] ?? 600, 0, 20000 ),
 			);
 
 			// Sanitize external sub-tabs. Each entry carries a URL

@@ -57,6 +57,23 @@
 	transition: none;
 }
 
+/*
+ * Snap-to-grid drag/resize: re-enable a SHORT transition so each
+ * cell-to-cell jump animates smoothly instead of teleporting. The
+ * `--snap-drag` class is added by the window class only when snap
+ * is on at drag/resize start; it composes with `--dragging` /
+ * `--resizing` and the source-order ensures it wins. Kept short
+ * (90 ms) so the window still feels glued to the cursor — anything
+ * longer reads as lag.
+ */
+.wp-desktop-window--snap-drag {
+	transition:
+		left 0.09s ease-out,
+		top 0.09s ease-out,
+		width 0.09s ease-out,
+		height 0.09s ease-out;
+}
+
 /* Focused window gets elevated shadow and distinct title bar. */
 .wp-desktop-window--focused {
 	box-shadow: var(--wp-desktop-window-shadow-focused);
@@ -1622,6 +1639,195 @@
 @media ( prefers-reduced-motion: reduce ) {
 	.wp-desktop-area--overview,
 	.wp-desktop-window--overview {
+		transition-duration: 0.01ms;
+	}
+}
+
+/* ---------------------------------------------------------------
+ * Overview top bar — virtual desktops ("Spaces") strip.
+ *
+ * Lives at the top of the desktop area while overview is active,
+ * stacked above the dimmed backdrop and below the window
+ * thumbnails. Each tile represents one desktop; clicking switches
+ * to it (and exits overview), the trailing "+" tile creates a new
+ * one, and per-tile X buttons close.
+ * --------------------------------------------------------------- */
+
+.wp-desktop-overview-top-bar {
+	position: absolute;
+	top: 16px;
+	left: 50%;
+	transform: translateX( -50% );
+	z-index: 2;
+	opacity: 0;
+	pointer-events: none;
+	transition:
+		opacity 0.22s ease 0.06s,
+		transform 0.28s cubic-bezier( 0.2, 0, 0.2, 1 ) 0.06s;
+}
+
+.wp-desktop-area--overview .wp-desktop-overview-top-bar {
+	opacity: 1;
+	pointer-events: auto;
+}
+
+.wp-desktop-overview-top-bar--out {
+	opacity: 0 !important;
+	transform: translateX( -50% ) translateY( -6px ) !important;
+	transition-delay: 0s !important;
+}
+
+.wp-desktop-overview-top-bar__list {
+	display: flex;
+	flex-direction: row;
+	align-items: stretch;
+	gap: 12px;
+	padding: 8px 12px;
+	border-radius: 14px;
+	background-color: rgba( 0, 0, 0, 0.32 );
+	backdrop-filter: blur( 18px ) saturate( 140% );
+	-webkit-backdrop-filter: blur( 18px ) saturate( 140% );
+	box-shadow:
+		0 8px 28px rgba( 0, 0, 0, 0.35 ),
+		inset 0 0 0 1px rgba( 255, 255, 255, 0.08 );
+}
+
+.wp-desktop-overview-top-bar__tile {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	align-items: stretch;
+	justify-content: stretch;
+	width: 140px;
+	padding: 0;
+	margin: 0;
+	background: rgba( 255, 255, 255, 0.04 );
+	border: 2px solid rgba( 255, 255, 255, 0.18 );
+	border-radius: 10px;
+	color: #fff;
+	cursor: pointer;
+	overflow: hidden;
+	transition:
+		border-color 0.18s ease,
+		background-color 0.18s ease,
+		transform 0.18s ease;
+	font: inherit;
+}
+
+.wp-desktop-overview-top-bar__tile:hover {
+	border-color: rgba( 255, 255, 255, 0.4 );
+	background: rgba( 255, 255, 255, 0.08 );
+}
+
+.wp-desktop-overview-top-bar__tile:focus-visible {
+	outline: 2px solid var( --wp-admin-theme-color, #2271b1 );
+	outline-offset: 2px;
+}
+
+.wp-desktop-overview-top-bar__tile--active {
+	border-color: var( --wp-admin-theme-color, #2271b1 );
+	box-shadow: 0 0 0 1px var( --wp-admin-theme-color, #2271b1 );
+}
+
+.wp-desktop-overview-top-bar__tile-preview {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	height: 60px;
+	background: linear-gradient(
+		135deg,
+		rgba( 255, 255, 255, 0.04 ),
+		rgba( 255, 255, 255, 0.12 )
+	);
+	border-bottom: 1px solid rgba( 255, 255, 255, 0.08 );
+}
+
+.wp-desktop-overview-top-bar__tile-count {
+	font-size: 18px;
+	font-weight: 600;
+	color: rgba( 255, 255, 255, 0.7 );
+	letter-spacing: 0.02em;
+}
+
+.wp-desktop-overview-top-bar__tile-label {
+	display: block;
+	padding: 6px 10px 8px;
+	text-align: center;
+	font-size: 12px;
+	font-weight: 500;
+	color: rgba( 255, 255, 255, 0.85 );
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.wp-desktop-overview-top-bar__tile-close {
+	position: absolute;
+	top: 4px;
+	inset-inline-end: 4px;
+	width: 18px;
+	height: 18px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	color: rgba( 255, 255, 255, 0.7 );
+	background: rgba( 0, 0, 0, 0.45 );
+	border-radius: 50%;
+	cursor: pointer;
+	opacity: 0;
+	transition:
+		opacity 0.15s ease,
+		background-color 0.15s ease,
+		color 0.15s ease;
+}
+
+.wp-desktop-overview-top-bar__tile:hover
+	.wp-desktop-overview-top-bar__tile-close {
+	opacity: 1;
+}
+
+.wp-desktop-overview-top-bar__tile-close:hover {
+	background: #d63638;
+	color: #fff;
+}
+
+/*
+ * Hide the close X when there's only one tile left — the tile
+ * counts both real desktops AND the trailing "+", so "only one
+ * desktop" means exactly two tiles in the list.
+ */
+.wp-desktop-overview-top-bar__list:has(
+		.wp-desktop-overview-top-bar__tile:not(
+				.wp-desktop-overview-top-bar__tile--add
+			):only-of-type
+	)
+	.wp-desktop-overview-top-bar__tile-close {
+	display: none;
+}
+
+.wp-desktop-overview-top-bar__tile--add {
+	width: 60px;
+	background: transparent;
+	border-style: dashed;
+}
+
+.wp-desktop-overview-top-bar__tile--add:hover {
+	background: rgba( 255, 255, 255, 0.08 );
+}
+
+.wp-desktop-overview-top-bar__tile-plus {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex: 1;
+	font-size: 28px;
+	font-weight: 200;
+	color: rgba( 255, 255, 255, 0.7 );
+	line-height: 1;
+}
+
+@media ( prefers-reduced-motion: reduce ) {
+	.wp-desktop-overview-top-bar {
 		transition-duration: 0.01ms;
 	}
 }

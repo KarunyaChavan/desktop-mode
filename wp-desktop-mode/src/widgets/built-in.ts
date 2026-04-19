@@ -9,13 +9,21 @@
  * @since 0.7.0
  */
 
+import { __ } from '../i18n';
 import * as registry from './registry';
 import type { WidgetDef } from './types';
 
 const clock: WidgetDef = {
 	id: 'clock',
-	label: 'Clock',
-	description: 'Local time and date, refreshed every second.',
+	// Labels/descriptions on built-in defs stay string-literal at
+	// module-eval time so the extract-pot pass picks them up. The
+	// values are wrapped in `__()` so they translate at runtime.
+	get label(): string {
+		return __( 'Clock' );
+	},
+	get description(): string {
+		return __( 'Local time and date, refreshed every second.' );
+	},
 	icon: 'dashicons-clock',
 	mount: ( container ) => {
 		container.classList.add( 'wp-desktop-widget-clock' );

@@ -11,6 +11,7 @@
 
 import type { WindowManager } from './window-manager';
 import { deriveWindowId } from './utils';
+import { __, _n, sprintf } from './i18n';
 
 /**
  * A JS-registered dock tile appended below the admin-menu items.
@@ -191,7 +192,14 @@ export class Dock {
 			const badge = document.createElement( 'span' );
 			badge.className = 'wp-desktop-dock__badge';
 			badge.textContent = String( item.badge );
-			badge.setAttribute( 'aria-label', `${ item.badge } updates` );
+			badge.setAttribute(
+				'aria-label',
+				sprintf(
+					// translators: %d is the number of pending updates / items.
+					_n( '%d update', '%d updates', item.badge ),
+					item.badge,
+				),
+			);
 			primary.appendChild( badge );
 		}
 
@@ -210,7 +218,11 @@ export class Dock {
 			addBtn.type = 'button';
 			addBtn.className = 'wp-desktop-dock__item-new';
 			addBtn.hidden = true;
-			addBtn.setAttribute( 'aria-label', `Open another ${ item.title }` );
+			addBtn.setAttribute(
+				'aria-label',
+				// translators: %s is the admin-page title (e.g., "Posts")
+				sprintf( __( 'Open another %s' ), item.title ),
+			);
 			addBtn.innerHTML =
 				'<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" focusable="false">' +
 				'<path d="M6 2v8M2 6h8" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>' +
@@ -229,7 +241,8 @@ export class Dock {
 			// desktop-only by nature.
 			addBtn.addEventListener( 'pointerenter', () => {
 				const rect = addBtn.getBoundingClientRect();
-				this.tooltip.textContent = `Open new ${ item.title }`;
+				// translators: %s is the admin-page title (e.g., "Posts")
+				this.tooltip.textContent = sprintf( __( 'Open new %s' ), item.title );
 				this.tooltip.style.top = `${ rect.top + rect.height / 2 - 14 }px`;
 				this.tooltip.classList.add( 'wp-desktop-dock__tooltip--visible' );
 			} );

@@ -9,6 +9,7 @@
 import type { WindowConfig, WindowState } from './types';
 import { sanitizeClassName, urlMatchKey } from './utils';
 import { HOOKS, doAction } from './hooks';
+import { __, sprintf } from './i18n';
 import { showToast } from './toast';
 
 /** Minimum distance from viewport edges when dragging. */
@@ -113,7 +114,7 @@ function createWindowElement( config: WindowConfig ): HTMLElement {
 		menuBtn = document.createElement( 'button' );
 		menuBtn.type = 'button';
 		menuBtn.className = 'wp-desktop-window__btn wp-desktop-window__menu-btn';
-		menuBtn.setAttribute( 'aria-label', 'Window actions' );
+		menuBtn.setAttribute( 'aria-label', __( 'Window actions' ) );
 		menuBtn.setAttribute( 'aria-haspopup', 'menu' );
 		menuBtn.setAttribute( 'aria-expanded', 'false' );
 		menuBtn.innerHTML =
@@ -137,9 +138,14 @@ function createWindowElement( config: WindowConfig ): HTMLElement {
 			'wp-desktop-window__menu-item wp-desktop-window__menu-item--startup';
 		startup.setAttribute( 'role', 'menuitemcheckbox' );
 		startup.setAttribute( 'aria-checked', 'false' );
-		startup.innerHTML =
-			'<span class="wp-desktop-window__menu-check" aria-hidden="true"></span>' +
-			'<span class="wp-desktop-window__menu-label">Open on startup</span>';
+		const startupCheck = document.createElement( 'span' );
+		startupCheck.className = 'wp-desktop-window__menu-check';
+		startupCheck.setAttribute( 'aria-hidden', 'true' );
+		const startupLabel = document.createElement( 'span' );
+		startupLabel.className = 'wp-desktop-window__menu-label';
+		startupLabel.textContent = __( 'Open on startup' );
+		startup.appendChild( startupCheck );
+		startup.appendChild( startupLabel );
 		menuPanel.appendChild( startup );
 
 		if ( config.multi ) {
@@ -148,9 +154,19 @@ function createWindowElement( config: WindowConfig ): HTMLElement {
 			openAnother.className =
 				'wp-desktop-window__menu-item wp-desktop-window__menu-item--open-another';
 			openAnother.setAttribute( 'role', 'menuitem' );
-			openAnother.innerHTML =
-				'<span class="wp-desktop-window__menu-icon dashicons dashicons-plus-alt2" aria-hidden="true"></span>' +
-				`<span class="wp-desktop-window__menu-label">Open another ${ config.title }</span>`;
+			const oaIcon = document.createElement( 'span' );
+			oaIcon.className =
+				'wp-desktop-window__menu-icon dashicons dashicons-plus-alt2';
+			oaIcon.setAttribute( 'aria-hidden', 'true' );
+			const oaLabel = document.createElement( 'span' );
+			oaLabel.className = 'wp-desktop-window__menu-label';
+			oaLabel.textContent = sprintf(
+				// translators: %s is the window's admin-page name (e.g., "Posts")
+				__( 'Open another %s' ),
+				config.title,
+			);
+			openAnother.appendChild( oaIcon );
+			openAnother.appendChild( oaLabel );
 			menuPanel.appendChild( openAnother );
 		}
 	}
@@ -169,17 +185,17 @@ function createWindowElement( config: WindowConfig ): HTMLElement {
 
 	const btnMin = createControlButton(
 		'minimize',
-		'Minimize',
+		__( 'Minimize' ),
 		'<path d="M3 6h6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>',
 	);
 	const btnMax = createControlButton(
 		'maximize',
-		'Maximize',
+		__( 'Maximize' ),
 		'<rect x="3" y="3" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.25" fill="none"/>',
 	);
 	const btnFocus = createControlButton(
 		'focus',
-		'Enter fullscreen',
+		__( 'Enter fullscreen' ),
 		'<path d="M4.5 2H2v2.5M10 4.5V2H7.5M4.5 10H2V7.5M10 7.5V10H7.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none"/>',
 	);
 	// Detach: open this window's current URL in a new browser tab as
@@ -189,12 +205,12 @@ function createWindowElement( config: WindowConfig ): HTMLElement {
 	// "open in new window" box + arrow.
 	const btnDetach = createControlButton(
 		'detach',
-		'Detach to new tab',
+		__( 'Detach to new tab' ),
 		'<path d="M5 2H2.5v7.5H10V7M6.5 2H10v3.5M10 2L5.5 6.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none"/>',
 	);
 	const btnClose = createControlButton(
 		'close',
-		'Close',
+		__( 'Close' ),
 		'<path d="M3.25 3.25l5.5 5.5M3.25 8.75l5.5-5.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>',
 	);
 
@@ -262,7 +278,8 @@ function createWindowElement( config: WindowConfig ): HTMLElement {
 		const tabs = document.createElement( 'nav' );
 		tabs.className = 'wp-desktop-window__tabs';
 		tabs.setAttribute( 'role', 'tablist' );
-		tabs.setAttribute( 'aria-label', `${ config.title } sub-pages` );
+		// translators: %s is the window's admin-page title (e.g., "Posts")
+		tabs.setAttribute( 'aria-label', sprintf( __( '%s sub-pages' ), config.title ) );
 
 		if ( config.submenu && config.submenu.length > 0 ) {
 			const initialKey = urlMatchKey( config.url );
@@ -844,8 +861,8 @@ export class Window {
 		detachBtn.dataset.tabAction = 'detach';
 		detachBtn.dataset.tabId = tabId;
 		detachBtn.setAttribute( 'role', 'button' );
-		detachBtn.setAttribute( 'aria-label', 'Open in a new browser tab' );
-		detachBtn.title = 'Open in a new browser tab';
+		detachBtn.setAttribute( 'aria-label', __( 'Open in a new browser tab' ) );
+		detachBtn.title = __( 'Open in a new browser tab' );
 		detachBtn.innerHTML =
 			'<svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true" focusable="false">' +
 			'<path d="M5 2H2.5v7.5H10V7M6.5 2H10v3.5M10 2L5.5 6.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none"/>' +
@@ -857,8 +874,8 @@ export class Window {
 		closeBtn.dataset.tabAction = 'close';
 		closeBtn.dataset.tabId = tabId;
 		closeBtn.setAttribute( 'role', 'button' );
-		closeBtn.setAttribute( 'aria-label', 'Close tab' );
-		closeBtn.title = 'Close tab';
+		closeBtn.setAttribute( 'aria-label', __( 'Close tab' ) );
+		closeBtn.title = __( 'Close tab' );
 		closeBtn.innerHTML =
 			'<svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true" focusable="false">' +
 			'<path d="M3.25 3.25l5.5 5.5M3.25 8.75l5.5-5.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>' +
@@ -1058,9 +1075,15 @@ export class Window {
 		const { url, label } = entry;
 		this.closeExternalTab( tabId );
 		showToast( {
-			message: `Opened "${ label }" in a new browser tab — this site doesn't allow embedding.`,
+			message: sprintf(
+				// translators: %s is the external site's title or URL.
+				__(
+					'Opened "%s" in a new browser tab — this site doesn\'t allow embedding.',
+				),
+				label,
+			),
 			action: {
-				label: 'Open',
+				label: __( 'Open' ),
 				onClick: () => {
 					window.open( url, '_blank', 'noopener' );
 				},
@@ -1603,7 +1626,7 @@ export class Window {
 		btn.setAttribute( 'aria-pressed', isFullscreen ? 'true' : 'false' );
 		btn.setAttribute(
 			'aria-label',
-			isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen',
+			isFullscreen ? __( 'Exit fullscreen' ) : __( 'Enter fullscreen' ),
 		);
 	}
 

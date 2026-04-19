@@ -26,6 +26,7 @@
 import type { WallpaperLayer } from './wallpapers/layer';
 import type { WallpaperDef, WallpaperTeardown } from './wallpapers/types';
 import * as registry from './wallpapers/registry';
+import { __, sprintf } from './i18n';
 
 /** localStorage key under which preferences are serialized. */
 const STORAGE_KEY = 'wp-desktop-os-settings';
@@ -69,6 +70,46 @@ const DOCK_SIZES = [
 ] as const;
 
 type DockSizeId = ( typeof DOCK_SIZES )[ number ][ 'id' ];
+
+/**
+ * Translate an accent label by id. Keeping the `__()` calls inside a
+ * switch — rather than on the const array directly — means the
+ * extract-pot pass sees string literals, and the const stays static
+ * (no Babel top-level-await oddness). Any accent id we haven't
+ * translated explicitly falls back to the English label.
+ */
+function translateAccentLabel( id: AccentId, fallback: string ): string {
+	switch ( id ) {
+		case 'wp-blue':
+			return __( 'WordPress Blue' );
+		case 'indigo':
+			return __( 'Indigo' );
+		case 'teal':
+			return __( 'Teal' );
+		case 'emerald':
+			return __( 'Emerald' );
+		case 'amber':
+			return __( 'Amber' );
+		case 'rose':
+			return __( 'Rose' );
+		default:
+			return fallback;
+	}
+}
+
+/** Same pattern for dock size labels. */
+function translateDockSizeLabel( id: DockSizeId, fallback: string ): string {
+	switch ( id ) {
+		case 'compact':
+			return __( 'Compact' );
+		case 'default':
+			return __( 'Default' );
+		case 'large':
+			return __( 'Large' );
+		default:
+			return fallback;
+	}
+}
 
 /** Two endpoints on the gradient, plus an angle in degrees (0–360). */
 interface CustomGradient {
@@ -225,8 +266,9 @@ export class OsSettings {
 
 		const intro = document.createElement( 'p' );
 		intro.className = 'wp-desktop-os-settings__intro';
-		intro.textContent =
-			'Personalize your desktop. Changes apply instantly and are saved to this browser.';
+		intro.textContent = __(
+			'Personalize your desktop. Changes apply instantly and are saved to this browser.',
+		);
 		body.appendChild( intro );
 
 		body.appendChild( this.buildWallpaperSection( body ) );
@@ -239,7 +281,7 @@ export class OsSettings {
 		const reset = document.createElement( 'button' );
 		reset.type = 'button';
 		reset.className = 'wp-desktop-os-settings__reset';
-		reset.textContent = 'Reset to defaults';
+		reset.textContent = __( 'Reset to defaults' );
 		reset.addEventListener( 'click', () => {
 			// Preserve the uploaded image so the user doesn't lose their
 			// upload just by resetting theme preferences — the image still
@@ -267,7 +309,7 @@ export class OsSettings {
 	private registerCustomGradient(): void {
 		registry.register( {
 			id: CUSTOM_GRADIENT_ID,
-			label: 'Custom gradient',
+			label: __( 'Custom gradient' ),
 			type: 'css',
 			preview: this.customGradientCss(),
 			resolveValue: () => this.customGradientCss(),
@@ -289,7 +331,7 @@ export class OsSettings {
 		const value = `url("${ safeUrl }") center/cover no-repeat, #1d2327`;
 		registry.register( {
 			id: CUSTOM_IMAGE_ID,
-			label: 'Custom image',
+			label: __( 'Custom image' ),
 			type: 'css',
 			value,
 			preview: value,
@@ -302,8 +344,10 @@ export class OsSettings {
 
 	private buildWallpaperSection( body: HTMLElement ): HTMLElement {
 		const section = this.buildSection(
-			'Wallpaper',
-			'The backdrop behind your windows. Pick a preset, mix your own gradient, or drop in an image.',
+			__( 'Wallpaper' ),
+			__(
+				'The backdrop behind your windows. Pick a preset, mix your own gradient, or drop in an image.',
+			),
 		);
 
 		// Swatch grid — every registered wallpaper EXCEPT custom-image,
@@ -503,13 +547,13 @@ export class OsSettings {
 		};
 
 		row.appendChild(
-			buildColorField( 'From', this.state.customGradient.from, ( value ) => {
+			buildColorField( __( 'From' ), this.state.customGradient.from, ( value ) => {
 				this.state.customGradient.from = value;
 				onGradientChange();
 			} ),
 		);
 		row.appendChild(
-			buildColorField( 'To', this.state.customGradient.to, ( value ) => {
+			buildColorField( __( 'To' ), this.state.customGradient.to, ( value ) => {
 				this.state.customGradient.to = value;
 				onGradientChange();
 			} ),
@@ -522,7 +566,7 @@ export class OsSettings {
 
 		const angleLabel = document.createElement( 'span' );
 		angleLabel.className = 'wp-desktop-os-settings__gradient-label';
-		angleLabel.textContent = 'Angle';
+		angleLabel.textContent = __( 'Angle' );
 		angleField.appendChild( angleLabel );
 
 		const angleInput = document.createElement( 'input' );
@@ -580,7 +624,7 @@ export class OsSettings {
 
 		const heading = document.createElement( 'h4' );
 		heading.className = 'wp-desktop-os-settings__uploader-heading';
-		heading.textContent = 'Or use your own image';
+		heading.textContent = __( 'Or use your own image' );
 		wrap.appendChild( heading );
 
 		const tabList = document.createElement( 'div' );
@@ -596,13 +640,13 @@ export class OsSettings {
 		if ( this.config.canUpload ) {
 			tabs.push( {
 				key: 'upload',
-				label: 'Upload new',
+				label: __( 'Upload new' ),
 				render: () => this.renderUploadPane( pane, body ),
 			} );
 		}
 		tabs.push( {
 			key: 'library',
-			label: 'Media Library',
+			label: __( 'Media Library' ),
 			render: () => this.renderLibraryPane( pane, body ),
 		} );
 
@@ -680,9 +724,9 @@ export class OsSettings {
 
 		const search = document.createElement( 'input' );
 		search.type = 'search';
-		search.placeholder = 'Search your media';
+		search.placeholder = __( 'Search your media' );
 		search.className = 'wp-desktop-os-settings__library-search';
-		search.setAttribute( 'aria-label', 'Search media' );
+		search.setAttribute( 'aria-label', __( 'Search media' ) );
 		toolbar.appendChild( search );
 
 		const hdWrap = document.createElement( 'label' );
@@ -692,7 +736,12 @@ export class OsSettings {
 		hdInput.checked = this.state.libraryHdOnly;
 		hdWrap.appendChild( hdInput );
 		const hdLabel = document.createElement( 'span' );
-		hdLabel.textContent = `Only HD (≥${ HD_MIN_WIDTH }×${ HD_MIN_HEIGHT })`;
+		hdLabel.textContent = sprintf(
+			// translators: %1$d is the HD minimum width in px, %2$d is the minimum height.
+			__( 'Only HD (≥%1$d×%2$d)' ),
+			HD_MIN_WIDTH,
+			HD_MIN_HEIGHT,
+		);
 		hdWrap.appendChild( hdLabel );
 		toolbar.appendChild( hdWrap );
 
@@ -710,7 +759,7 @@ export class OsSettings {
 		const loadMore = document.createElement( 'button' );
 		loadMore.type = 'button';
 		loadMore.className = 'wp-desktop-os-settings__library-load-more';
-		loadMore.textContent = 'Load more';
+		loadMore.textContent = __( 'Load more' );
 		footer.appendChild( loadMore );
 		library.appendChild( footer );
 
@@ -725,9 +774,15 @@ export class OsSettings {
 
 		const updateMeta = (): void => {
 			const visible = this.visibleLibraryItems( loaded ).length;
-			const parts = [ `Showing ${ visible }` ];
+			const parts = [
+				// translators: %d is the number of media items currently visible.
+				sprintf( __( 'Showing %d' ), visible ),
+			];
 			if ( this.state.libraryHdOnly && hiddenByHd > 0 ) {
-				parts.push( `${ hiddenByHd } hidden by HD filter` );
+				parts.push(
+					// translators: %d is the number of images filtered out by the HD toggle.
+					sprintf( __( '%d hidden by HD filter' ), hiddenByHd ),
+				);
 			}
 			meta.textContent = parts.join( ' · ' );
 			loadMore.hidden = page >= totalPages;
@@ -742,9 +797,13 @@ export class OsSettings {
 			if ( visible.length === 0 && ! loading ) {
 				const empty = document.createElement( 'p' );
 				empty.className = 'wp-desktop-os-settings__library-empty';
-				empty.textContent = this.state.libraryHdOnly
-					? 'No HD images found. Try unchecking the filter, or upload a larger image.'
-					: 'No images in your Media Library yet.';
+				if ( this.state.libraryHdOnly ) {
+					empty.textContent = __(
+						'No HD images found. Try unchecking the filter, or upload a larger image.',
+					);
+				} else {
+					empty.textContent = __( 'No images in your Media Library yet.' );
+				}
 				grid.appendChild( empty );
 			} else {
 				for ( const item of visible ) {
@@ -780,10 +839,15 @@ export class OsSettings {
 				grid.innerHTML = '';
 				const errMsg = document.createElement( 'p' );
 				errMsg.className = 'wp-desktop-os-settings__library-error';
-				errMsg.textContent =
-					err instanceof Error
-						? `Couldn’t load your media: ${ err.message }`
-						: 'Couldn’t load your media.';
+				if ( err instanceof Error ) {
+					errMsg.textContent = sprintf(
+						// translators: %s is the browser-supplied error message.
+						__( 'Couldn’t load your media: %s' ),
+						err.message,
+					);
+				} else {
+					errMsg.textContent = __( 'Couldn’t load your media.' );
+				}
 				grid.appendChild( errMsg );
 			} finally {
 				loading = false;
@@ -952,14 +1016,14 @@ export class OsSettings {
 
 		if ( this.state.customImage ) {
 			tile.classList.add( 'wp-desktop-os-settings__upload-tile--filled' );
-			tile.setAttribute( 'aria-label', 'Custom image wallpaper' );
+			tile.setAttribute( 'aria-label', __( 'Custom image wallpaper' ) );
 			tile.style.backgroundImage = `url("${ encodeURI( this.state.customImage.url ) }")`;
 
 			const remove = document.createElement( 'button' );
 			remove.type = 'button';
 			remove.className = 'wp-desktop-os-settings__upload-remove';
-			remove.setAttribute( 'aria-label', 'Remove custom image' );
-			remove.textContent = 'Remove';
+			remove.setAttribute( 'aria-label', __( 'Remove custom image' ) );
+			remove.textContent = __( 'Remove' );
 			remove.addEventListener( 'click', ( e ) => {
 				e.stopPropagation();
 				this.state.customImage = null;
@@ -980,13 +1044,23 @@ export class OsSettings {
 			tile.style.backgroundImage = '';
 			const inner = document.createElement( 'div' );
 			inner.className = 'wp-desktop-os-settings__upload-inner';
-			inner.innerHTML = `
-				<span class="wp-desktop-os-settings__upload-plus" aria-hidden="true">+</span>
-				<span class="wp-desktop-os-settings__upload-prompt">Drop an image here, or click to upload</span>
-				<span class="wp-desktop-os-settings__upload-hint">JPEG, PNG, or WebP · goes straight to your Media Library</span>
-			`;
+			const plus = document.createElement( 'span' );
+			plus.className = 'wp-desktop-os-settings__upload-plus';
+			plus.setAttribute( 'aria-hidden', 'true' );
+			plus.textContent = '+';
+			const prompt = document.createElement( 'span' );
+			prompt.className = 'wp-desktop-os-settings__upload-prompt';
+			prompt.textContent = __( 'Drop an image here, or click to upload' );
+			const hint = document.createElement( 'span' );
+			hint.className = 'wp-desktop-os-settings__upload-hint';
+			hint.textContent = __(
+				'JPEG, PNG, or WebP · goes straight to your Media Library',
+			);
+			inner.appendChild( plus );
+			inner.appendChild( prompt );
+			inner.appendChild( hint );
 			tile.appendChild( inner );
-			tile.setAttribute( 'aria-label', 'Upload a wallpaper image' );
+			tile.setAttribute( 'aria-label', __( 'Upload a wallpaper image' ) );
 		}
 
 		tile.onclick = () => {
@@ -1023,14 +1097,17 @@ export class OsSettings {
 		body: HTMLElement,
 	): Promise<void> {
 		if ( ! file.type.startsWith( 'image/' ) ) {
-			this.showUploadError( tile, 'That file isn’t an image.' );
+			this.showUploadError( tile, __( 'That file isn’t an image.' ) );
 			return;
 		}
 
 		tile.classList.add( 'wp-desktop-os-settings__upload-tile--busy' );
 		const prevInner = tile.innerHTML;
-		tile.innerHTML =
-			'<span class="wp-desktop-os-settings__upload-status">Uploading…</span>';
+		tile.innerHTML = '';
+		const status = document.createElement( 'span' );
+		status.className = 'wp-desktop-os-settings__upload-status';
+		status.textContent = __( 'Uploading…' );
+		tile.appendChild( status );
 
 		try {
 			const media = await this.uploadImage( file );
@@ -1049,7 +1126,7 @@ export class OsSettings {
 		} catch ( err ) {
 			tile.innerHTML = prevInner;
 			tile.classList.remove( 'wp-desktop-os-settings__upload-tile--busy' );
-			const message = err instanceof Error ? err.message : 'Upload failed.';
+			const message = err instanceof Error ? err.message : __( 'Upload failed.' );
 			this.showUploadError( tile, message );
 		}
 	}
@@ -1106,24 +1183,25 @@ export class OsSettings {
 
 	private buildAccentSection(): HTMLElement {
 		const section = this.buildSection(
-			'Accent color',
-			'Used in focused window title bars, buttons, and focus rings.',
+			__( 'Accent color' ),
+			__( 'Used in focused window title bars, buttons, and focus rings.' ),
 		);
 		const grid = document.createElement( 'div' );
 		grid.className = 'wp-desktop-os-settings__grid wp-desktop-os-settings__grid--accents';
 
 		for ( const accent of ACCENTS ) {
+			const label = translateAccentLabel( accent.id, accent.label );
 			const btn = document.createElement( 'button' );
 			btn.type = 'button';
 			btn.className = 'wp-desktop-os-settings__swatch wp-desktop-os-settings__swatch--accent';
-			btn.setAttribute( 'aria-label', accent.label );
+			btn.setAttribute( 'aria-label', label );
 			btn.setAttribute(
 				'aria-pressed',
 				this.state.accent === accent.id ? 'true' : 'false',
 			);
 			btn.dataset.id = accent.id;
 			btn.style.background = accent.value;
-			btn.title = accent.label;
+			btn.title = label;
 
 			btn.addEventListener( 'click', () => {
 				this.state.accent = accent.id;
@@ -1140,8 +1218,8 @@ export class OsSettings {
 
 	private buildDockSizeSection(): HTMLElement {
 		const section = this.buildSection(
-			'Dock size',
-			'Width of the dock and size of its icons.',
+			__( 'Dock size' ),
+			__( 'Width of the dock and size of its icons.' ),
 		);
 		const group = document.createElement( 'div' );
 		group.className = 'wp-desktop-os-settings__segmented';
@@ -1157,7 +1235,7 @@ export class OsSettings {
 				this.state.dockSize === size.id ? 'true' : 'false',
 			);
 			btn.dataset.id = size.id;
-			btn.textContent = size.label;
+			btn.textContent = translateDockSizeLabel( size.id, size.label );
 
 			btn.addEventListener( 'click', () => {
 				this.state.dockSize = size.id;

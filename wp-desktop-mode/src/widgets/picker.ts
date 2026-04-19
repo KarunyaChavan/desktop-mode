@@ -14,6 +14,7 @@
  * @since 0.7.0
  */
 
+import { __, sprintf } from '../i18n';
 import type { WidgetDef } from './types';
 
 /** Options handed to `openWidgetPicker` by the layer on each open. */
@@ -48,11 +49,11 @@ export function openWidgetPicker( options: OpenPickerOptions ): void {
 	const panel = document.createElement( 'div' );
 	panel.className = 'wp-desktop-widget-picker';
 	panel.setAttribute( 'role', 'menu' );
-	panel.setAttribute( 'aria-label', 'Add widget' );
+	panel.setAttribute( 'aria-label', __( 'Add widget' ) );
 
 	const title = document.createElement( 'div' );
 	title.className = 'wp-desktop-widget-picker__title';
-	title.textContent = 'Add widget';
+	title.textContent = __( 'Add widget' );
 	panel.appendChild( title );
 
 	const list = document.createElement( 'div' );
@@ -147,8 +148,9 @@ function paintList(
 	if ( defs.length === 0 ) {
 		const empty = document.createElement( 'div' );
 		empty.className = 'wp-desktop-widget-picker__empty';
-		empty.textContent =
-			'No widgets available. Activate a plugin that registers one, or see the docs for the registerWidget API.';
+		empty.textContent = __(
+			'No widgets available. Activate a plugin that registers one, or see the docs for the registerWidget API.',
+		);
 		list.appendChild( empty );
 		return;
 	}
@@ -166,10 +168,15 @@ function paintList(
 			entry.setAttribute( 'aria-disabled', 'true' );
 		}
 		entry.setAttribute( 'role', 'menuitem' );
-		entry.setAttribute(
-			'aria-label',
-			isAdded ? `${ def.label } (already added)` : `Add ${ def.label }`,
-		);
+		let ariaLabel;
+		if ( isAdded ) {
+			// translators: %s is the widget label
+			ariaLabel = sprintf( __( '%s (already added)' ), def.label );
+		} else {
+			// translators: %s is the widget label
+			ariaLabel = sprintf( __( 'Add %s' ), def.label );
+		}
+		entry.setAttribute( 'aria-label', ariaLabel );
 
 		const icon = document.createElement( 'span' );
 		icon.className = `wp-desktop-widget-picker__entry-icon dashicons ${ def.icon }`;
@@ -194,7 +201,7 @@ function paintList(
 		if ( isAdded ) {
 			const status = document.createElement( 'span' );
 			status.className = 'wp-desktop-widget-picker__entry-status';
-			status.textContent = 'Added';
+			status.textContent = __( 'Added' );
 			entry.appendChild( status );
 		}
 

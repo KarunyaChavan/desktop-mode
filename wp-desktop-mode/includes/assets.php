@@ -53,16 +53,30 @@ function wpdm_register_assets() {
 
 	// Scripts.
 	//
-	// `wp-hooks` is a hard dependency: the shell exposes a WordPress-style
-	// filter/action API (`window.wp.hooks`) to third-party plugins. Core
-	// only pre-enqueues `wp-hooks` when a Gutenberg-adjacent dep pulls it
-	// in, so we can't rely on transitive loads — list it explicitly.
+	// `wp-hooks` — the shell exposes a WordPress-style filter/action
+	// API (`window.wp.hooks`) to third-party plugins.
+	// `wp-i18n` — the TS `__()` / `_x()` / `sprintf()` wrappers in
+	// `src/i18n.ts` delegate to `window.wp.i18n` for translation
+	// lookups. Both handles are core-shipped but only pre-enqueued
+	// when Gutenberg-adjacent deps pull them in, so we list them
+	// explicitly to guarantee load order.
 	wp_register_script(
 		'wp-desktop',
 		WPDM_URL . 'assets/js/desktop' . $suffix . '.js',
-		array( 'wp-hooks' ),
+		array( 'wp-hooks', 'wp-i18n' ),
 		$version,
 		true
+	);
+
+	// Wire the translation bundle to this script handle. WP looks
+	// for `languages/wp-desktop-mode-{locale}-wp-desktop.json` and
+	// injects its `locale_data` into `wp.i18n` just before the
+	// script runs — so every `__()` call resolves to the right
+	// language without any runtime fetch.
+	wp_set_script_translations(
+		'wp-desktop',
+		'wp-desktop-mode',
+		WPDM_DIR . 'languages'
 	);
 }
 add_action( 'init', 'wpdm_register_assets' );

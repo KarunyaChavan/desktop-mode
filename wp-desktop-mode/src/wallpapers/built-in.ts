@@ -18,6 +18,7 @@
  * @since 0.6.0
  */
 
+import { __ } from '../i18n';
 import { register } from './registry';
 
 /** Preset ids kept in a stable order — matches the order in OS Settings. */
@@ -74,13 +75,37 @@ const PRESETS: Preset[] = [
  * seed list.
  */
 export function registerBuiltInWallpapers(): void {
+	// Labels are translated at registration time. `translatePresetLabel`
+	// centralises the string-literal map the extract-pot pass keys
+	// off — the `__()` calls live in one place so xgettext sees them
+	// exactly once per preset.
 	for ( const p of PRESETS ) {
 		register( {
 			id: p.id,
-			label: p.label,
+			label: translatePresetLabel( p.id, p.label ),
 			type: 'css',
 			value: p.value,
 			preview: p.value,
 		} );
+	}
+}
+
+function translatePresetLabel(
+	id: BuiltInPresetId,
+	fallback: string,
+): string {
+	switch ( id ) {
+		case 'dark':
+			return __( 'Graphite' );
+		case 'aurora':
+			return __( 'Aurora' );
+		case 'sunset':
+			return __( 'Sunset' );
+		case 'forest':
+			return __( 'Forest' );
+		case 'mono':
+			return __( 'Mono' );
+		default:
+			return fallback;
 	}
 }

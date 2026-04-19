@@ -19,6 +19,7 @@
  */
 
 import { doAction, HOOKS } from '../hooks';
+import { __, sprintf } from '../i18n';
 import * as registry from './registry';
 import { openWidgetPicker, refreshWidgetPicker } from './picker';
 import type { WidgetDef, WidgetTeardown } from './types';
@@ -77,10 +78,16 @@ export class WidgetLayer {
 		this.addTile = document.createElement( 'button' );
 		this.addTile.type = 'button';
 		this.addTile.className = 'wp-desktop-widgets__add';
-		this.addTile.setAttribute( 'aria-label', 'Add widget' );
-		this.addTile.innerHTML =
-			'<span class="wp-desktop-widgets__add-plus" aria-hidden="true">+</span>' +
-			'<span class="wp-desktop-widgets__add-label">Add widget</span>';
+		this.addTile.setAttribute( 'aria-label', __( 'Add widget' ) );
+		const addPlus = document.createElement( 'span' );
+		addPlus.className = 'wp-desktop-widgets__add-plus';
+		addPlus.setAttribute( 'aria-hidden', 'true' );
+		addPlus.textContent = '+';
+		const addLabel = document.createElement( 'span' );
+		addLabel.className = 'wp-desktop-widgets__add-label';
+		addLabel.textContent = __( 'Add widget' );
+		this.addTile.appendChild( addPlus );
+		this.addTile.appendChild( addLabel );
 		this.addTile.addEventListener( 'click', ( e ) => {
 			e.preventDefault();
 			e.stopPropagation();
@@ -284,7 +291,8 @@ export class WidgetLayer {
 		const close = document.createElement( 'button' );
 		close.type = 'button';
 		close.className = 'wp-desktop-widgets__card-close';
-		close.setAttribute( 'aria-label', `Remove ${ def.label }` );
+		// translators: %s is the widget label (e.g., "Clock")
+		close.setAttribute( 'aria-label', sprintf( __( 'Remove %s' ), def.label ) );
 		close.innerHTML =
 			'<svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true">' +
 			'<path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" ' +

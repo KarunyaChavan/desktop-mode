@@ -248,6 +248,24 @@ var wpDesktop = function(exports) {
     }
     addAction(HOOKS.INIT, "wp-desktop-mode/when-ready", cb);
   }
+  const TEXT_DOMAIN = "wp-desktop-mode";
+  function i18n() {
+    return window.wp?.i18n;
+  }
+  function __(text, domain = TEXT_DOMAIN) {
+    return i18n()?.__(text, domain) ?? text;
+  }
+  function _n(single, plural, number, domain = TEXT_DOMAIN) {
+    return i18n()?._n(single, plural, number, domain) ?? (number === 1 ? single : plural);
+  }
+  function sprintf(format, ...args) {
+    const impl = i18n()?.sprintf;
+    if (impl) {
+      return impl(format, ...args);
+    }
+    let i = 0;
+    return format.replace(/%[sd]/g, () => String(args[i++] ?? ""));
+  }
   const CONTAINER_CLASS = "wp-desktop-toast-container";
   const DEFAULT_DURATION_MS = 4e3;
   const FADE_OUT_MS = 200;
@@ -353,7 +371,7 @@ var wpDesktop = function(exports) {
       menuBtn = document.createElement("button");
       menuBtn.type = "button";
       menuBtn.className = "wp-desktop-window__btn wp-desktop-window__menu-btn";
-      menuBtn.setAttribute("aria-label", "Window actions");
+      menuBtn.setAttribute("aria-label", __("Window actions"));
       menuBtn.setAttribute("aria-haspopup", "menu");
       menuBtn.setAttribute("aria-expanded", "false");
       menuBtn.innerHTML = '<svg class="wp-desktop-window__btn-icon" width="14" height="14" viewBox="0 0 12 12" aria-hidden="true" focusable="false"><circle cx="3" cy="6" r="1.2" fill="currentColor"/><circle cx="6" cy="6" r="1.2" fill="currentColor"/><circle cx="9" cy="6" r="1.2" fill="currentColor"/></svg>';
@@ -366,14 +384,32 @@ var wpDesktop = function(exports) {
       startup.className = "wp-desktop-window__menu-item wp-desktop-window__menu-item--startup";
       startup.setAttribute("role", "menuitemcheckbox");
       startup.setAttribute("aria-checked", "false");
-      startup.innerHTML = '<span class="wp-desktop-window__menu-check" aria-hidden="true"></span><span class="wp-desktop-window__menu-label">Open on startup</span>';
+      const startupCheck = document.createElement("span");
+      startupCheck.className = "wp-desktop-window__menu-check";
+      startupCheck.setAttribute("aria-hidden", "true");
+      const startupLabel = document.createElement("span");
+      startupLabel.className = "wp-desktop-window__menu-label";
+      startupLabel.textContent = __("Open on startup");
+      startup.appendChild(startupCheck);
+      startup.appendChild(startupLabel);
       menuPanel.appendChild(startup);
       if (config.multi) {
         const openAnother = document.createElement("button");
         openAnother.type = "button";
         openAnother.className = "wp-desktop-window__menu-item wp-desktop-window__menu-item--open-another";
         openAnother.setAttribute("role", "menuitem");
-        openAnother.innerHTML = `<span class="wp-desktop-window__menu-icon dashicons dashicons-plus-alt2" aria-hidden="true"></span><span class="wp-desktop-window__menu-label">Open another ${config.title}</span>`;
+        const oaIcon = document.createElement("span");
+        oaIcon.className = "wp-desktop-window__menu-icon dashicons dashicons-plus-alt2";
+        oaIcon.setAttribute("aria-hidden", "true");
+        const oaLabel = document.createElement("span");
+        oaLabel.className = "wp-desktop-window__menu-label";
+        oaLabel.textContent = sprintf(
+          // translators: %s is the window's admin-page name (e.g., "Posts")
+          __("Open another %s"),
+          config.title
+        );
+        openAnother.appendChild(oaIcon);
+        openAnother.appendChild(oaLabel);
         menuPanel.appendChild(openAnother);
       }
     }
@@ -388,27 +424,27 @@ var wpDesktop = function(exports) {
     controls.className = "wp-desktop-window__controls";
     const btnMin = createControlButton(
       "minimize",
-      "Minimize",
+      __("Minimize"),
       '<path d="M3 6h6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>'
     );
     const btnMax = createControlButton(
       "maximize",
-      "Maximize",
+      __("Maximize"),
       '<rect x="3" y="3" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.25" fill="none"/>'
     );
     const btnFocus = createControlButton(
       "focus",
-      "Enter fullscreen",
+      __("Enter fullscreen"),
       '<path d="M4.5 2H2v2.5M10 4.5V2H7.5M4.5 10H2V7.5M10 7.5V10H7.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none"/>'
     );
     const btnDetach = createControlButton(
       "detach",
-      "Detach to new tab",
+      __("Detach to new tab"),
       '<path d="M5 2H2.5v7.5H10V7M6.5 2H10v3.5M10 2L5.5 6.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none"/>'
     );
     const btnClose = createControlButton(
       "close",
-      "Close",
+      __("Close"),
       '<path d="M3.25 3.25l5.5 5.5M3.25 8.75l5.5-5.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>'
     );
     controls.appendChild(btnMin);
@@ -447,7 +483,7 @@ var wpDesktop = function(exports) {
       const tabs = document.createElement("nav");
       tabs.className = "wp-desktop-window__tabs";
       tabs.setAttribute("role", "tablist");
-      tabs.setAttribute("aria-label", `${config.title} sub-pages`);
+      tabs.setAttribute("aria-label", sprintf(__("%s sub-pages"), config.title));
       if (config.submenu && config.submenu.length > 0) {
         const initialKey = urlMatchKey(config.url);
         for (const sub of config.submenu) {
@@ -832,8 +868,8 @@ var wpDesktop = function(exports) {
       detachBtn.dataset.tabAction = "detach";
       detachBtn.dataset.tabId = tabId;
       detachBtn.setAttribute("role", "button");
-      detachBtn.setAttribute("aria-label", "Open in a new browser tab");
-      detachBtn.title = "Open in a new browser tab";
+      detachBtn.setAttribute("aria-label", __("Open in a new browser tab"));
+      detachBtn.title = __("Open in a new browser tab");
       detachBtn.innerHTML = '<svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M5 2H2.5v7.5H10V7M6.5 2H10v3.5M10 2L5.5 6.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>';
       tabEl.appendChild(detachBtn);
       const closeBtn = document.createElement("span");
@@ -841,8 +877,8 @@ var wpDesktop = function(exports) {
       closeBtn.dataset.tabAction = "close";
       closeBtn.dataset.tabId = tabId;
       closeBtn.setAttribute("role", "button");
-      closeBtn.setAttribute("aria-label", "Close tab");
-      closeBtn.title = "Close tab";
+      closeBtn.setAttribute("aria-label", __("Close tab"));
+      closeBtn.title = __("Close tab");
       closeBtn.innerHTML = '<svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M3.25 3.25l5.5 5.5M3.25 8.75l5.5-5.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/></svg>';
       tabEl.appendChild(closeBtn);
       tabStrip.appendChild(tabEl);
@@ -992,9 +1028,15 @@ var wpDesktop = function(exports) {
       const { url, label } = entry;
       this.closeExternalTab(tabId);
       showToast({
-        message: `Opened "${label}" in a new browser tab — this site doesn't allow embedding.`,
+        message: sprintf(
+          // translators: %s is the external site's title or URL.
+          __(
+            `Opened "%s" in a new browser tab — this site doesn't allow embedding.`
+          ),
+          label
+        ),
         action: {
-          label: "Open",
+          label: __("Open"),
           onClick: () => {
             window.open(url, "_blank", "noopener");
           }
@@ -1420,7 +1462,7 @@ var wpDesktop = function(exports) {
       btn.setAttribute("aria-pressed", isFullscreen ? "true" : "false");
       btn.setAttribute(
         "aria-label",
-        isFullscreen ? "Exit fullscreen" : "Enter fullscreen"
+        isFullscreen ? __("Exit fullscreen") : __("Enter fullscreen")
       );
     }
     /**
@@ -1674,7 +1716,8 @@ var wpDesktop = function(exports) {
       this.stack = [];
       this.cascadeIndex = 0;
       this.desktops = [
-        { id: "desktop-1", label: "Desktop 1" }
+        // translators: default desktop name — "Desktop 1"
+        { id: "desktop-1", label: __("Desktop 1") }
       ];
       this.activeDesktopId = "desktop-1";
       this.desktopSeq = 1;
@@ -2013,7 +2056,8 @@ var wpDesktop = function(exports) {
       this.desktopSeq++;
       const desktop = {
         id: `desktop-${this.desktopSeq}`,
-        label: `Desktop ${this.desktopSeq}`
+        // translators: %d is the desktop number (e.g., "Desktop 2")
+        label: sprintf(__("Desktop %d"), this.desktopSeq)
       };
       this.desktops.push(desktop);
       doAction(HOOKS.DESKTOP_CREATED, { desktopId: desktop.id });
@@ -2496,7 +2540,7 @@ var wpDesktop = function(exports) {
       const addTile = document.createElement("button");
       addTile.type = "button";
       addTile.className = "wp-desktop-overview-top-bar__tile wp-desktop-overview-top-bar__tile--add";
-      addTile.setAttribute("aria-label", "Add new desktop");
+      addTile.setAttribute("aria-label", __("Add new desktop"));
       addTile.innerHTML = '<span class="wp-desktop-overview-top-bar__tile-plus" aria-hidden="true">+</span>';
       addTile.addEventListener("click", (e) => {
         e.preventDefault();
@@ -2518,7 +2562,7 @@ var wpDesktop = function(exports) {
           "wp-desktop-overview-top-bar__tile--active"
         );
       }
-      tile.setAttribute("aria-label", `Switch to ${d.label}`);
+      tile.setAttribute("aria-label", sprintf(__("Switch to %s"), d.label));
       const preview = document.createElement("span");
       preview.className = "wp-desktop-overview-top-bar__tile-preview";
       const count = this.stack.filter(
@@ -2539,7 +2583,7 @@ var wpDesktop = function(exports) {
       closeBtn.className = "wp-desktop-overview-top-bar__tile-close";
       closeBtn.setAttribute("role", "button");
       closeBtn.setAttribute("tabindex", "0");
-      closeBtn.setAttribute("aria-label", `Close ${d.label}`);
+      closeBtn.setAttribute("aria-label", sprintf(__("Close %s"), d.label));
       closeBtn.innerHTML = '<svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
       closeBtn.addEventListener("click", (e) => {
         e.preventDefault();
@@ -2598,7 +2642,11 @@ var wpDesktop = function(exports) {
       if (tabCount > 0) {
         const meta = document.createElement("span");
         meta.className = "wp-desktop-overview-label__meta";
-        meta.textContent = tabCount === 1 ? "· 1 open tab" : `· ${tabCount} open tabs`;
+        meta.textContent = sprintf(
+          // translators: %d is the number of external sub-tabs open on this window.
+          _n("· %d open tab", "· %d open tabs", tabCount),
+          tabCount
+        );
         label.appendChild(meta);
       }
       return label;
@@ -2964,7 +3012,14 @@ var wpDesktop = function(exports) {
         const badge = document.createElement("span");
         badge.className = "wp-desktop-dock__badge";
         badge.textContent = String(item.badge);
-        badge.setAttribute("aria-label", `${item.badge} updates`);
+        badge.setAttribute(
+          "aria-label",
+          sprintf(
+            // translators: %d is the number of pending updates / items.
+            _n("%d update", "%d updates", item.badge),
+            item.badge
+          )
+        );
         primary.appendChild(badge);
       }
       primary.addEventListener("click", () => {
@@ -2976,7 +3031,11 @@ var wpDesktop = function(exports) {
         addBtn.type = "button";
         addBtn.className = "wp-desktop-dock__item-new";
         addBtn.hidden = true;
-        addBtn.setAttribute("aria-label", `Open another ${item.title}`);
+        addBtn.setAttribute(
+          "aria-label",
+          // translators: %s is the admin-page title (e.g., "Posts")
+          sprintf(__("Open another %s"), item.title)
+        );
         addBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M6 2v8M2 6h8" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/></svg>';
         addBtn.addEventListener("click", (e) => {
           e.stopPropagation();
@@ -2984,7 +3043,7 @@ var wpDesktop = function(exports) {
         });
         addBtn.addEventListener("pointerenter", () => {
           const rect = addBtn.getBoundingClientRect();
-          this.tooltip.textContent = `Open new ${item.title}`;
+          this.tooltip.textContent = sprintf(__("Open new %s"), item.title);
           this.tooltip.style.top = `${rect.top + rect.height / 2 - 14}px`;
           this.tooltip.classList.add("wp-desktop-dock__tooltip--visible");
         });
@@ -3230,6 +3289,36 @@ var wpDesktop = function(exports) {
     { id: "default", label: "Default", width: 56, icon: 20 },
     { id: "large", label: "Large", width: 72, icon: 26 }
   ];
+  function translateAccentLabel(id, fallback) {
+    switch (id) {
+      case "wp-blue":
+        return __("WordPress Blue");
+      case "indigo":
+        return __("Indigo");
+      case "teal":
+        return __("Teal");
+      case "emerald":
+        return __("Emerald");
+      case "amber":
+        return __("Amber");
+      case "rose":
+        return __("Rose");
+      default:
+        return fallback;
+    }
+  }
+  function translateDockSizeLabel(id, fallback) {
+    switch (id) {
+      case "compact":
+        return __("Compact");
+      case "default":
+        return __("Default");
+      case "large":
+        return __("Large");
+      default:
+        return fallback;
+    }
+  }
   const DEFAULTS = {
     wallpaper: DEFAULT_WALLPAPER_ID,
     accent: "wp-blue",
@@ -3287,7 +3376,9 @@ var wpDesktop = function(exports) {
       body.innerHTML = "";
       const intro = document.createElement("p");
       intro.className = "wp-desktop-os-settings__intro";
-      intro.textContent = "Personalize your desktop. Changes apply instantly and are saved to this browser.";
+      intro.textContent = __(
+        "Personalize your desktop. Changes apply instantly and are saved to this browser."
+      );
       body.appendChild(intro);
       body.appendChild(this.buildWallpaperSection(body));
       body.appendChild(this.buildAccentSection());
@@ -3297,7 +3388,7 @@ var wpDesktop = function(exports) {
       const reset = document.createElement("button");
       reset.type = "button";
       reset.className = "wp-desktop-os-settings__reset";
-      reset.textContent = "Reset to defaults";
+      reset.textContent = __("Reset to defaults");
       reset.addEventListener("click", () => {
         const preservedImage = this.state.customImage;
         this.state = { ...DEFAULTS, customImage: preservedImage };
@@ -3320,7 +3411,7 @@ var wpDesktop = function(exports) {
     registerCustomGradient() {
       register$1({
         id: CUSTOM_GRADIENT_ID,
-        label: "Custom gradient",
+        label: __("Custom gradient"),
         type: "css",
         preview: this.customGradientCss(),
         resolveValue: () => this.customGradientCss(),
@@ -3341,7 +3432,7 @@ var wpDesktop = function(exports) {
       const value = `url("${safeUrl}") center/cover no-repeat, #1d2327`;
       register$1({
         id: CUSTOM_IMAGE_ID,
-        label: "Custom image",
+        label: __("Custom image"),
         type: "css",
         value,
         preview: value
@@ -3352,8 +3443,10 @@ var wpDesktop = function(exports) {
     // ------------------------------------------------------------------
     buildWallpaperSection(body) {
       const section = this.buildSection(
-        "Wallpaper",
-        "The backdrop behind your windows. Pick a preset, mix your own gradient, or drop in an image."
+        __("Wallpaper"),
+        __(
+          "The backdrop behind your windows. Pick a preset, mix your own gradient, or drop in an image."
+        )
       );
       const grid = document.createElement("div");
       grid.className = "wp-desktop-os-settings__grid wp-desktop-os-settings__grid--wallpapers";
@@ -3498,13 +3591,13 @@ var wpDesktop = function(exports) {
         this.syncGradientPreviewSwatch(container);
       };
       row.appendChild(
-        buildColorField("From", this.state.customGradient.from, (value) => {
+        buildColorField(__("From"), this.state.customGradient.from, (value) => {
           this.state.customGradient.from = value;
           onGradientChange();
         })
       );
       row.appendChild(
-        buildColorField("To", this.state.customGradient.to, (value) => {
+        buildColorField(__("To"), this.state.customGradient.to, (value) => {
           this.state.customGradient.to = value;
           onGradientChange();
         })
@@ -3514,7 +3607,7 @@ var wpDesktop = function(exports) {
       angleField.className = "wp-desktop-os-settings__gradient-angle";
       const angleLabel = document.createElement("span");
       angleLabel.className = "wp-desktop-os-settings__gradient-label";
-      angleLabel.textContent = "Angle";
+      angleLabel.textContent = __("Angle");
       angleField.appendChild(angleLabel);
       const angleInput = document.createElement("input");
       angleInput.type = "range";
@@ -3561,7 +3654,7 @@ var wpDesktop = function(exports) {
       wrap.className = "wp-desktop-os-settings__uploader";
       const heading = document.createElement("h4");
       heading.className = "wp-desktop-os-settings__uploader-heading";
-      heading.textContent = "Or use your own image";
+      heading.textContent = __("Or use your own image");
       wrap.appendChild(heading);
       const tabList = document.createElement("div");
       tabList.className = "wp-desktop-os-settings__tabs";
@@ -3572,13 +3665,13 @@ var wpDesktop = function(exports) {
       if (this.config.canUpload) {
         tabs.push({
           key: "upload",
-          label: "Upload new",
+          label: __("Upload new"),
           render: () => this.renderUploadPane(pane, body)
         });
       }
       tabs.push({
         key: "library",
-        label: "Media Library",
+        label: __("Media Library"),
         render: () => this.renderLibraryPane(pane, body)
       });
       const tabButtons = /* @__PURE__ */ new Map();
@@ -3643,9 +3736,9 @@ var wpDesktop = function(exports) {
       toolbar.className = "wp-desktop-os-settings__library-toolbar";
       const search = document.createElement("input");
       search.type = "search";
-      search.placeholder = "Search your media";
+      search.placeholder = __("Search your media");
       search.className = "wp-desktop-os-settings__library-search";
-      search.setAttribute("aria-label", "Search media");
+      search.setAttribute("aria-label", __("Search media"));
       toolbar.appendChild(search);
       const hdWrap = document.createElement("label");
       hdWrap.className = "wp-desktop-os-settings__library-hd";
@@ -3654,7 +3747,12 @@ var wpDesktop = function(exports) {
       hdInput.checked = this.state.libraryHdOnly;
       hdWrap.appendChild(hdInput);
       const hdLabel = document.createElement("span");
-      hdLabel.textContent = `Only HD (≥${HD_MIN_WIDTH}×${HD_MIN_HEIGHT})`;
+      hdLabel.textContent = sprintf(
+        // translators: %1$d is the HD minimum width in px, %2$d is the minimum height.
+        __("Only HD (≥%1$d×%2$d)"),
+        HD_MIN_WIDTH,
+        HD_MIN_HEIGHT
+      );
       hdWrap.appendChild(hdLabel);
       toolbar.appendChild(hdWrap);
       library.appendChild(toolbar);
@@ -3669,7 +3767,7 @@ var wpDesktop = function(exports) {
       const loadMore = document.createElement("button");
       loadMore.type = "button";
       loadMore.className = "wp-desktop-os-settings__library-load-more";
-      loadMore.textContent = "Load more";
+      loadMore.textContent = __("Load more");
       footer.appendChild(loadMore);
       library.appendChild(footer);
       pane.appendChild(library);
@@ -3681,9 +3779,15 @@ var wpDesktop = function(exports) {
       let loading = false;
       const updateMeta = () => {
         const visible = this.visibleLibraryItems(loaded).length;
-        const parts = [`Showing ${visible}`];
+        const parts = [
+          // translators: %d is the number of media items currently visible.
+          sprintf(__("Showing %d"), visible)
+        ];
         if (this.state.libraryHdOnly && hiddenByHd > 0) {
-          parts.push(`${hiddenByHd} hidden by HD filter`);
+          parts.push(
+            // translators: %d is the number of images filtered out by the HD toggle.
+            sprintf(__("%d hidden by HD filter"), hiddenByHd)
+          );
         }
         meta.textContent = parts.join(" · ");
         loadMore.hidden = page >= totalPages;
@@ -3696,7 +3800,13 @@ var wpDesktop = function(exports) {
         if (visible.length === 0 && !loading) {
           const empty = document.createElement("p");
           empty.className = "wp-desktop-os-settings__library-empty";
-          empty.textContent = this.state.libraryHdOnly ? "No HD images found. Try unchecking the filter, or upload a larger image." : "No images in your Media Library yet.";
+          if (this.state.libraryHdOnly) {
+            empty.textContent = __(
+              "No HD images found. Try unchecking the filter, or upload a larger image."
+            );
+          } else {
+            empty.textContent = __("No images in your Media Library yet.");
+          }
           grid.appendChild(empty);
         } else {
           for (const item of visible) {
@@ -3729,7 +3839,15 @@ var wpDesktop = function(exports) {
           grid.innerHTML = "";
           const errMsg = document.createElement("p");
           errMsg.className = "wp-desktop-os-settings__library-error";
-          errMsg.textContent = err instanceof Error ? `Couldn’t load your media: ${err.message}` : "Couldn’t load your media.";
+          if (err instanceof Error) {
+            errMsg.textContent = sprintf(
+              // translators: %s is the browser-supplied error message.
+              __("Couldn’t load your media: %s"),
+              err.message
+            );
+          } else {
+            errMsg.textContent = __("Couldn’t load your media.");
+          }
           grid.appendChild(errMsg);
         } finally {
           loading = false;
@@ -3859,13 +3977,13 @@ var wpDesktop = function(exports) {
       tile.removeAttribute("aria-label");
       if (this.state.customImage) {
         tile.classList.add("wp-desktop-os-settings__upload-tile--filled");
-        tile.setAttribute("aria-label", "Custom image wallpaper");
+        tile.setAttribute("aria-label", __("Custom image wallpaper"));
         tile.style.backgroundImage = `url("${encodeURI(this.state.customImage.url)}")`;
         const remove = document.createElement("button");
         remove.type = "button";
         remove.className = "wp-desktop-os-settings__upload-remove";
-        remove.setAttribute("aria-label", "Remove custom image");
-        remove.textContent = "Remove";
+        remove.setAttribute("aria-label", __("Remove custom image"));
+        remove.textContent = __("Remove");
         remove.addEventListener("click", (e) => {
           e.stopPropagation();
           this.state.customImage = null;
@@ -3883,13 +4001,23 @@ var wpDesktop = function(exports) {
         tile.style.backgroundImage = "";
         const inner = document.createElement("div");
         inner.className = "wp-desktop-os-settings__upload-inner";
-        inner.innerHTML = `
-				<span class="wp-desktop-os-settings__upload-plus" aria-hidden="true">+</span>
-				<span class="wp-desktop-os-settings__upload-prompt">Drop an image here, or click to upload</span>
-				<span class="wp-desktop-os-settings__upload-hint">JPEG, PNG, or WebP · goes straight to your Media Library</span>
-			`;
+        const plus = document.createElement("span");
+        plus.className = "wp-desktop-os-settings__upload-plus";
+        plus.setAttribute("aria-hidden", "true");
+        plus.textContent = "+";
+        const prompt = document.createElement("span");
+        prompt.className = "wp-desktop-os-settings__upload-prompt";
+        prompt.textContent = __("Drop an image here, or click to upload");
+        const hint = document.createElement("span");
+        hint.className = "wp-desktop-os-settings__upload-hint";
+        hint.textContent = __(
+          "JPEG, PNG, or WebP · goes straight to your Media Library"
+        );
+        inner.appendChild(plus);
+        inner.appendChild(prompt);
+        inner.appendChild(hint);
         tile.appendChild(inner);
-        tile.setAttribute("aria-label", "Upload a wallpaper image");
+        tile.setAttribute("aria-label", __("Upload a wallpaper image"));
       }
       tile.onclick = () => {
         if (tile.classList.contains("wp-desktop-os-settings__upload-tile--busy")) {
@@ -3919,12 +4047,16 @@ var wpDesktop = function(exports) {
     }
     async handleImageFile(file, tile, body) {
       if (!file.type.startsWith("image/")) {
-        this.showUploadError(tile, "That file isn’t an image.");
+        this.showUploadError(tile, __("That file isn’t an image."));
         return;
       }
       tile.classList.add("wp-desktop-os-settings__upload-tile--busy");
       const prevInner = tile.innerHTML;
-      tile.innerHTML = '<span class="wp-desktop-os-settings__upload-status">Uploading…</span>';
+      tile.innerHTML = "";
+      const status = document.createElement("span");
+      status.className = "wp-desktop-os-settings__upload-status";
+      status.textContent = __("Uploading…");
+      tile.appendChild(status);
       try {
         const media = await this.uploadImage(file);
         this.state.customImage = { id: media.id, url: media.url };
@@ -3942,7 +4074,7 @@ var wpDesktop = function(exports) {
       } catch (err) {
         tile.innerHTML = prevInner;
         tile.classList.remove("wp-desktop-os-settings__upload-tile--busy");
-        const message = err instanceof Error ? err.message : "Upload failed.";
+        const message = err instanceof Error ? err.message : __("Upload failed.");
         this.showUploadError(tile, message);
       }
     }
@@ -3989,23 +4121,24 @@ var wpDesktop = function(exports) {
     // ------------------------------------------------------------------
     buildAccentSection() {
       const section = this.buildSection(
-        "Accent color",
-        "Used in focused window title bars, buttons, and focus rings."
+        __("Accent color"),
+        __("Used in focused window title bars, buttons, and focus rings.")
       );
       const grid = document.createElement("div");
       grid.className = "wp-desktop-os-settings__grid wp-desktop-os-settings__grid--accents";
       for (const accent of ACCENTS) {
+        const label = translateAccentLabel(accent.id, accent.label);
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "wp-desktop-os-settings__swatch wp-desktop-os-settings__swatch--accent";
-        btn.setAttribute("aria-label", accent.label);
+        btn.setAttribute("aria-label", label);
         btn.setAttribute(
           "aria-pressed",
           this.state.accent === accent.id ? "true" : "false"
         );
         btn.dataset.id = accent.id;
         btn.style.background = accent.value;
-        btn.title = accent.label;
+        btn.title = label;
         btn.addEventListener("click", () => {
           this.state.accent = accent.id;
           this.save();
@@ -4019,8 +4152,8 @@ var wpDesktop = function(exports) {
     }
     buildDockSizeSection() {
       const section = this.buildSection(
-        "Dock size",
-        "Width of the dock and size of its icons."
+        __("Dock size"),
+        __("Width of the dock and size of its icons.")
       );
       const group = document.createElement("div");
       group.className = "wp-desktop-os-settings__segmented";
@@ -4035,7 +4168,7 @@ var wpDesktop = function(exports) {
           this.state.dockSize === size.id ? "true" : "false"
         );
         btn.dataset.id = size.id;
-        btn.textContent = size.label;
+        btn.textContent = translateDockSizeLabel(size.id, size.label);
         btn.addEventListener("click", () => {
           this.state.dockSize = size.id;
           this.save();
@@ -4425,11 +4558,27 @@ var wpDesktop = function(exports) {
     for (const p of PRESETS) {
       register$1({
         id: p.id,
-        label: p.label,
+        label: translatePresetLabel(p.id, p.label),
         type: "css",
         value: p.value,
         preview: p.value
       });
+    }
+  }
+  function translatePresetLabel(id, fallback) {
+    switch (id) {
+      case "dark":
+        return __("Graphite");
+      case "aurora":
+        return __("Aurora");
+      case "sunset":
+        return __("Sunset");
+      case "forest":
+        return __("Forest");
+      case "mono":
+        return __("Mono");
+      default:
+        return fallback;
     }
   }
   const seed = [];
@@ -4493,10 +4642,10 @@ var wpDesktop = function(exports) {
     const panel = document.createElement("div");
     panel.className = "wp-desktop-widget-picker";
     panel.setAttribute("role", "menu");
-    panel.setAttribute("aria-label", "Add widget");
+    panel.setAttribute("aria-label", __("Add widget"));
     const title = document.createElement("div");
     title.className = "wp-desktop-widget-picker__title";
-    title.textContent = "Add widget";
+    title.textContent = __("Add widget");
     panel.appendChild(title);
     const list = document.createElement("div");
     list.className = "wp-desktop-widget-picker__list";
@@ -4560,7 +4709,9 @@ var wpDesktop = function(exports) {
     if (defs.length === 0) {
       const empty = document.createElement("div");
       empty.className = "wp-desktop-widget-picker__empty";
-      empty.textContent = "No widgets available. Activate a plugin that registers one, or see the docs for the registerWidget API.";
+      empty.textContent = __(
+        "No widgets available. Activate a plugin that registers one, or see the docs for the registerWidget API."
+      );
       list.appendChild(empty);
       return;
     }
@@ -4577,10 +4728,13 @@ var wpDesktop = function(exports) {
         entry.setAttribute("aria-disabled", "true");
       }
       entry.setAttribute("role", "menuitem");
-      entry.setAttribute(
-        "aria-label",
-        isAdded ? `${def.label} (already added)` : `Add ${def.label}`
-      );
+      let ariaLabel;
+      if (isAdded) {
+        ariaLabel = sprintf(__("%s (already added)"), def.label);
+      } else {
+        ariaLabel = sprintf(__("Add %s"), def.label);
+      }
+      entry.setAttribute("aria-label", ariaLabel);
       const icon = document.createElement("span");
       icon.className = `wp-desktop-widget-picker__entry-icon dashicons ${def.icon}`;
       icon.setAttribute("aria-hidden", "true");
@@ -4601,7 +4755,7 @@ var wpDesktop = function(exports) {
       if (isAdded) {
         const status = document.createElement("span");
         status.className = "wp-desktop-widget-picker__entry-status";
-        status.textContent = "Added";
+        status.textContent = __("Added");
         entry.appendChild(status);
       }
       if (!isAdded) {
@@ -4651,8 +4805,16 @@ var wpDesktop = function(exports) {
       this.addTile = document.createElement("button");
       this.addTile.type = "button";
       this.addTile.className = "wp-desktop-widgets__add";
-      this.addTile.setAttribute("aria-label", "Add widget");
-      this.addTile.innerHTML = '<span class="wp-desktop-widgets__add-plus" aria-hidden="true">+</span><span class="wp-desktop-widgets__add-label">Add widget</span>';
+      this.addTile.setAttribute("aria-label", __("Add widget"));
+      const addPlus = document.createElement("span");
+      addPlus.className = "wp-desktop-widgets__add-plus";
+      addPlus.setAttribute("aria-hidden", "true");
+      addPlus.textContent = "+";
+      const addLabel = document.createElement("span");
+      addLabel.className = "wp-desktop-widgets__add-label";
+      addLabel.textContent = __("Add widget");
+      this.addTile.appendChild(addPlus);
+      this.addTile.appendChild(addLabel);
       this.addTile.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -4827,7 +4989,7 @@ var wpDesktop = function(exports) {
       const close = document.createElement("button");
       close.type = "button";
       close.className = "wp-desktop-widgets__card-close";
-      close.setAttribute("aria-label", `Remove ${def.label}`);
+      close.setAttribute("aria-label", sprintf(__("Remove %s"), def.label));
       close.innerHTML = '<svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
       close.addEventListener("click", (e) => {
         e.preventDefault();
@@ -4885,8 +5047,15 @@ var wpDesktop = function(exports) {
   }
   const clock = {
     id: "clock",
-    label: "Clock",
-    description: "Local time and date, refreshed every second.",
+    // Labels/descriptions on built-in defs stay string-literal at
+    // module-eval time so the extract-pot pass picks them up. The
+    // values are wrapped in `__()` so they translate at runtime.
+    get label() {
+      return __("Clock");
+    },
+    get description() {
+      return __("Local time and date, refreshed every second.");
+    },
     icon: "dashicons-clock",
     mount: (container) => {
       container.classList.add("wp-desktop-widget-clock");

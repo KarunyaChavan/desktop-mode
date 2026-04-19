@@ -8,6 +8,7 @@
 
 import { Window } from './window';
 import { HOOKS, applyFilters, doAction } from './hooks';
+import { __, _n, sprintf } from './i18n';
 import type { Desktop, Session, SessionWindow, WindowConfig } from './types';
 
 /** Base z-index for desktop windows. */
@@ -38,7 +39,8 @@ export class WindowManager {
 	 * are appended.
 	 */
 	private desktops: Desktop[] = [
-		{ id: 'desktop-1', label: 'Desktop 1' },
+		// translators: default desktop name — "Desktop 1"
+		{ id: 'desktop-1', label: __( 'Desktop 1' ) },
 	];
 
 	/** Id of the currently active desktop. */
@@ -434,7 +436,8 @@ export class WindowManager {
 		this.desktopSeq++;
 		const desktop: Desktop = {
 			id: `desktop-${ this.desktopSeq }`,
-			label: `Desktop ${ this.desktopSeq }`,
+			// translators: %d is the desktop number (e.g., "Desktop 2")
+			label: sprintf( __( 'Desktop %d' ), this.desktopSeq ),
 		};
 		this.desktops.push( desktop );
 		doAction( HOOKS.DESKTOP_CREATED, { desktopId: desktop.id } );
@@ -1219,7 +1222,7 @@ export class WindowManager {
 		addTile.type = 'button';
 		addTile.className =
 			'wp-desktop-overview-top-bar__tile wp-desktop-overview-top-bar__tile--add';
-		addTile.setAttribute( 'aria-label', 'Add new desktop' );
+		addTile.setAttribute( 'aria-label', __( 'Add new desktop' ) );
 		addTile.innerHTML =
 			'<span class="wp-desktop-overview-top-bar__tile-plus" aria-hidden="true">+</span>';
 		addTile.addEventListener( 'click', ( e: MouseEvent ) => {
@@ -1247,7 +1250,8 @@ export class WindowManager {
 				'wp-desktop-overview-top-bar__tile--active',
 			);
 		}
-		tile.setAttribute( 'aria-label', `Switch to ${ d.label }` );
+		// translators: %s is the desktop label
+		tile.setAttribute( 'aria-label', sprintf( __( 'Switch to %s' ), d.label ) );
 
 		const preview = document.createElement( 'span' );
 		preview.className = 'wp-desktop-overview-top-bar__tile-preview';
@@ -1278,7 +1282,8 @@ export class WindowManager {
 		closeBtn.className = 'wp-desktop-overview-top-bar__tile-close';
 		closeBtn.setAttribute( 'role', 'button' );
 		closeBtn.setAttribute( 'tabindex', '0' );
-		closeBtn.setAttribute( 'aria-label', `Close ${ d.label }` );
+		// translators: %s is the desktop label
+		closeBtn.setAttribute( 'aria-label', sprintf( __( 'Close %s' ), d.label ) );
 		closeBtn.innerHTML =
 			'<svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
 		closeBtn.addEventListener( 'click', ( e: MouseEvent ) => {
@@ -1364,10 +1369,11 @@ export class WindowManager {
 		if ( tabCount > 0 ) {
 			const meta = document.createElement( 'span' );
 			meta.className = 'wp-desktop-overview-label__meta';
-			meta.textContent =
-				tabCount === 1
-					? '· 1 open tab'
-					: `· ${ tabCount } open tabs`;
+			meta.textContent = sprintf(
+				// translators: %d is the number of external sub-tabs open on this window.
+				_n( '· %d open tab', '· %d open tabs', tabCount ),
+				tabCount,
+			);
 			label.appendChild( meta );
 		}
 

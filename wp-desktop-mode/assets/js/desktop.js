@@ -519,6 +519,9 @@ var wpDesktop = function(exports) {
      */
     bindEvents() {
       this.element.addEventListener("pointerdown", () => {
+        if (this.element.classList.contains("wp-desktop-window--overview")) {
+          return;
+        }
         this.onFocusRequest?.(this);
       });
       this.titleBar.addEventListener("pointerdown", this.onDragStart.bind(this));
@@ -1546,8 +1549,11 @@ var wpDesktop = function(exports) {
       this.overviewActive = false;
       this.overviewSnapshot = /* @__PURE__ */ new Map();
       this.overviewLabels = /* @__PURE__ */ new Map();
-      this.overviewClickHandler = null;
+      this.overviewPointerDownHandler = null;
+      this.overviewPointerUpHandler = null;
       this.overviewKeyHandler = null;
+      this.overviewPressTarget = null;
+      this.overviewClickBlocker = null;
       this.overviewMouseHandler = null;
       this.lastOverviewHoverId = null;
       this.desktop = desktop;
@@ -1921,28 +1927,81 @@ var wpDesktop = function(exports) {
         el.insertAdjacentElement("afterend", label);
         this.overviewLabels.set(item.win.id, label);
       }
-      this.overviewClickHandler = (e) => {
+      const pressTargetForEvent = (e) => {
         const target = e.target;
-        const winEl = target?.closest(".wp-desktop-window--overview");
+        const winEl = target?.closest(
+          ".wp-desktop-window--overview"
+        );
         if (winEl) {
-          e.preventDefault();
-          e.stopPropagation();
-          const id = winEl.id.replace(/^wp-window-/, "");
-          const selected = this.getById(id);
-          doAction(HOOKS.OVERVIEW_WINDOW_CLICK, { windowId: id });
-          this.exitOverview(selected, true);
-          return;
+          return {
+            id: winEl.id.replace(/^wp-window-/, ""),
+            element: winEl
+          };
         }
         if (target === this.desktop) {
-          this.exitOverview();
+          return { id: "backdrop", element: this.desktop };
         }
+        return null;
+      };
+      this.overviewPointerDownHandler = (e) => {
+        if (e.button !== 0) {
+          this.overviewPressTarget = null;
+          return;
+        }
+        this.overviewPressTarget = pressTargetForEvent(e);
+        if (this.overviewPressTarget) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      };
+      this.overviewPointerUpHandler = (e) => {
+        if (e.button !== 0) {
+          return;
+        }
+        const pressed = this.overviewPressTarget;
+        this.overviewPressTarget = null;
+        if (!pressed) {
+          return;
+        }
+        const rect = pressed.element.getBoundingClientRect();
+        const inside = e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom;
+        if (!inside) {
+          return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        if (pressed.id === "backdrop") {
+          this.exitOverview();
+          return;
+        }
+        const selected = this.getById(pressed.id);
+        doAction(HOOKS.OVERVIEW_WINDOW_CLICK, { windowId: pressed.id });
+        this.exitOverview(selected, true);
       };
       this.overviewKeyHandler = (e) => {
         if (e.key === "Escape") {
           this.exitOverview();
         }
       };
-      this.desktop.addEventListener("click", this.overviewClickHandler, true);
+      this.desktop.addEventListener(
+        "pointerdown",
+        this.overviewPointerDownHandler,
+        true
+      );
+      this.desktop.addEventListener(
+        "pointerup",
+        this.overviewPointerUpHandler,
+        true
+      );
+      this.overviewClickBlocker = (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+      };
+      this.desktop.addEventListener(
+        "click",
+        this.overviewClickBlocker,
+        true
+      );
       document.addEventListener("keydown", this.overviewKeyHandler);
       this.lastOverviewHoverId = null;
       this.overviewMouseHandler = (e) => {
@@ -2059,19 +2118,36 @@ var wpDesktop = function(exports) {
         }
         this.overviewLabels.clear();
         this.overviewSnapshot.clear();
+        if (this.overviewClickBlocker) {
+          this.desktop.removeEventListener(
+            "click",
+            this.overviewClickBlocker,
+            true
+          );
+          this.overviewClickBlocker = null;
+        }
         doAction(HOOKS.OVERVIEW_EXITED, {
           windowId: selected && maximize ? selected.id : void 0,
           reason: selected && maximize ? "select" : "cancel"
         });
       }, ANIMATION_MS);
-      if (this.overviewClickHandler) {
+      if (this.overviewPointerDownHandler) {
         this.desktop.removeEventListener(
-          "click",
-          this.overviewClickHandler,
+          "pointerdown",
+          this.overviewPointerDownHandler,
           true
         );
-        this.overviewClickHandler = null;
+        this.overviewPointerDownHandler = null;
       }
+      if (this.overviewPointerUpHandler) {
+        this.desktop.removeEventListener(
+          "pointerup",
+          this.overviewPointerUpHandler,
+          true
+        );
+        this.overviewPointerUpHandler = null;
+      }
+      this.overviewPressTarget = null;
       if (this.overviewKeyHandler) {
         document.removeEventListener("keydown", this.overviewKeyHandler);
         this.overviewKeyHandler = null;
@@ -4292,6 +4368,9 @@ var wpDesktop = function(exports) {
     bindTopWindowLinkInterceptor(manager, config);
     desktopArea.addEventListener("click", (e) => {
       if (e.target !== desktopArea) {
+        return;
+      }
+      if (desktopArea.classList.contains("wp-desktop-area--overview")) {
         return;
       }
       const windows = manager.getAll();

@@ -1428,11 +1428,27 @@
 	 * transform (which would fight the layout's own transform).
 	 * Box-shadow is composite-only, so it's cheap. */
 	box-shadow: 0 10px 30px rgba( 0, 0, 0, 0.35 );
+	/* Overview thumbnails are click targets, not reading surfaces —
+	 * suppress text selection so a drag across a thumbnail doesn't
+	 * highlight paragraphs inside the title bar / native body. */
+	user-select: none;
+	-webkit-user-select: none;
 }
 
-.wp-desktop-window--overview .wp-desktop-window__iframe,
-.wp-desktop-window--overview .wp-desktop-window__iframe--external {
+/*
+ * While in overview, treat each window as a single click target —
+ * every inner element (title bar, buttons, iframe, native body) goes
+ * transparent to pointer events so drags/taps never start a drag,
+ * trip a close button, or launch an in-iframe action. Only the
+ * window's root element receives pointer events; our desktop-level
+ * pointerdown/pointerup handlers drive selection from there.
+ */
+.wp-desktop-window--overview * {
 	pointer-events: none;
+}
+
+.wp-desktop-window--overview {
+	pointer-events: auto;
 }
 
 .wp-desktop-window--overview:hover {

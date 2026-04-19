@@ -344,8 +344,22 @@ function init(): void {
 	bindTopWindowLinkInterceptor( manager, config );
 
 	// Click on the desktop background to minimize all windows (like macOS "Show Desktop").
+	//
+	// Suppressed while overview is active. Overview owns its own
+	// pointer surface and drives selection/cancel via pointerdown +
+	// pointerup on the same element — the browser still synthesizes a
+	// trailing `click` on the common ancestor (the desktop area) for
+	// drag-across-thumbnails and backdrop taps, and without this guard
+	// that click would minimize every window the moment the overview
+	// animation starts, leaving thumbnail labels orphaned on an empty
+	// backdrop. The guard checks the live class on `desktopArea`
+	// because overview can be entered/exited repeatedly — a captured
+	// boolean snapshot would go stale.
 	desktopArea.addEventListener( 'click', ( e: MouseEvent ) => {
 		if ( e.target !== desktopArea ) {
+			return;
+		}
+		if ( desktopArea.classList.contains( 'wp-desktop-area--overview' ) ) {
 			return;
 		}
 		const windows = manager.getAll();

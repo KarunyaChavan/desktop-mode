@@ -462,8 +462,35 @@ export class WindowManager {
 	private overviewLabels: Map<string, HTMLElement> = new Map();
 
 	/** Bound handlers registered during overview, released on exit. */
-	private overviewClickHandler: ( ( e: MouseEvent ) => void ) | null = null;
+	private overviewPointerDownHandler: ( ( e: PointerEvent ) => void ) | null = null;
+	private overviewPointerUpHandler: ( ( e: PointerEvent ) => void ) | null = null;
 	private overviewKeyHandler: ( ( e: KeyboardEvent ) => void ) | null = null;
+
+	/**
+	 * Element pressed during the most recent pointerdown inside the
+	 * overview area, plus a logical id for the action it selects on
+	 * commit. `id` is either a window id, the literal `'backdrop'`,
+	 * or `null` when no press is in flight.
+	 *
+	 * The element reference is kept so pointerup can hit-test the
+	 * release coordinates against the pressed element's visible
+	 * bounds — that's strictly "press and release on the same thing"
+	 * (per user spec) but tolerant of a few pixels of finger drift
+	 * during a quick tap, which plain `e.target` equality rejects.
+	 */
+	private overviewPressTarget: { id: string; element: HTMLElement } | null = null;
+	/**
+	 * Capture-phase click swallower installed for the entire overview
+	 * lifetime. Needed because the browser fires a synthesized `click`
+	 * at the common ancestor of pointerdown/pointerup whenever those
+	 * two targets differ — a press on one thumbnail and a release on
+	 * another bubbles a click to the desktop area, whose OWN click
+	 * handler minimizes every window ("show desktop" gesture). Our
+	 * pointerup handler can't preventDefault that later click. A
+	 * sticky capture-phase blocker that only lifts once the exit
+	 * animation settles is the simplest watertight fix.
+	 */
+	private overviewClickBlocker: ( ( e: MouseEvent ) => void ) | null = null;
 	/**
 	 * Delegated mouseover handler — fires hover/unhover hooks as the
 	 * pointer moves between thumbnails. Single listener on the
@@ -564,30 +591,119 @@ export class WindowManager {
 			this.overviewLabels.set( item.win.id, label );
 		}
 
-		this.overviewClickHandler = ( e: MouseEvent ) => {
+		// Press-in-same-element semantics, commit-on-release. Matches
+		// how native buttons / links feel: a press "arms" the element,
+		// and the release either fires the action (if it lands inside
+		// the armed element's visible bounds) or cancels (if the
+		// pointer moved off). We deliberately skip the `click` event
+		// here because its target is the common ancestor of the
+		// down/up pair, which produced the "press on A, release on B
+		// → browser synthesizes click on desktop → exits overview"
+		// bug we saw before.
+		//
+		// Hit-testing at release uses the pressed element's bounding
+		// rect rather than `e.target` equality — bounding rect is
+		// forgiving of a few pixels of finger drift during a quick
+		// tap, which strict target equality rejected (noticeable on
+		// small thumbnails).
+		const pressTargetForEvent = (
+			e: PointerEvent,
+		): { id: string; element: HTMLElement } | null => {
 			const target = e.target as HTMLElement | null;
-			// Click on a window thumbnail → select & maximize it.
-			const winEl = target?.closest<HTMLElement>( '.wp-desktop-window--overview' );
+			const winEl = target?.closest<HTMLElement>(
+				'.wp-desktop-window--overview',
+			);
 			if ( winEl ) {
-				e.preventDefault();
-				e.stopPropagation();
-				const id = winEl.id.replace( /^wp-window-/, '' );
-				const selected = this.getById( id );
-				doAction( HOOKS.OVERVIEW_WINDOW_CLICK, { windowId: id } );
-				this.exitOverview( selected, true );
+				return {
+					id: winEl.id.replace( /^wp-window-/, '' ),
+					element: winEl,
+				};
+			}
+			if ( target === this.desktop ) {
+				return { id: 'backdrop', element: this.desktop };
+			}
+			return null;
+		};
+
+		this.overviewPointerDownHandler = ( e: PointerEvent ) => {
+			// Only primary button / single-touch — ignore right-click,
+			// middle-click, and pen-eraser so they don't latch a press
+			// target that a left-click up would then match against.
+			if ( e.button !== 0 ) {
+				this.overviewPressTarget = null;
 				return;
 			}
-			// Click on the backdrop → exit without selection.
-			if ( target === this.desktop ) {
-				this.exitOverview();
+			this.overviewPressTarget = pressTargetForEvent( e );
+			// Swallow the down so iframes / inner UI can't start a
+			// drag-select or native focus operation while we're acting
+			// as a click surface.
+			if ( this.overviewPressTarget ) {
+				e.preventDefault();
+				e.stopPropagation();
 			}
 		};
+
+		this.overviewPointerUpHandler = ( e: PointerEvent ) => {
+			if ( e.button !== 0 ) {
+				return;
+			}
+			const pressed = this.overviewPressTarget;
+			this.overviewPressTarget = null;
+			if ( ! pressed ) {
+				return;
+			}
+			const rect = pressed.element.getBoundingClientRect();
+			const inside =
+				e.clientX >= rect.left &&
+				e.clientX <= rect.right &&
+				e.clientY >= rect.top &&
+				e.clientY <= rect.bottom;
+			if ( ! inside ) {
+				// Release landed outside the pressed element's visible
+				// bounds — treat as a drag-off cancel. Consistent with
+				// how a native button behaves when you press and then
+				// move the pointer off before releasing.
+				return;
+			}
+			e.preventDefault();
+			e.stopPropagation();
+			if ( pressed.id === 'backdrop' ) {
+				this.exitOverview();
+				return;
+			}
+			const selected = this.getById( pressed.id );
+			doAction( HOOKS.OVERVIEW_WINDOW_CLICK, { windowId: pressed.id } );
+			this.exitOverview( selected, true );
+		};
+
 		this.overviewKeyHandler = ( e: KeyboardEvent ) => {
 			if ( e.key === 'Escape' ) {
 				this.exitOverview();
 			}
 		};
-		this.desktop.addEventListener( 'click', this.overviewClickHandler, true );
+		this.desktop.addEventListener(
+			'pointerdown',
+			this.overviewPointerDownHandler,
+			true,
+		);
+		this.desktop.addEventListener(
+			'pointerup',
+			this.overviewPointerUpHandler,
+			true,
+		);
+		// Sticky capture-phase click blocker. Stops the browser-
+		// synthesized click that follows every pointerdown+pointerup
+		// pair from ever reaching the desktop area's "minimize every
+		// window" click handler.
+		this.overviewClickBlocker = ( e: MouseEvent ) => {
+			e.stopPropagation();
+			e.preventDefault();
+		};
+		this.desktop.addEventListener(
+			'click',
+			this.overviewClickBlocker,
+			true,
+		);
 		document.addEventListener( 'keydown', this.overviewKeyHandler );
 
 		// Hover delegation — mouseover bubbles up to the desktop
@@ -772,20 +888,42 @@ export class WindowManager {
 			}
 			this.overviewLabels.clear();
 			this.overviewSnapshot.clear();
+			// Click blocker lifts LAST, on the same tick the overview
+			// officially ends. By this point the browser-synthesized
+			// click that followed the user's final pointerup has long
+			// fired and been swallowed — releasing earlier would let
+			// that click through to "minimize all".
+			if ( this.overviewClickBlocker ) {
+				this.desktop.removeEventListener(
+					'click',
+					this.overviewClickBlocker,
+					true,
+				);
+				this.overviewClickBlocker = null;
+			}
 			doAction( HOOKS.OVERVIEW_EXITED, {
 				windowId: selected && maximize ? selected.id : undefined,
 				reason: selected && maximize ? 'select' : 'cancel',
 			} );
 		}, ANIMATION_MS );
 
-		if ( this.overviewClickHandler ) {
+		if ( this.overviewPointerDownHandler ) {
 			this.desktop.removeEventListener(
-				'click',
-				this.overviewClickHandler,
+				'pointerdown',
+				this.overviewPointerDownHandler,
 				true,
 			);
-			this.overviewClickHandler = null;
+			this.overviewPointerDownHandler = null;
 		}
+		if ( this.overviewPointerUpHandler ) {
+			this.desktop.removeEventListener(
+				'pointerup',
+				this.overviewPointerUpHandler,
+				true,
+			);
+			this.overviewPointerUpHandler = null;
+		}
+		this.overviewPressTarget = null;
 		if ( this.overviewKeyHandler ) {
 			document.removeEventListener( 'keydown', this.overviewKeyHandler );
 			this.overviewKeyHandler = null;

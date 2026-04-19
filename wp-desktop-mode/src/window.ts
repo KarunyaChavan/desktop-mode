@@ -489,8 +489,17 @@ export class Window {
 	 * Bind all DOM event handlers.
 	 */
 	private bindEvents(): void {
-		// Focus on click anywhere in the window.
+		// Focus on click anywhere in the window. Skipped while in
+		// overview mode — there, the window-manager's own capture-phase
+		// listener owns the click surface, and touching focus here
+		// would reorder z-index mid-grid and fire a spurious
+		// `window.focused` action for a press the user may never
+		// intend to commit (they might release on a different
+		// thumbnail or the backdrop).
 		this.element.addEventListener( 'pointerdown', () => {
+			if ( this.element.classList.contains( 'wp-desktop-window--overview' ) ) {
+				return;
+			}
 			this.onFocusRequest?.( this );
 		} );
 

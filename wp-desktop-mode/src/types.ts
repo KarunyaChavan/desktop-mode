@@ -294,6 +294,30 @@ export interface DesktopWidgetServerEntry {
 }
 
 /**
+ * Server-declared wallpaper entry passed from PHP via
+ * `serverWallpapers`. One entry per
+ * `wp_register_desktop_wallpaper()` call. Only metadata crosses
+ * the wire; the plugin's mount / resolveValue / renderEditor
+ * callbacks are announced via
+ * `window.wpDesktopWallpapers[ <id> ]` as a full `WallpaperDef`,
+ * which the shell loads (if the script isn't yet in the tab) and
+ * forwards to the normal wallpaper registry.
+ *
+ * @public
+ * @since 0.10.0
+ */
+export interface DesktopWallpaperServerEntry {
+	id: string;
+	label: string;
+	preview: string;
+	type: 'css' | 'canvas';
+	/** Absolute URL of the plugin's enqueued script. Empty when no script was declared. */
+	scriptUrl: string;
+	/** WordPress script handle (informational). */
+	scriptHandle: string;
+}
+
+/**
  * Live geometry + state snapshot for a single window, returned by
  * `WindowManager.getVisibleRects()`.
  *
@@ -465,6 +489,14 @@ export interface DesktopConfig {
 	 * a browser reload.
 	 */
 	serverWidgets: DesktopWidgetServerEntry[];
+	/**
+	 * Server-declared wallpapers (from `wp_register_desktop_wallpaper()`).
+	 * Same lifecycle as widgets + native windows — shell loads the
+	 * plugin's JS, reads the full `WallpaperDef` from the global,
+	 * and registers it. Deactivation unregisters + re-applies the
+	 * current selection.
+	 */
+	serverWallpapers: DesktopWallpaperServerEntry[];
 	/** Previously saved session (may be empty on first run). */
 	session: Session;
 	/** REST endpoint for reading/writing the session. */

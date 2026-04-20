@@ -433,6 +433,163 @@ function wpdm_build_desktop_widgets_payload() {
 }
 
 /**
+ * Register a server-side desktop wallpaper. Symmetrical to
+ * {@see wp_register_desktop_widget()}. The plugin's JS side
+ * publishes the full `WallpaperDef` (with mount / resolveValue /
+ * renderEditor callbacks as appropriate) on
+ * `window.wpDesktopWallpapers[ <id> ]`; the shell loads the
+ * declared script, reads that global, and registers the def via
+ * the normal wallpaper registry. Deactivation unregisters the
+ * def and re-applies the current selection (which falls back to
+ * a built-in if the user's active wallpaper was the one leaving).
+ *
+ * Example:
+ *
+ * ```php
+ * wp_register_desktop_wallpaper( 'myplugin/snow', array(
+ *     'label'   => __( 'Snow', 'my-plugin' ),
+ *     'preview' => 'linear-gradient(#fff, #ddd)',
+ *     'type'    => 'canvas',
+ *     'script'  => 'my-plugin-snow-wallpaper',
+ * ) );
+ * ```
+ *
+ * ```js
+ * // Inside my-plugin-snow-wallpaper.js
+ * window.wpDesktopWallpapers = window.wpDesktopWallpapers || {};
+ * window.wpDesktopWallpapers[ 'myplugin/snow' ] = {
+ *     id: 'myplugin/snow',
+ *     label: 'Snow',
+ *     type: 'canvas',
+ *     preview: 'linear-gradient(#fff, #ddd)',
+ *     needs: [ 'pixijs' ],
+ *     mount: function ( container, ctx ) { return function () {}; },
+ * };
+ * ```
+ *
+ * @since 0.10.0
+ *
+ * @param string $id   Wallpaper id. Must match the JS global key.
+ * @param array  $args {
+ *     @type string   $label        Picker label. Required.
+ *     @type string   $preview      CSS value rendered in the swatch
+ *                                  (gradient, color, url(...)). Required.
+ *     @type string   $type         'css' | 'canvas'. Default 'canvas'.
+ *     @type string   $script       Enqueued script handle that publishes
+ *                                  the def on the global. Required.
+ *     @type string[] $capabilities Gate: ALL caps must match.
+ * }
+ * @return bool True when accepted into the registry.
+ */
+function wp_register_desktop_wallpaper( $id, $args = array() ) {
+	$id = (string) $id;
+	if ( '' === $id ) {
+		return false;
+	}
+
+	$defaults = array(
+		'label'        => '',
+		'preview'      => '',
+		'type'         => 'canvas',
+		'script'       => '',
+		'capabilities' => array(),
+	);
+	$args = wp_parse_args( $args, $defaults );
+
+	foreach ( (array) $args['capabilities'] as $cap ) {
+		if ( ! current_user_can( (string) $cap ) ) {
+			return false;
+		}
+	}
+	if ( '' === (string) $args['label'] || '' === (string) $args['script'] ) {
+		return false;
+	}
+	$type = in_array( $args['type'], array( 'css', 'canvas' ), true )
+		? $args['type']
+		: 'canvas';
+
+	wpdm_desktop_wallpaper_registry( $id, array(
+		'id'      => $id,
+		'label'   => (string) $args['label'],
+		'preview' => (string) $args['preview'],
+		'type'    => $type,
+		'script'  => (string) $args['script'],
+	) );
+	return true;
+}
+
+/**
+ * Internal module-level registry for wallpapers registered via
+ * {@see wp_register_desktop_wallpaper()}. Same static-store
+ * pattern as the widget + native-window registries.
+ *
+ * @since 0.10.0
+ * @internal
+ */
+function wpdm_desktop_wallpaper_registry( $id = '', $entry = null ) {
+	static $store = array();
+
+	if ( '' === (string) $id ) {
+		return $store;
+	}
+	if ( null !== $entry ) {
+		$store[ $id ] = $entry;
+	}
+	return isset( $store[ $id ] ) ? $store[ $id ] : null;
+}
+
+/**
+ * Build the wallpaper list for the shell payload. Only metadata +
+ * the resolved script URL cross the wire; the plugin's mount
+ * callback is announced via the JS global the script sets up.
+ *
+ * @since 0.10.0
+ *
+ * @return array[]
+ */
+function wpdm_build_desktop_wallpapers_payload() {
+	$registry = wpdm_desktop_wallpaper_registry();
+	if ( ! is_array( $registry ) || empty( $registry ) ) {
+		return array();
+	}
+	$out = array();
+	foreach ( $registry as $entry ) {
+		$out[] = array(
+			'id'           => $entry['id'],
+			'label'        => $entry['label'],
+			'preview'      => $entry['preview'],
+			'type'         => $entry['type'],
+			'scriptUrl'    => wpdm_resolve_script_url( $entry['script'] ),
+			'scriptHandle' => $entry['script'],
+		);
+	}
+	return $out;
+}
+
+/**
+ * Enqueue plugin-registered wallpaper scripts on the shell page
+ * so wallpapers active at boot time have their defs available
+ * without any dynamic-load roundtrip.
+ *
+ * @since 0.10.0
+ */
+function wpdm_enqueue_desktop_wallpaper_scripts() {
+	if ( ! wpdm_is_enabled() || wpdm_is_chromeless_request() || wpdm_is_classic_request() ) {
+		return;
+	}
+	$registry = wpdm_desktop_wallpaper_registry();
+	if ( ! is_array( $registry ) ) {
+		return;
+	}
+	foreach ( $registry as $entry ) {
+		if ( ! empty( $entry['script'] ) ) {
+			wp_enqueue_script( $entry['script'] );
+		}
+	}
+}
+add_action( 'admin_enqueue_scripts', 'wpdm_enqueue_desktop_wallpaper_scripts', 20 );
+
+/**
  * Enqueue plugin-registered widget scripts on the shell page so
  * widgets active at boot time have their mount callbacks
  * available without any dynamic-load roundtrip.

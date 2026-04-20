@@ -24,6 +24,7 @@ import {
 import * as registry from './wallpapers/registry';
 import { WallpaperLayer } from './wallpapers/layer';
 import { registerBuiltInWallpapers } from './wallpapers/built-in';
+import { createWallpaperRegistrySync } from './wallpapers/server-sync';
 import { loadVendorScript } from './wallpapers/vendor-loader';
 import {
 	collectWallpaperSurfaces,
@@ -530,6 +531,19 @@ function init(): void {
 		Array.isArray( config.serverWidgets ) ? config.serverWidgets : [],
 	);
 
+	// Wallpaper-registry sync — third instance of the same pattern,
+	// same reasoning. Plugins declare wallpapers via
+	// `wp_register_desktop_wallpaper()`; the shell loads the
+	// plugin's JS, reads the full `WallpaperDef` off
+	// `window.wpDesktopWallpapers[ id ]`, and adds / removes it
+	// from the registry as activation / deactivation plays out.
+	const syncServerWallpapers = createWallpaperRegistrySync( {
+		osSettings,
+	} );
+	void syncServerWallpapers(
+		Array.isArray( config.serverWallpapers ) ? config.serverWallpapers : [],
+	);
+
 	// Live menu refresh — rebuild both rails when a plugin activation
 	// or deactivation lands in any windowed `plugins.php`. Without
 	// this the dock + taskbar reflect the server-side `$menu` at
@@ -548,6 +562,7 @@ function init(): void {
 		config,
 		syncNativeWindows,
 		syncServerWidgets,
+		syncServerWallpapers,
 	);
 
 	// Expose the public API on `window.wp.desktop`. The `hooks` field
@@ -1160,6 +1175,9 @@ function bindMenuRefresh(
 	syncServerWidgets: (
 		list: import( './types' ).DesktopWidgetServerEntry[],
 	) => Promise< void >,
+	syncServerWallpapers: (
+		list: import( './types' ).DesktopWallpaperServerEntry[],
+	) => Promise< void >,
 ): () => Promise<void> {
 	// Shared applier — takes a freshly-split payload and rebuilds
 	// both rails. Extracted so the message-with-payload path (no
@@ -1169,11 +1187,13 @@ function bindMenuRefresh(
 		taskbarItems?: unknown;
 		nativeWindows?: unknown;
 		serverWidgets?: unknown;
+		serverWallpapers?: unknown;
 	} ): void => {
 		const dockItems = payload.dockItems;
 		const taskbarItems = payload.taskbarItems;
 		const nativeWindows = payload.nativeWindows;
 		const serverWidgets = payload.serverWidgets;
+		const serverWallpapers = payload.serverWallpapers;
 
 		// Guard: an empty `dockItems` list is NEVER legitimate —
 		// WordPress Core always ships Dashboard, which lands on the
@@ -1199,12 +1219,22 @@ function bindMenuRefresh(
 				taskbarItems as DesktopConfig[ 'taskbarItems' ],
 			);
 			config.taskbarItems = taskbarItems as DesktopConfig[ 'taskbarItems' ];
+
+			// Visibility check spans BOTH menu-derived tiles AND
+			// JS-registered system tiles (like the Calculator's
+			// native-window launcher). Counting only `taskbarItems`
+			// would incorrectly hide the whole rail whenever the
+			// LAST menu-plugin deactivates — even if a native
+			// window is still sitting on the rail. Asking the dock
+			// itself via `hasItems()` keeps both kinds of tile in
+			// the "is this rail alive?" equation.
+			const hasAnyTaskbarTile = taskbar?.hasItems() ?? false;
 			if ( taskbarEl ) {
-				taskbarEl.hidden = taskbarItems.length === 0;
+				taskbarEl.hidden = ! hasAnyTaskbarTile;
 			}
 			desktopArea.classList.toggle(
 				'wp-desktop-area--with-taskbar',
-				taskbarItems.length > 0,
+				hasAnyTaskbarTile,
 			);
 		}
 
@@ -1232,6 +1262,19 @@ function bindMenuRefresh(
 			config.serverWidgets =
 				serverWidgets as DesktopConfig[ 'serverWidgets' ];
 		}
+
+		// Wallpaper-registry sync — same lifecycle, now for the
+		// OS Settings wallpaper picker. New plugin wallpapers
+		// surface without a reload; deactivated ones disappear and
+		// the active selection falls back to a built-in if it was
+		// the one leaving.
+		if ( Array.isArray( serverWallpapers ) ) {
+			void syncServerWallpapers(
+				serverWallpapers as import( './types' ).DesktopWallpaperServerEntry[],
+			);
+			config.serverWallpapers =
+				serverWallpapers as DesktopConfig[ 'serverWallpapers' ];
+		}
 	};
 
 	const refresh = async (): Promise<void> => {
@@ -1252,6 +1295,7 @@ function bindMenuRefresh(
 				taskbarItems?: DesktopConfig[ 'taskbarItems' ];
 				nativeWindows?: DesktopConfig[ 'nativeWindows' ];
 				serverWidgets?: DesktopConfig[ 'serverWidgets' ];
+				serverWallpapers?: DesktopConfig[ 'serverWallpapers' ];
 			};
 			applyPayload( data );
 		} catch ( err ) {

@@ -1,0 +1,134 @@
+/**
+ * Server-driven wallpaper registry sync.
+ *
+ * Third time we reach for this pattern (see
+ * `src/native-windows.ts`, `src/widgets/server-sync.ts` for the
+ * symmetric versions on their own registries). Plugins declare
+ * their wallpaper server-side via
+ * `wp_register_desktop_wallpaper()`; this module diffs the shell's
+ * current wallpaper registry against the fresh payload on every
+ * live refresh and bridges the plugin-side JS into the shell's
+ * registry.
+ *
+ * The split: PHP owns METADATA (id, label, preview, type, script
+ * URL). JS owns the CALLBACK surface (mount, resolveValue,
+ * renderEditor) because functions don't serialize. Plugins publish
+ * a full `WallpaperDef` on `window.wpDesktopWallpapers[ id ]`; the
+ * shell loads the script (if not already in the tab), reads that
+ * global, and forwards the def to the standard registry.
+ *
+ * On deactivation we unregister the def AND call
+ * `osSettings.apply()` — if the user's current selection was the
+ * wallpaper leaving, the apply path falls back to a built-in
+ * default rather than leaving a dead id in place.
+ *
+ * @since 0.10.0
+ */
+
+import { doAction, HOOKS } from './../hooks';
+import { loadVendorScript } from './vendor-loader';
+import * as registry from './registry';
+import type { OsSettings } from '../settings';
+import type { DesktopWallpaperServerEntry } from '../types';
+import type { WallpaperDef } from './types';
+
+interface WallpaperGlobals {
+	wpDesktopWallpapers?: Record< string, WallpaperDef | undefined >;
+}
+
+export interface WallpaperRegistrySyncDeps {
+	osSettings: OsSettings;
+}
+
+export function createWallpaperRegistrySync(
+	deps: WallpaperRegistrySyncDeps,
+): ( list: DesktopWallpaperServerEntry[] ) => Promise< void > {
+	const { osSettings } = deps;
+
+	const registered = new Set< string >();
+	const loadedScripts = new Set< string >();
+
+	const ensureScript = async (
+		entry: DesktopWallpaperServerEntry,
+	): Promise< void > => {
+		if ( ! entry.scriptUrl || loadedScripts.has( entry.scriptUrl ) ) {
+			return;
+		}
+		try {
+			await loadVendorScript( entry.scriptUrl );
+		} catch ( err ) {
+			doAction( HOOKS.SHELL_ERROR, {
+				scope: 'wallpaper-script-load',
+				id: entry.id,
+				error: err,
+			} );
+		}
+		loadedScripts.add( entry.scriptUrl );
+	};
+
+	const readDef = ( id: string ): WallpaperDef | null => {
+		const globals =
+			( window as unknown as WallpaperGlobals ).wpDesktopWallpapers || {};
+		return globals[ id ] ?? null;
+	};
+
+	const registerEntry = async (
+		entry: DesktopWallpaperServerEntry,
+	): Promise< void > => {
+		if ( registered.has( entry.id ) ) {
+			return;
+		}
+		await ensureScript( entry );
+		const def = readDef( entry.id );
+		if ( ! def ) {
+			doAction( HOOKS.SHELL_ERROR, {
+				scope: 'wallpaper-missing-def',
+				id: entry.id,
+				error: new Error(
+					`[wp-desktop-mode] No wallpaper def on window.wpDesktopWallpapers["${ entry.id }"]. Script loaded but didn't publish a def — check the plugin's enqueue + global assignment.`,
+				),
+			} );
+			// Don't mark registered; next sync retries in case the
+			// script was late to settle.
+			return;
+		}
+		registry.register( def );
+		registered.add( entry.id );
+		// Re-apply the current wallpaper selection so a plugin that
+		// activates with its saved wallpaper selection picks up
+		// the new def immediately.
+		osSettings.apply();
+	};
+
+	const unregisterEntry = ( id: string ): void => {
+		if ( ! registered.has( id ) ) {
+			return;
+		}
+		registry.unregister( id );
+		registered.delete( id );
+		// Re-apply so the settings panel + active wallpaper layer
+		// refresh their selection. If the user was actively using
+		// the deactivated wallpaper, `apply()` falls back to a
+		// built-in default rather than leaving a dead reference.
+		osSettings.apply();
+	};
+
+	return async ( list ) => {
+		const incoming = new Set< string >();
+		for ( const entry of list ) {
+			incoming.add( entry.id );
+		}
+
+		for ( const id of Array.from( registered ) ) {
+			if ( ! incoming.has( id ) ) {
+				unregisterEntry( id );
+			}
+		}
+
+		for ( const entry of list ) {
+			if ( ! registered.has( entry.id ) ) {
+				await registerEntry( entry );
+			}
+		}
+	};
+}

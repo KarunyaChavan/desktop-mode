@@ -42,6 +42,7 @@ export type {
 	DesktopConfig,
 	DockItemConfig,
 	MonitorEntry,
+	DesktopWallpaperServerEntry,
 	DesktopWidgetServerEntry,
 	NativeWindowDef,
 	NativeWindowServerEntry,

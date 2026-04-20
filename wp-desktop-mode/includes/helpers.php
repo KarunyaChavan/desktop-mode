@@ -593,11 +593,14 @@ function wpdm_build_menu_payload() {
 	);
 
 	return array(
-		'dockItems'     => $dock,
-		'taskbarItems'  => $taskbar,
-		'nativeWindows' => wpdm_build_native_windows_payload(),
-		'serverWidgets' => function_exists( 'wpdm_build_desktop_widgets_payload' )
+		'dockItems'        => $dock,
+		'taskbarItems'     => $taskbar,
+		'nativeWindows'    => wpdm_build_native_windows_payload(),
+		'serverWidgets'    => function_exists( 'wpdm_build_desktop_widgets_payload' )
 			? wpdm_build_desktop_widgets_payload()
+			: array(),
+		'serverWallpapers' => function_exists( 'wpdm_build_desktop_wallpapers_payload' )
+			? wpdm_build_desktop_wallpapers_payload()
 			: array(),
 	);
 }

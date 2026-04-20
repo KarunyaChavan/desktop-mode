@@ -197,6 +197,18 @@ export class Dock {
 	}
 
 	/**
+	 * True when the rail currently has ANY renderable tile —
+	 * either a menu-derived item or a JS-registered system item.
+	 * Lets callers (the shell's live-refresh path) decide whether
+	 * to hide the whole rail without having to peek into two
+	 * internal maps. "System tiles keep the rail alive even when
+	 * menu items are empty" is the user-visible contract we enforce.
+	 */
+	public hasItems(): boolean {
+		return this.itemElements.size > 0 || this.systemItemElements.size > 0;
+	}
+
+	/**
 	 * Remove a previously-registered system item. Used by the
 	 * server-driven native-window sync path — when a plugin is
 	 * deactivated, its native-window entry disappears from the

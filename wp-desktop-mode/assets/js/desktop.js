@@ -4848,6 +4848,17 @@ var wpDesktop = function(exports) {
       this.updateActiveStates();
     }
     /**
+     * True when the rail currently has ANY renderable tile —
+     * either a menu-derived item or a JS-registered system item.
+     * Lets callers (the shell's live-refresh path) decide whether
+     * to hide the whole rail without having to peek into two
+     * internal maps. "System tiles keep the rail alive even when
+     * menu items are empty" is the user-visible contract we enforce.
+     */
+    hasItems() {
+      return this.itemElements.size > 0 || this.systemItemElements.size > 0;
+    }
+    /**
      * Remove a previously-registered system item. Used by the
      * server-driven native-window sync path — when a plugin is
      * deactivated, its native-window entry disappears from the
@@ -7783,6 +7794,74 @@ var wpDesktop = function(exports) {
         return fallback;
     }
   }
+  function createWallpaperRegistrySync(deps) {
+    const { osSettings } = deps;
+    const registered = /* @__PURE__ */ new Set();
+    const loadedScripts = /* @__PURE__ */ new Set();
+    const ensureScript = async (entry) => {
+      if (!entry.scriptUrl || loadedScripts.has(entry.scriptUrl)) {
+        return;
+      }
+      try {
+        await loadVendorScript(entry.scriptUrl);
+      } catch (err) {
+        doAction(HOOKS.SHELL_ERROR, {
+          scope: "wallpaper-script-load",
+          id: entry.id,
+          error: err
+        });
+      }
+      loadedScripts.add(entry.scriptUrl);
+    };
+    const readDef = (id) => {
+      const globals = window.wpDesktopWallpapers || {};
+      return globals[id] ?? null;
+    };
+    const registerEntry = async (entry) => {
+      if (registered.has(entry.id)) {
+        return;
+      }
+      await ensureScript(entry);
+      const def = readDef(entry.id);
+      if (!def) {
+        doAction(HOOKS.SHELL_ERROR, {
+          scope: "wallpaper-missing-def",
+          id: entry.id,
+          error: new Error(
+            `[wp-desktop-mode] No wallpaper def on window.wpDesktopWallpapers["${entry.id}"]. Script loaded but didn't publish a def — check the plugin's enqueue + global assignment.`
+          )
+        });
+        return;
+      }
+      register$1(def);
+      registered.add(entry.id);
+      osSettings.apply();
+    };
+    const unregisterEntry = (id) => {
+      if (!registered.has(id)) {
+        return;
+      }
+      unregister$1(id);
+      registered.delete(id);
+      osSettings.apply();
+    };
+    return async (list) => {
+      const incoming = /* @__PURE__ */ new Set();
+      for (const entry of list) {
+        incoming.add(entry.id);
+      }
+      for (const id of Array.from(registered)) {
+        if (!incoming.has(id)) {
+          unregisterEntry(id);
+        }
+      }
+      for (const entry of list) {
+        if (!registered.has(entry.id)) {
+          await registerEntry(entry);
+        }
+      }
+    };
+  }
   function collectWallpaperSurfaces(manager) {
     const seed2 = [];
     for (const w of manager.getVisibleRects()) {
@@ -9943,6 +10022,12 @@ var wpDesktop = function(exports) {
     void syncServerWidgets(
       Array.isArray(config.serverWidgets) ? config.serverWidgets : []
     );
+    const syncServerWallpapers = createWallpaperRegistrySync({
+      osSettings
+    });
+    void syncServerWallpapers(
+      Array.isArray(config.serverWallpapers) ? config.serverWallpapers : []
+    );
     const refreshMenu = bindMenuRefresh(
       dock,
       taskbar,
@@ -9950,7 +10035,8 @@ var wpDesktop = function(exports) {
       desktopArea,
       config,
       syncNativeWindows,
-      syncServerWidgets
+      syncServerWidgets,
+      syncServerWallpapers
     );
     window.wp = window.wp || {};
     window.wp.desktop = {
@@ -10279,12 +10365,13 @@ var wpDesktop = function(exports) {
     });
   }
   const MENU_REFRESH_DEBOUNCE_MS = 250;
-  function bindMenuRefresh(dock, taskbar, taskbarEl, desktopArea, config, syncNativeWindows, syncServerWidgets) {
+  function bindMenuRefresh(dock, taskbar, taskbarEl, desktopArea, config, syncNativeWindows, syncServerWidgets, syncServerWallpapers) {
     const applyPayload = (payload) => {
       const dockItems = payload.dockItems;
       const taskbarItems = payload.taskbarItems;
       const nativeWindows = payload.nativeWindows;
       const serverWidgets = payload.serverWidgets;
+      const serverWallpapers = payload.serverWallpapers;
       if (!Array.isArray(dockItems) || dockItems.length === 0) {
         return;
       }
@@ -10297,12 +10384,13 @@ var wpDesktop = function(exports) {
           taskbarItems
         );
         config.taskbarItems = taskbarItems;
+        const hasAnyTaskbarTile = taskbar?.hasItems() ?? false;
         if (taskbarEl) {
-          taskbarEl.hidden = taskbarItems.length === 0;
+          taskbarEl.hidden = !hasAnyTaskbarTile;
         }
         desktopArea.classList.toggle(
           "wp-desktop-area--with-taskbar",
-          taskbarItems.length > 0
+          hasAnyTaskbarTile
         );
       }
       if (Array.isArray(nativeWindows)) {
@@ -10316,6 +10404,12 @@ var wpDesktop = function(exports) {
           serverWidgets
         );
         config.serverWidgets = serverWidgets;
+      }
+      if (Array.isArray(serverWallpapers)) {
+        void syncServerWallpapers(
+          serverWallpapers
+        );
+        config.serverWallpapers = serverWallpapers;
       }
     };
     const refresh = async () => {

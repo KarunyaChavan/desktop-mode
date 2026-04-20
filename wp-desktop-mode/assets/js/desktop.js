@@ -2554,6 +2554,21 @@ var wpDesktop = function(exports) {
      * Get a snapshot of the window state for persistence.
      */
     getSnapshot() {
+      const isHidden = this.element.offsetParent === null;
+      if (isHidden) {
+        const parse = (raw) => {
+          const n = parseFloat(raw);
+          return Number.isFinite(n) ? Math.round(n) : 0;
+        };
+        return {
+          id: this.id,
+          x: parse(this.element.style.left),
+          y: parse(this.element.style.top),
+          width: parse(this.element.style.width),
+          height: parse(this.element.style.height),
+          state: this.state
+        };
+      }
       return {
         id: this.id,
         x: this.element.offsetLeft,
@@ -4160,6 +4175,16 @@ var wpDesktop = function(exports) {
       document.addEventListener("wp-desktop-window-opened", refresh);
       document.addEventListener("wp-desktop-window-closed", refresh);
       document.addEventListener("wp-desktop-window-focused", refresh);
+      window.wp?.hooks?.addAction?.(
+        "wp-desktop.desktop.switched",
+        "wp-desktop-mode/dock",
+        refresh
+      );
+      window.wp?.hooks?.addAction?.(
+        "wp-desktop.desktop.closed",
+        "wp-desktop-mode/dock",
+        refresh
+      );
     }
     /**
      * Update the active/focused classes and multi-instance rail on every
@@ -4172,16 +4197,19 @@ var wpDesktop = function(exports) {
     updateActiveStates() {
       const focused = this.windowManager.getFocused();
       const focusedBaseId = focused ? focused.config.baseId || focused.id : null;
+      const activeDesktopId = this.windowManager.getActiveDesktopId();
+      const onActiveDesktop = (w) => (w.config.desktopId || activeDesktopId) === activeDesktopId;
       for (const item of this.items) {
         const tile = this.itemElements.get(item.id);
         if (!tile) {
           continue;
         }
         const baseId = this.deriveWindowId(item.url);
-        const instances = item.multi ? this.windowManager.getAllByBaseId(baseId) : [];
-        const singleOpen = !item.multi && !!this.windowManager.getById(baseId);
+        const instances = item.multi ? this.windowManager.getAllByBaseId(baseId).filter(onActiveDesktop) : [];
+        const single = this.windowManager.getById(baseId);
+        const singleOpen = !item.multi && !!single && onActiveDesktop(single);
         const isOpen = item.multi ? instances.length > 0 : singleOpen;
-        const isFocused = focusedBaseId === baseId;
+        const isFocused = focusedBaseId === baseId && !!focused && onActiveDesktop(focused);
         tile.classList.toggle("wp-desktop-dock__item--active", isOpen);
         tile.classList.toggle("wp-desktop-dock__item--focused", isFocused);
         if (item.multi) {
@@ -7146,7 +7174,16 @@ var wpDesktop = function(exports) {
         id: OS_SETTINGS_WINDOW_ID,
         title: "OS Settings",
         icon: "dashicons-desktop",
-        isOpen: () => !!manager.getById(OS_SETTINGS_WINDOW_ID),
+        // "Open" for the dock dot means "open on the currently
+        // active desktop." OS Settings on another desktop
+        // shouldn't paint the dot on the active view.
+        isOpen: () => {
+          const win = manager.getById(OS_SETTINGS_WINDOW_ID);
+          if (!win) {
+            return false;
+          }
+          return (win.config.desktopId || manager.getActiveDesktopId()) === manager.getActiveDesktopId();
+        },
         onOpen: () => {
           manager.open({
             id: OS_SETTINGS_WINDOW_ID,

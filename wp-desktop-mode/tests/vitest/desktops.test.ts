@@ -253,4 +253,30 @@ describe( 'WindowManager — virtual desktops', () => {
 		expect( b.element.classList.contains( 'wp-desktop-window--overview' ) ).toBe( true );
 		expect( c.element.classList.contains( 'wp-desktop-window--overview' ) ).toBe( true );
 	} );
+
+	test( 'snapshot preserves geometry for windows on non-active desktops', () => {
+		// Regression: when a window sits on a hidden (display: none)
+		// desktop, `offsetLeft/Top/Width/Height` all return 0 because
+		// the element isn't laid out. Snapshot must fall back to the
+		// inline style strings so a hard reload restores the user's
+		// saved position instead of "defaults at 0,0".
+		const a = manager.open( openConfig( 'a' ) );
+		// Stamp known geometry on the active desktop's window.
+		a.element.style.left = '180px';
+		a.element.style.top = '120px';
+		a.element.style.width = '640px';
+		a.element.style.height = '480px';
+
+		const second = manager.createDesktop();
+		manager.switchDesktop( second.id );
+		// `a` is now on an inactive desktop → display: none.
+		expect( a.element.style.display ).toBe( 'none' );
+
+		const snap = manager.snapshot();
+		const aEntry = snap.windows.find( ( w ) => w.id === 'a' )!;
+		expect( aEntry.x ).toBe( 180 );
+		expect( aEntry.y ).toBe( 120 );
+		expect( aEntry.width ).toBe( 640 );
+		expect( aEntry.height ).toBe( 480 );
+	} );
 } );

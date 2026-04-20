@@ -1872,6 +1872,31 @@ export class Window {
 	 * Get a snapshot of the window state for persistence.
 	 */
 	public getSnapshot(): { id: string; x: number; y: number; width: number; height: number; state: WindowState } {
+		// `offsetLeft / offsetTop / offsetWidth / offsetHeight` all
+		// return 0 when the element (or any ancestor) is
+		// `display: none` — which is exactly the state every window
+		// on a non-active virtual desktop sits in. Without this
+		// fallback, snapshot() would serialise those windows as
+		// (0, 0, 0, 0) and the next hard reload would restore them
+		// at defaults. `offsetParent` is null under the same
+		// conditions, so we use it as the "am I hidden?" signal
+		// and fall back to parsing the inline style strings, which
+		// survive `display: none` unchanged.
+		const isHidden = this.element.offsetParent === null;
+		if ( isHidden ) {
+			const parse = ( raw: string ): number => {
+				const n = parseFloat( raw );
+				return Number.isFinite( n ) ? Math.round( n ) : 0;
+			};
+			return {
+				id: this.id,
+				x: parse( this.element.style.left ),
+				y: parse( this.element.style.top ),
+				width: parse( this.element.style.width ),
+				height: parse( this.element.style.height ),
+				state: this.state,
+			};
+		}
 		return {
 			id: this.id,
 			x: this.element.offsetLeft,

@@ -186,7 +186,19 @@ function init(): void {
 			id: OS_SETTINGS_WINDOW_ID,
 			title: 'OS Settings',
 			icon: 'dashicons-desktop',
-			isOpen: () => !! manager.getById( OS_SETTINGS_WINDOW_ID ),
+			// "Open" for the dock dot means "open on the currently
+			// active desktop." OS Settings on another desktop
+			// shouldn't paint the dot on the active view.
+			isOpen: () => {
+				const win = manager.getById( OS_SETTINGS_WINDOW_ID );
+				if ( ! win ) {
+					return false;
+				}
+				return (
+					( win.config.desktopId || manager.getActiveDesktopId() ) ===
+					manager.getActiveDesktopId()
+				);
+			},
 			onOpen: () => {
 				manager.open( {
 					id: OS_SETTINGS_WINDOW_ID,

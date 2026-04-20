@@ -381,6 +381,20 @@ export class Dock {
 		document.addEventListener( 'wp-desktop-window-opened', refresh );
 		document.addEventListener( 'wp-desktop-window-closed', refresh );
 		document.addEventListener( 'wp-desktop-window-focused', refresh );
+		// Desktop switches change which windows count as "open on
+		// the active desktop" even though the stack is unchanged.
+		// Listen via the hook bus so a plugin that manually calls
+		// switchDesktop() also triggers a repaint.
+		window.wp?.hooks?.addAction?.(
+			'wp-desktop.desktop.switched',
+			'wp-desktop-mode/dock',
+			refresh,
+		);
+		window.wp?.hooks?.addAction?.(
+			'wp-desktop.desktop.closed',
+			'wp-desktop-mode/dock',
+			refresh,
+		);
 	}
 
 	/**
@@ -394,6 +408,14 @@ export class Dock {
 	private updateActiveStates(): void {
 		const focused = this.windowManager.getFocused();
 		const focusedBaseId = focused ? ( focused.config.baseId || focused.id ) : null;
+		// The dock reflects the ACTIVE desktop only. Windows on
+		// other desktops are invisible to the user right now —
+		// showing "active" dots for them conflates "something's
+		// open somewhere" with "something's open here," which is
+		// what tripped up the first user on an empty desktop.
+		const activeDesktopId = this.windowManager.getActiveDesktopId();
+		const onActiveDesktop = ( w: { config: { desktopId?: string } } ): boolean =>
+			( w.config.desktopId || activeDesktopId ) === activeDesktopId;
 
 		for ( const item of this.items ) {
 			const tile = this.itemElements.get( item.id );
@@ -403,11 +425,15 @@ export class Dock {
 
 			const baseId = this.deriveWindowId( item.url );
 			const instances = item.multi
-				? this.windowManager.getAllByBaseId( baseId )
+				? this.windowManager
+					.getAllByBaseId( baseId )
+					.filter( onActiveDesktop )
 				: [];
-			const singleOpen = ! item.multi && !! this.windowManager.getById( baseId );
+			const single = this.windowManager.getById( baseId );
+			const singleOpen =
+				! item.multi && !! single && onActiveDesktop( single );
 			const isOpen = item.multi ? instances.length > 0 : singleOpen;
-			const isFocused = focusedBaseId === baseId;
+			const isFocused = focusedBaseId === baseId && !! focused && onActiveDesktop( focused );
 
 			tile.classList.toggle( 'wp-desktop-dock__item--active', isOpen );
 			tile.classList.toggle( 'wp-desktop-dock__item--focused', isFocused );

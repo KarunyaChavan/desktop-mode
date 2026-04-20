@@ -928,7 +928,7 @@ var wpDesktop = function(exports) {
     }
     return { __wpdCss: true, sheet: null, cssText: text };
   }
-  const styles$6 = css`
+  const styles$8 = css`
 	:host {
 		display: inline-flex;
 	}
@@ -1028,7 +1028,7 @@ var wpDesktop = function(exports) {
     }
   };
   _WpdWindowButton.props = ["icon", "active", "danger"];
-  _WpdWindowButton.styles = [styles$6];
+  _WpdWindowButton.styles = [styles$8];
   let WpdWindowButton = _WpdWindowButton;
   defineComponent("wpd-window-button", WpdWindowButton);
   const menuStyles = css`
@@ -1183,7 +1183,7 @@ var wpDesktop = function(exports) {
   _WpdMenuItem.styles = [menuItemStyles];
   let WpdMenuItem = _WpdMenuItem;
   defineComponent("wpd-menu-item", WpdMenuItem);
-  const styles$4 = css`
+  const styles$7 = css`
 	:host {
 		display: inline-flex;
 	}
@@ -1282,7 +1282,7 @@ var wpDesktop = function(exports) {
     }
   };
   _WpdTabChip.props = ["variant"];
-  _WpdTabChip.styles = [styles$4];
+  _WpdTabChip.styles = [styles$7];
   let WpdTabChip = _WpdTabChip;
   defineComponent("wpd-tab-chip", WpdTabChip);
   const IDENTITY_PARAMS = ["post_type", "page", "taxonomy"];
@@ -1318,7 +1318,7 @@ var wpDesktop = function(exports) {
   function sanitizeClassName(value) {
     return value.replace(/[^a-zA-Z0-9_-]/g, "");
   }
-  function urlMatchKey$1(url) {
+  function urlMatchKey(url) {
     try {
       const parsed = new URL(url, window.location.origin);
       parsed.searchParams.delete("wp_desktop");
@@ -1461,7 +1461,7 @@ var wpDesktop = function(exports) {
       tabs.setAttribute("role", "tablist");
       tabs.setAttribute("aria-label", sprintf(__("%s sub-pages"), config.title));
       if (config.submenu && config.submenu.length > 0) {
-        const initialKey = urlMatchKey$1(config.url);
+        const initialKey = urlMatchKey(config.url);
         for (const sub of config.submenu) {
           const tab = document.createElement("button");
           tab.className = "wp-desktop-window__tab";
@@ -1470,7 +1470,7 @@ var wpDesktop = function(exports) {
           tab.setAttribute("role", "tab");
           tab.dataset.url = sub.url;
           tab.textContent = sub.title;
-          if (urlMatchKey$1(sub.url) === initialKey) {
+          if (urlMatchKey(sub.url) === initialKey) {
             tab.classList.add("wp-desktop-window__tab--active");
             tab.setAttribute("aria-selected", "true");
           } else {
@@ -1649,8 +1649,8 @@ var wpDesktop = function(exports) {
     return el;
   }
   const EDGE_MARGIN = 0;
-  const DRAG_THRESHOLD_PX = 5;
-  const DRAG_THRESHOLD_SQUARED = DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX;
+  const DRAG_THRESHOLD_PX$1 = 5;
+  const DRAG_THRESHOLD_SQUARED$1 = DRAG_THRESHOLD_PX$1 * DRAG_THRESHOLD_PX$1;
   const EXTERNAL_IFRAME_READY_TIMEOUT_MS = 3e3;
   function syncActiveTab(win, currentUrl) {
     const submenuTabs = win.element.querySelectorAll(
@@ -1666,10 +1666,10 @@ var wpDesktop = function(exports) {
       }
       return;
     }
-    const activeKey = urlMatchKey$1(currentUrl);
+    const activeKey = urlMatchKey(currentUrl);
     for (const tab of submenuTabs) {
       const tabUrl = tab.dataset.url;
-      const isActive = !!tabUrl && urlMatchKey$1(tabUrl) === activeKey;
+      const isActive = !!tabUrl && urlMatchKey(tabUrl) === activeKey;
       tab.classList.toggle("wp-desktop-window__tab--active", isActive);
       tab.setAttribute("aria-selected", isActive ? "true" : "false");
     }
@@ -2096,8 +2096,8 @@ var wpDesktop = function(exports) {
     let isDefault = false;
     if (pref && pref.enabled && typeof pref.url === "string") {
       try {
-        const currentKey = urlMatchKey$1(win.getCurrentUrl());
-        const prefKey = urlMatchKey$1(pref.url);
+        const currentKey = urlMatchKey(win.getCurrentUrl());
+        const prefKey = urlMatchKey(pref.url);
         isDefault = currentKey === prefKey;
       } catch {
         isDefault = false;
@@ -2189,7 +2189,7 @@ var wpDesktop = function(exports) {
       if (!started) {
         const dx = ev.clientX - startClientX;
         const dy = ev.clientY - startClientY;
-        if (dx * dx + dy * dy < DRAG_THRESHOLD_SQUARED) {
+        if (dx * dx + dy * dy < DRAG_THRESHOLD_SQUARED$1) {
           return;
         }
         beginDrag(ev.clientX, ev.clientY);
@@ -5020,7 +5020,7 @@ var wpDesktop = function(exports) {
       }
     }
   }
-  const styles$8 = css`
+  const styles$6 = css`
 	:host {
 		display: block;
 		margin-block-end: 28px;
@@ -5058,10 +5058,10 @@ var wpDesktop = function(exports) {
     }
   };
   _WpdSection.props = ["heading", "description"];
-  _WpdSection.styles = [styles$8];
+  _WpdSection.styles = [styles$6];
   let WpdSection = _WpdSection;
   defineComponent("wpd-section", WpdSection);
-  const styles$7 = css`
+  const styles$5 = css`
 	:host {
 		display: inline-flex;
 	}
@@ -5135,10 +5135,10 @@ var wpDesktop = function(exports) {
     }
   };
   _WpdButton.props = ["variant", "disabled", "type", "busy"];
-  _WpdButton.styles = [styles$7];
+  _WpdButton.styles = [styles$5];
   let WpdButton = _WpdButton;
   defineComponent("wpd-button", WpdButton);
-  const styles$1 = css`
+  const styles$4 = css`
 	:host {
 		display: block;
 		width: 100%;
@@ -5226,10 +5226,10 @@ var wpDesktop = function(exports) {
     }
   };
   _WpdSwatch.props = ["value", "label", "selected", "preview", "size", "variant"];
-  _WpdSwatch.styles = [styles$1];
+  _WpdSwatch.styles = [styles$4];
   let WpdSwatch = _WpdSwatch;
   defineComponent("wpd-swatch", WpdSwatch);
-  const styles$5 = css`
+  const styles$3 = css`
 	:host {
 		display: grid;
 		grid-template-columns: repeat(
@@ -5260,7 +5260,7 @@ var wpDesktop = function(exports) {
     }
   };
   _WpdSwatchGrid.props = ["label", "columns", "mode"];
-  _WpdSwatchGrid.styles = [styles$5];
+  _WpdSwatchGrid.styles = [styles$3];
   let WpdSwatchGrid = _WpdSwatchGrid;
   defineComponent("wpd-swatch-grid", WpdSwatchGrid);
   const segmentedStyles = css`
@@ -5350,7 +5350,7 @@ var wpDesktop = function(exports) {
   _WpdSegmented.styles = [segmentedStyles];
   let WpdSegmented = _WpdSegmented;
   defineComponent("wpd-segmented", WpdSegmented);
-  const styles = css`
+  const styles$2 = css`
 	:host {
 		display: inline-flex;
 		align-items: center;
@@ -5426,10 +5426,10 @@ var wpDesktop = function(exports) {
     }
   };
   _WpdColorField.props = ["label", "value", "variant"];
-  _WpdColorField.styles = [styles];
+  _WpdColorField.styles = [styles$2];
   let WpdColorField = _WpdColorField;
   defineComponent("wpd-color-field", WpdColorField);
-  const styles$3 = css`
+  const styles$1 = css`
 	:host {
 		display: flex;
 		align-items: center;
@@ -5480,10 +5480,10 @@ var wpDesktop = function(exports) {
     }
   };
   _WpdRangeField.props = ["label", "value", "min", "max", "step", "suffix"];
-  _WpdRangeField.styles = [styles$3];
+  _WpdRangeField.styles = [styles$1];
   let WpdRangeField = _WpdRangeField;
   defineComponent("wpd-range-field", WpdRangeField);
-  const styles$2 = css`
+  const styles = css`
 	:host {
 		display: inline-flex;
 		align-items: center;
@@ -5529,7 +5529,7 @@ var wpDesktop = function(exports) {
     }
   };
   _WpdCheckboxLabel.props = ["label", "checked"];
-  _WpdCheckboxLabel.styles = [styles$2];
+  _WpdCheckboxLabel.styles = [styles];
   let WpdCheckboxLabel = _WpdCheckboxLabel;
   defineComponent("wpd-checkbox-label", WpdCheckboxLabel);
   const tabsStyles = css`
@@ -7313,6 +7313,8 @@ var wpDesktop = function(exports) {
   const DEFAULT_WIDTH = 280;
   const DEFAULT_HEIGHT = 180;
   const VIEWPORT_MARGIN = 20;
+  const DRAG_THRESHOLD_PX = 5;
+  const DRAG_THRESHOLD_SQUARED = DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX;
   const DRAG_EXCLUDED_SELECTORS = 'input, textarea, select, button, a, [contenteditable="true"]';
   function buildFrame(def, ctx, handlers) {
     const card = document.createElement("div");
@@ -7442,6 +7444,7 @@ var wpDesktop = function(exports) {
     let startY = 0;
     let initialLeft = 0;
     let initialTop = 0;
+    let committed = false;
     const onDown = (e) => {
       if (e.button !== 0) {
         return;
@@ -7451,6 +7454,15 @@ var wpDesktop = function(exports) {
         return;
       }
       e.preventDefault();
+      pointerId = e.pointerId;
+      startX = e.clientX;
+      startY = e.clientY;
+      committed = false;
+      initialLeft = parseFloat(card.style.left) || 0;
+      initialTop = parseFloat(card.style.top) || 0;
+      chrome.setPointerCapture(pointerId);
+    };
+    const commitDrag = () => {
       if (!card.classList.contains(FLOATING_CLASS)) {
         const parentRect = ctx.floatingParent.getBoundingClientRect();
         const rect = card.getBoundingClientRect();
@@ -7464,13 +7476,9 @@ var wpDesktop = function(exports) {
         card.classList.add(FLOATING_CLASS);
         setFloating(true);
         handlers.onLiberate(initial);
+        initialLeft = parseFloat(card.style.left) || 0;
+        initialTop = parseFloat(card.style.top) || 0;
       }
-      pointerId = e.pointerId;
-      startX = e.clientX;
-      startY = e.clientY;
-      initialLeft = parseFloat(card.style.left) || 0;
-      initialTop = parseFloat(card.style.top) || 0;
-      chrome.setPointerCapture(pointerId);
       card.classList.add(DRAGGING_CLASS);
     };
     const onMove = (e) => {
@@ -7479,6 +7487,13 @@ var wpDesktop = function(exports) {
       }
       const dx = e.clientX - startX;
       const dy = e.clientY - startY;
+      if (!committed) {
+        if (dx * dx + dy * dy < DRAG_THRESHOLD_SQUARED) {
+          return;
+        }
+        committed = true;
+        commitDrag();
+      }
       const clamped = clampToParent(
         initialLeft + dx,
         initialTop + dy,
@@ -7498,6 +7513,10 @@ var wpDesktop = function(exports) {
       } catch {
       }
       pointerId = null;
+      if (!committed) {
+        return;
+      }
+      committed = false;
       card.classList.remove(DRAGGING_CLASS);
       handlers.onGeometryChanged(currentGeometry(card));
     };
@@ -8731,7 +8750,7 @@ var wpDesktop = function(exports) {
     manager.onToggleStartupRequested = (win) => {
       const currentPref = config.defaultWindow;
       const winUrl = win.getCurrentUrl();
-      const alreadyDefault = !!currentPref?.enabled && urlMatchKey$1(currentPref.url) === urlMatchKey$1(winUrl);
+      const alreadyDefault = !!currentPref?.enabled && urlMatchKey(currentPref.url) === urlMatchKey(winUrl);
       void setDefaultWindow(alreadyDefault ? null : winUrl);
     };
     const refreshMenu = bindMenuRefresh(dock, taskbar, taskbarEl, desktopArea, config);

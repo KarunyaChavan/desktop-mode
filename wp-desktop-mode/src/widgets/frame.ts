@@ -38,6 +38,18 @@ const DEFAULT_HEIGHT = 180;
 const VIEWPORT_MARGIN = 20;
 
 /**
+ * Drag threshold (squared) — pointer must move this far from the
+ * pointerdown origin before the drag gesture commits. Below this,
+ * the press + release is treated as a click (no liberate, no geometry
+ * change). Matches the window title-bar threshold so the two gestures
+ * feel consistent.
+ *
+ * Squared to save a sqrt in the hot move handler.
+ */
+const DRAG_THRESHOLD_PX = 5;
+const DRAG_THRESHOLD_SQUARED = DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX;
+
+/**
  * Non-chrome inputs that must NEVER initiate a drag even if the user's
  * pointerdown lands on their parent chrome. Stops the classic
  * "try-to-type-in-input → drag-the-widget" UX bug.
@@ -318,6 +330,16 @@ function attachDrag(
 	let startY = 0;
 	let initialLeft = 0;
 	let initialTop = 0;
+	/**
+	 * True once the pointer has moved past `DRAG_THRESHOLD_PX` from
+	 * its origin — only then do we liberate a docked widget, add the
+	 * `--dragging` class, and fire `onGeometryChanged` on release. A
+	 * plain click on the chrome (press + release without crossing
+	 * the threshold) is a no-op, so clicking the title to e.g.
+	 * dismiss a tooltip doesn't accidentally fling the widget out of
+	 * the column.
+	 */
+	let committed = false;
 
 	const onDown = ( e: PointerEvent ): void => {
 		if ( e.button !== 0 ) {
@@ -333,10 +355,29 @@ function attachDrag(
 		}
 		e.preventDefault();
 
-		// Liberate on first drag: a column-docked movable widget
-		// becomes floating the moment the user starts moving it. We
-		// snapshot its current on-screen position so the drag begins
-		// visually from where the card already sits.
+		pointerId = e.pointerId;
+		startX = e.clientX;
+		startY = e.clientY;
+		committed = false;
+		// Capture the CURRENT geometry so the first real move-frame has
+		// a correct anchor. For docked cards this stays zero and is
+		// overwritten by `commitDrag` once the user crosses the
+		// threshold; for floating cards we read the live inline-style
+		// values so drag math works without a special case later.
+		initialLeft = parseFloat( card.style.left ) || 0;
+		initialTop = parseFloat( card.style.top ) || 0;
+		chrome.setPointerCapture( pointerId );
+	};
+
+	/**
+	 * Cross-the-threshold commit. For a docked card this is the
+	 * liberate transition: snapshot on-screen position, re-parent
+	 * into the floating host, fire `onLiberate`. For an already-
+	 * floating card it's just "start drag visuals" — the geometry
+	 * was already written on the card. Called at most once per
+	 * drag session.
+	 */
+	const commitDrag = (): void => {
 		if ( ! card.classList.contains( FLOATING_CLASS ) ) {
 			const parentRect = ctx.floatingParent.getBoundingClientRect();
 			const rect = card.getBoundingClientRect();
@@ -350,14 +391,14 @@ function attachDrag(
 			card.classList.add( FLOATING_CLASS );
 			setFloating( true );
 			handlers.onLiberate( initial );
+			// Re-read the inline styles — the applyGeometry call
+			// above just wrote them. Without this, the first
+			// move-frame would anchor at 0,0 and the card would jump
+			// to the cursor instead of moving relative to its
+			// on-screen position.
+			initialLeft = parseFloat( card.style.left ) || 0;
+			initialTop = parseFloat( card.style.top ) || 0;
 		}
-
-		pointerId = e.pointerId;
-		startX = e.clientX;
-		startY = e.clientY;
-		initialLeft = parseFloat( card.style.left ) || 0;
-		initialTop = parseFloat( card.style.top ) || 0;
-		chrome.setPointerCapture( pointerId );
 		card.classList.add( DRAGGING_CLASS );
 	};
 
@@ -367,6 +408,18 @@ function attachDrag(
 		}
 		const dx = e.clientX - startX;
 		const dy = e.clientY - startY;
+
+		// Threshold gate — below it, the press is still ambiguous
+		// (click-maybe vs. drag-maybe). Above it, we commit and
+		// start moving pixels.
+		if ( ! committed ) {
+			if ( dx * dx + dy * dy < DRAG_THRESHOLD_SQUARED ) {
+				return;
+			}
+			committed = true;
+			commitDrag();
+		}
+
 		const clamped = clampToParent(
 			initialLeft + dx,
 			initialTop + dy,
@@ -388,6 +441,13 @@ function attachDrag(
 			/* already released */
 		}
 		pointerId = null;
+		// Pure-click release (no threshold crossed) — tear down
+		// pointer state but don't touch the card's classes or fire
+		// `onGeometryChanged`. The widget stays exactly as it was.
+		if ( ! committed ) {
+			return;
+		}
+		committed = false;
 		card.classList.remove( DRAGGING_CLASS );
 		handlers.onGeometryChanged( currentGeometry( card ) );
 	};

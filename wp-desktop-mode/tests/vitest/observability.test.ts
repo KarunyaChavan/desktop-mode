@@ -379,6 +379,180 @@ describe( 'SHELL_ERROR action fires alongside mount failures', () => {
 	} );
 } );
 
+describe( 'widget chrome — drag threshold', () => {
+	beforeEach( () => {
+		installHooksStub();
+	} );
+	afterEach( () => {
+		clearHooksStub();
+		document.body.innerHTML = '';
+	} );
+
+	test( 'a pointerdown + release without crossing threshold does NOT liberate', async () => {
+		const { buildFrame } = await import( '../../src/widgets/frame' );
+
+		const parent = document.createElement( 'div' );
+		parent.style.position = 'relative';
+		Object.defineProperty( parent, 'getBoundingClientRect', {
+			value: () =>
+				( {
+					left: 0, top: 0, right: 1200, bottom: 800,
+					width: 1200, height: 800, x: 0, y: 0, toJSON: () => ( {} ),
+				} ) as DOMRect,
+		} );
+		Object.defineProperty( parent, 'clientWidth', { value: 1200, configurable: true } );
+		Object.defineProperty( parent, 'clientHeight', { value: 800, configurable: true } );
+		document.body.appendChild( parent );
+
+		let liberateCount = 0;
+		const frame = buildFrame(
+			{
+				id: 'test',
+				label: 'Test',
+				description: 'x',
+				icon: 'dashicons-admin-generic',
+				movable: true,
+				mount: () => () => undefined,
+			},
+			{ floatingParent: parent, geometry: undefined },
+			{
+				onRemove: () => undefined,
+				onGeometryChanged: () => undefined,
+				onLiberate: () => {
+					liberateCount++;
+				},
+				onRedock: () => undefined,
+			},
+		);
+		// Place card somewhere with a non-zero rect so the liberate
+		// math would have a real anchor if it fired.
+		document.body.appendChild( frame.card );
+		Object.defineProperty( frame.card, 'getBoundingClientRect', {
+			value: () =>
+				( {
+					left: 100, top: 100, right: 420, bottom: 260,
+					width: 320, height: 160, x: 100, y: 100, toJSON: () => ( {} ),
+				} ) as DOMRect,
+		} );
+
+		const chrome = frame.card.querySelector< HTMLElement >(
+			'.wp-desktop-widgets__chrome',
+		);
+		expect( chrome ).not.toBeNull();
+
+		// Stub pointer capture — jsdom lacks it on arbitrary elements.
+		Object.defineProperty( chrome!, 'setPointerCapture', { value: () => undefined } );
+		Object.defineProperty( chrome!, 'releasePointerCapture', { value: () => undefined } );
+
+		function pointerEvent( type: string, clientX: number, clientY: number ): PointerEvent {
+			const e = new Event( type, { bubbles: true } );
+			Object.defineProperty( e, 'pointerId', { value: 1 } );
+			Object.defineProperty( e, 'button', { value: 0 } );
+			Object.defineProperty( e, 'clientX', { value: clientX } );
+			Object.defineProperty( e, 'clientY', { value: clientY } );
+			Object.defineProperty( e, 'target', { value: chrome } );
+			return e as unknown as PointerEvent;
+		}
+
+		chrome!.dispatchEvent( pointerEvent( 'pointerdown', 200, 200 ) );
+		// Move 3px — under the 5px threshold.
+		chrome!.dispatchEvent( pointerEvent( 'pointermove', 203, 200 ) );
+		chrome!.dispatchEvent( pointerEvent( 'pointerup', 203, 200 ) );
+
+		expect( liberateCount ).toBe( 0 );
+		expect(
+			frame.card.classList.contains( 'wp-desktop-widgets__card--floating' ),
+		).toBe( false );
+		expect(
+			frame.card.classList.contains( 'wp-desktop-widgets__card--dragging' ),
+		).toBe( false );
+
+		frame.dispose();
+		parent.remove();
+	} );
+
+	test( 'moving past the threshold commits liberate + drag', async () => {
+		const { buildFrame } = await import( '../../src/widgets/frame' );
+
+		const parent = document.createElement( 'div' );
+		Object.defineProperty( parent, 'getBoundingClientRect', {
+			value: () =>
+				( {
+					left: 0, top: 0, right: 1200, bottom: 800,
+					width: 1200, height: 800, x: 0, y: 0, toJSON: () => ( {} ),
+				} ) as DOMRect,
+		} );
+		Object.defineProperty( parent, 'clientWidth', { value: 1200, configurable: true } );
+		Object.defineProperty( parent, 'clientHeight', { value: 800, configurable: true } );
+		document.body.appendChild( parent );
+
+		let liberateCount = 0;
+		const frame = buildFrame(
+			{
+				id: 'test2',
+				label: 'Test 2',
+				description: 'x',
+				icon: 'dashicons-admin-generic',
+				movable: true,
+				mount: () => () => undefined,
+			},
+			{ floatingParent: parent, geometry: undefined },
+			{
+				onRemove: () => undefined,
+				onGeometryChanged: () => undefined,
+				onLiberate: () => {
+					liberateCount++;
+				},
+				onRedock: () => undefined,
+			},
+		);
+		document.body.appendChild( frame.card );
+		Object.defineProperty( frame.card, 'getBoundingClientRect', {
+			value: () =>
+				( {
+					left: 100, top: 100, right: 420, bottom: 260,
+					width: 320, height: 160, x: 100, y: 100, toJSON: () => ( {} ),
+				} ) as DOMRect,
+		} );
+
+		const chrome = frame.card.querySelector< HTMLElement >(
+			'.wp-desktop-widgets__chrome',
+		);
+		Object.defineProperty( chrome!, 'setPointerCapture', { value: () => undefined } );
+		Object.defineProperty( chrome!, 'releasePointerCapture', { value: () => undefined } );
+
+		function pointerEvent( type: string, clientX: number, clientY: number ): PointerEvent {
+			const e = new Event( type, { bubbles: true } );
+			Object.defineProperty( e, 'pointerId', { value: 1 } );
+			Object.defineProperty( e, 'button', { value: 0 } );
+			Object.defineProperty( e, 'clientX', { value: clientX } );
+			Object.defineProperty( e, 'clientY', { value: clientY } );
+			Object.defineProperty( e, 'target', { value: chrome } );
+			return e as unknown as PointerEvent;
+		}
+
+		chrome!.dispatchEvent( pointerEvent( 'pointerdown', 200, 200 ) );
+		// Cross the 5 px threshold.
+		chrome!.dispatchEvent( pointerEvent( 'pointermove', 210, 200 ) );
+
+		expect( liberateCount ).toBe( 1 );
+		expect(
+			frame.card.classList.contains( 'wp-desktop-widgets__card--floating' ),
+		).toBe( true );
+		expect(
+			frame.card.classList.contains( 'wp-desktop-widgets__card--dragging' ),
+		).toBe( true );
+
+		chrome!.dispatchEvent( pointerEvent( 'pointerup', 210, 200 ) );
+		expect(
+			frame.card.classList.contains( 'wp-desktop-widgets__card--dragging' ),
+		).toBe( false );
+
+		frame.dispose();
+		parent.remove();
+	} );
+} );
+
 describe( 'WidgetLayer.ensureMounted', () => {
 	beforeEach( () => {
 		installHooksStub();

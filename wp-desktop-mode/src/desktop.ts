@@ -25,6 +25,10 @@ import * as registry from './wallpapers/registry';
 import { WallpaperLayer } from './wallpapers/layer';
 import { registerBuiltInWallpapers } from './wallpapers/built-in';
 import { loadVendorScript } from './wallpapers/vendor-loader';
+import {
+	collectWallpaperSurfaces,
+	type WallpaperSurface,
+} from './wallpapers/surfaces';
 import { WidgetLayer } from './widgets/layer';
 import { registerBuiltInWidgets } from './widgets/built-in';
 import * as widgetRegistry from './widgets/registry';
@@ -48,6 +52,14 @@ const OS_SETTINGS_WINDOW_ID = 'wp-desktop-os-settings';
 export interface WpDesktopPublicApi {
 	windowManager: WindowManager;
 	dock: Dock | null;
+	/**
+	 * Bottom-edge taskbar — `null` when either the shell markup lacks
+	 * the taskbar element (older shell build) or no plugin-contributed
+	 * menus were routed to it (`config.taskbarItems` empty). The
+	 * taskbar is an instance of the same `Dock` class as the left-edge
+	 * dock — only its orientation + CSS differ.
+	 */
+	taskbar: Dock | null;
 	saveSession: () => void;
 	/** Raw `@wordpress/hooks` bridge. Alias of `window.wp.hooks`. */
 	hooks: WpHooks;
@@ -76,8 +88,27 @@ export interface WpDesktopPublicApi {
 	registerWallpaper: ( def: WallpaperDef ) => void;
 	/** Convenience: register a widget via `wp-desktop.widgets` filter. */
 	registerWidget: ( def: import( './widgets/types' ).WidgetDef ) => void;
+	/**
+	 * Live reference to the shell's widget layer (or `null` when the
+	 * widget DOM element isn't present). Companion plugins use the
+	 * public `add( id )` / `remove( id )` / `ensureMounted( id )`
+	 * methods to pin or unpin their widget programmatically — e.g.
+	 * a monitor plugin that auto-surfaces its widget on the first
+	 * error burst, or an onboarding flow that guarantees the
+	 * quick-start widget is present on a new user's first visit.
+	 */
+	widgetLayer: WidgetLayer | null;
 	/** Load a vendor script once, memoized. See `src/wallpapers/vendor-loader.ts`. */
 	loadVendorScript: ( url: string ) => Promise<void>;
+	/**
+	 * Live list of collision surfaces for wallpaper effects —
+	 * window tops, shell floor, taskbar top, dock edge, widget
+	 * cards, plus anything plugins added via the
+	 * `wp-desktop.wallpaper.surfaces` filter. Rects are in
+	 * viewport coordinates. Call each frame (or throttled) from a
+	 * canvas wallpaper to rebuild its collision cache.
+	 */
+	getWallpaperSurfaces: () => WallpaperSurface[];
 	/**
 	 * Register a shared vendor module so other plugins can `needs:` it
 	 * by id. Built-in ids (`pixijs`, …) are pre-registered by the shell.
@@ -101,6 +132,15 @@ export interface WpDesktopPublicApi {
 	 * so the ⋯-menu checkmarks repaint.
 	 */
 	setDefaultWindow: ( url: string | null ) => Promise<void>;
+	/**
+	 * Force a refetch of the live admin-menu split from
+	 * `GET /wp-desktop/v1/menu` and repaint both rails. Invoked
+	 * automatically when a windowed `plugins.php` signals an
+	 * activation / deactivation; plugins that mutate the admin menu
+	 * server-side outside that flow can call this directly to surface
+	 * their changes without a full reload.
+	 */
+	refreshMenu: () => Promise<void>;
 	/**
 	 * The `DesktopConfig` that booted this shell. Read-only for plugins
 	 * — useful for picking up `pluginUrl` and other PHP-sourced bits.
@@ -192,11 +232,13 @@ function init(): void {
 	);
 	osSettings.apply();
 
-	// Dock.
+	// Dock (left edge, CORE WP menus). `config.dockItems` was already
+	// filtered server-side to core items — anything that routes via
+	// `admin.php?page=*` is split into `config.taskbarItems` below.
 	const dockEl = document.getElementById( 'wp-desktop-dock' );
 	let dock: Dock | null = null;
 	if ( dockEl && config.dockItems ) {
-		dock = new Dock( dockEl, manager, config.dockItems, config.adminUrl );
+		dock = new Dock( dockEl, manager, config.dockItems, config.adminUrl, 'left' );
 		desktopArea.classList.add( 'wp-desktop-area--with-dock' );
 
 		// System tile at the bottom of the dock — last icon, after WP
@@ -240,6 +282,39 @@ function init(): void {
 				} );
 			},
 		} );
+	}
+
+	// Taskbar (bottom edge, PLUGIN-contributed menus). Instantiated
+	// with the same `Dock` class as the left rail — behavior is
+	// identical (tooltips, active-window dots, multi-instance rail,
+	// same icon fallbacks). Only orientation + CSS differ. The taskbar
+	// DOM element is optional — older shell builds without it render
+	// fine, the taskbar just no-ops.
+	//
+	// ALWAYS instantiate when the element exists, even if the item
+	// list is empty. The live menu-refresh path (plugin activation
+	// inside a windowed plugins.php) needs an existing Dock instance
+	// to call `replaceItems()` on — creating one lazily on first
+	// refresh would mean the user's FIRST plugin activation wouldn't
+	// re-render. Hidden via `[hidden]` when empty so it doesn't show
+	// an empty glass pill floating over the wallpaper.
+	const taskbarEl = document.getElementById( 'wp-desktop-taskbar' );
+	let taskbar: Dock | null = null;
+	if ( taskbarEl ) {
+		const initialTaskbarItems = Array.isArray( config.taskbarItems )
+			? config.taskbarItems
+			: [];
+		taskbar = new Dock(
+			taskbarEl,
+			manager,
+			initialTaskbarItems,
+			config.adminUrl,
+			'bottom',
+		);
+		taskbarEl.hidden = initialTaskbarItems.length === 0;
+		if ( initialTaskbarItems.length > 0 ) {
+			desktopArea.classList.add( 'wp-desktop-area--with-taskbar' );
+		}
 	}
 
 	// Bootstrap: restore session (if any), then decide whether to also
@@ -312,6 +387,7 @@ function init(): void {
 				} ),
 			);
 		} catch ( err ) {
+			doAction( HOOKS.SHELL_ERROR, { scope: 'default-window-save', error: err } );
 			if ( typeof console !== 'undefined' ) {
 				console.error(
 					'[wp-desktop-mode] Failed to save default window:',
@@ -334,6 +410,18 @@ function init(): void {
 		void setDefaultWindow( alreadyDefault ? null : winUrl );
 	};
 
+	// Live menu refresh — rebuild both rails when a plugin activation
+	// or deactivation lands in any windowed `plugins.php`. Without
+	// this the dock + taskbar reflect the server-side `$menu` at
+	// shell boot only, so the user would have to hard-reload the
+	// whole tab to see a newly-activated plugin's top-level menu
+	// appear on the taskbar (or vanish on deactivation).
+	//
+	// Wired BEFORE the `window.wp.desktop` assignment so the returned
+	// refresh function is available to expose in the public API in
+	// the same statement.
+	const refreshMenu = bindMenuRefresh( dock, taskbar, taskbarEl, desktopArea, config );
+
 	// Expose the public API on `window.wp.desktop`. The `hooks` field
 	// aliases `window.wp.hooks` so plugins have one idiomatic entry
 	// point for both the window manager and the filter/action bus.
@@ -341,6 +429,7 @@ function init(): void {
 	window.wp.desktop = {
 		windowManager: manager,
 		dock,
+		taskbar,
 		saveSession,
 		hooks: rawHooks(),
 		HOOKS,
@@ -359,13 +448,17 @@ function init(): void {
 			// user explicitly enabled, so adding a new def just makes
 			// it available in the next picker open. Plugins wanting
 			// to force a widget on can call
-			// `wp.desktop.widgetLayer.add(id)` — exposed below.
+			// `wp.desktop.widgetLayer.add(id)` / `ensureMounted(id)` —
+			// exposed below.
 		},
+		widgetLayer,
 		loadVendorScript,
+		getWallpaperSurfaces: () => collectWallpaperSurfaces( manager ),
 		registerModule,
 		loadModules,
 		whenReady,
 		setDefaultWindow,
+		refreshMenu,
 		config,
 	};
 
@@ -770,8 +863,11 @@ function createSessionSaver( manager: WindowManager, config: DesktopConfig ): ()
 				// Best-effort: we don't block the UI on persistence.
 				keepalive: true,
 			} );
-		} catch {
-			/* Network error is non-fatal — next change triggers another save. */
+		} catch ( err ) {
+			/* Network error is non-fatal — next change triggers another save.
+			 * Still worth surfacing to monitor widgets so a connectivity
+			 * regression doesn't go silent under the session-beacon path. */
+			doAction( HOOKS.SHELL_ERROR, { scope: 'session-save', error: err } );
 		} finally {
 			inFlight = false;
 		}
@@ -875,6 +971,163 @@ function bindShellLifecycle(): void {
 			state: document.hidden ? 'hidden' : 'visible',
 		} );
 	} );
+}
+
+/**
+ * Debounce window for live menu refetches. Long enough to coalesce the
+ * chromeless bridge's `plugins.php` signal with the iframe's navigation
+ * settling, short enough to feel instant to the user.
+ */
+const MENU_REFRESH_DEBOUNCE_MS = 250;
+
+/**
+ * Wire the live menu-refresh pipeline.
+ *
+ * Listens for `wp-desktop-plugins-changed` postMessages from the
+ * chromeless bridge (fired when an iframe lands on `plugins.php`), then
+ * debounces + fetches `/wp-desktop/v1/menu` and calls `replaceItems()`
+ * on whichever rails changed. Also exposes the fetch as a return value
+ * so the public API can expose a manual `wp.desktop.refreshMenu()` for
+ * plugins that mutate the menu server-side outside the plugins.php
+ * flow (rare, but the escape hatch costs nothing).
+ *
+ * No-ops when `config.menuUrl` isn't present — older PHP builds that
+ * predate the REST endpoint get the boot-time menu only.
+ *
+ * @param dock        Left-edge dock instance (may be null).
+ * @param taskbar     Bottom-edge taskbar instance (may be null).
+ * @param taskbarEl   Taskbar DOM element, used to flip `hidden` when
+ *                    items go from empty → populated or vice versa.
+ * @param desktopArea Desktop area element — wears the
+ *                    `--with-taskbar` modifier when items are present.
+ * @param config      Boot config; `taskbarItems` / `dockItems` are
+ *                    mutated in place after each successful refresh so
+ *                    plugins that read `wp.desktop.config` after a
+ *                    refresh see fresh values.
+ * @return An async function plugins can call to force a refresh.
+ */
+function bindMenuRefresh(
+	dock: Dock | null,
+	taskbar: Dock | null,
+	taskbarEl: HTMLElement | null,
+	desktopArea: HTMLElement,
+	config: DesktopConfig,
+): () => Promise<void> {
+	// Shared applier — takes a freshly-split payload and rebuilds
+	// both rails. Extracted so the message-with-payload path (no
+	// REST) and the manual-refresh path (REST) share behaviour.
+	const applyPayload = ( payload: {
+		dockItems?: unknown;
+		taskbarItems?: unknown;
+	} ): void => {
+		const dockItems = payload.dockItems;
+		const taskbarItems = payload.taskbarItems;
+
+		// Guard: an empty `dockItems` list is NEVER legitimate —
+		// WordPress Core always ships Dashboard, which lands on the
+		// dock by default. An empty response means the server side
+		// failed to build the menu (e.g. the `$menu` global wasn't
+		// populated in REST context and our bootstrap didn't kick
+		// in). Skip the swap entirely rather than wipe the user's
+		// sidebar.
+		if ( ! Array.isArray( dockItems ) || dockItems.length === 0 ) {
+			return;
+		}
+		if ( dock ) {
+			dock.replaceItems( dockItems as DesktopConfig[ 'dockItems' ] );
+			config.dockItems = dockItems as DesktopConfig[ 'dockItems' ];
+		}
+
+		// Taskbar CAN legitimately be empty (user has no plugins
+		// with top-level menus yet). Only touched when the payload
+		// also carries a taskbarItems array — missing field means
+		// "no data", not "clear it."
+		if ( Array.isArray( taskbarItems ) ) {
+			taskbar?.replaceItems(
+				taskbarItems as DesktopConfig[ 'taskbarItems' ],
+			);
+			config.taskbarItems = taskbarItems as DesktopConfig[ 'taskbarItems' ];
+			if ( taskbarEl ) {
+				taskbarEl.hidden = taskbarItems.length === 0;
+			}
+			desktopArea.classList.toggle(
+				'wp-desktop-area--with-taskbar',
+				taskbarItems.length > 0,
+			);
+		}
+	};
+
+	const refresh = async (): Promise<void> => {
+		if ( ! config.menuUrl ) {
+			return;
+		}
+		try {
+			const res = await fetch( config.menuUrl, {
+				method: 'GET',
+				credentials: 'same-origin',
+				headers: { 'X-WP-Nonce': config.restNonce },
+			} );
+			if ( ! res.ok ) {
+				return;
+			}
+			const data = ( await res.json() ) as {
+				dockItems?: DesktopConfig[ 'dockItems' ];
+				taskbarItems?: DesktopConfig[ 'taskbarItems' ];
+			};
+			applyPayload( data );
+		} catch ( err ) {
+			/* Network / parse errors — skip this refresh. The next
+			 * signal will retry, and a stale menu degrades gracefully:
+			 * existing tiles still work, just don't reflect the latest
+			 * activation. Monitors may still want to see this, so fire
+			 * a SHELL_ERROR — log to console skipped to keep the DevTools
+			 * surface quiet for the no-op case. */
+			doAction( HOOKS.SHELL_ERROR, { scope: 'menu-refresh', error: err } );
+		}
+	};
+
+	let debounceTimer: number | null = null;
+	window.addEventListener( 'message', ( e: MessageEvent ) => {
+		if ( e.origin !== window.location.origin ) {
+			return;
+		}
+		const data = e.data as {
+			type?: string;
+			payload?: { dockItems?: unknown; taskbarItems?: unknown };
+		} | null;
+		if ( ! data || data.type !== 'wp-desktop-plugins-changed' ) {
+			return;
+		}
+
+		// FAST PATH: the chromeless bridge embedded a fresh menu
+		// payload captured from the iframe's real admin context —
+		// plugins that gate `admin_menu` on `is_admin()` at load
+		// time registered normally there. Apply it directly; no
+		// REST roundtrip. This is the primary refresh path after
+		// plugin activation / deactivation.
+		if ( data.payload ) {
+			applyPayload( data.payload );
+			return;
+		}
+
+		// SLOW PATH: message arrived without a payload (manual
+		// trigger, older bridge, test). Fall back to the REST
+		// endpoint. Not reliable for plugin-menu discovery — many
+		// plugins gate `is_admin()` at load time and never
+		// register in REST context — but safe for core menus.
+		if ( ! config.menuUrl ) {
+			return;
+		}
+		if ( debounceTimer !== null ) {
+			window.clearTimeout( debounceTimer );
+		}
+		debounceTimer = window.setTimeout( () => {
+			debounceTimer = null;
+			void refresh();
+		}, MENU_REFRESH_DEBOUNCE_MS ) as unknown as number;
+	} );
+
+	return refresh;
 }
 
 // Initialize when DOM is ready.

@@ -59,12 +59,54 @@ export interface DockItem {
 	submenu: { title: string; url: string }[];
 	/** Whether this admin page supports multiple open windows. */
 	multi?: boolean;
+	/**
+	 * Which rail the item was routed to by the PHP-side heuristic
+	 * (`wpdm_dock_placement`). `'dock'` = core WP menus on the
+	 * left-edge dock; `'taskbar'` = plugin-contributed top-level
+	 * menus on the bottom taskbar. Currently informational — the
+	 * shell splits items by this field in `desktop.ts` before
+	 * constructing the two Dock instances.
+	 */
+	placement?: 'dock' | 'taskbar';
+}
+
+/** Which edge of the screen the rail hugs. Drives tooltip anchoring + modifier CSS. */
+export type DockOrientation = 'left' | 'bottom';
+
+/**
+ * Stable 32-bit-ish string hash mapped into the hue circle. Used by
+ * the letter-badge icon fallback so a plugin title like "Jetpack"
+ * always paints the same color on the same machine and between
+ * reloads — visual identity without the plugin having to ship art.
+ *
+ * The "djb2 lite" variant — good enough for UI differentiation, not
+ * suitable for anything security-adjacent. Empty input returns a
+ * neutral blue-gray so the badge never flashes a placeholder hue.
+ */
+export function hashTitleToHue( title: string ): number {
+	if ( ! title ) {
+		return 214; // Neutral blue-gray.
+	}
+	// djb2 with `hash * 33 + c`. Math.imul keeps the multiplication
+	// inside int32 range without needing bitwise ops (the WP ESLint
+	// preset disallows those), preserving enough entropy that
+	// realistic plugin titles spread around the hue circle.
+	let hash = 5381;
+	for ( let i = 0; i < title.length; i++ ) {
+		hash = Math.imul( hash, 33 ) + title.charCodeAt( i );
+	}
+	return ( ( hash % 360 ) + 360 ) % 360;
 }
 
 /**
  * Dock class.
  *
- * Manages the dock element, its icons, tooltips, and interaction with the window manager.
+ * Manages the dock element, its icons, tooltips, and interaction with
+ * the window manager. Rendered either on the left edge (core WP
+ * menus — the classic dock) or along the bottom (installed-plugin
+ * menus — the macOS-style taskbar), controlled by `orientation`. The
+ * two instances share all of this class's logic; only CSS classes +
+ * tooltip positioning differ.
  */
 export class Dock {
 	private container: HTMLElement;
@@ -73,6 +115,7 @@ export class Dock {
 	private tooltip: HTMLElement;
 	private itemElements: Map<string, HTMLElement> = new Map();
 	private adminUrl: string;
+	private orientation: DockOrientation;
 	private systemItems: SystemDockItem[] = [];
 	private systemItemElements: Map<string, HTMLElement> = new Map();
 	private systemSeparator: HTMLElement | null = null;
@@ -82,20 +125,75 @@ export class Dock {
 		windowManager: WindowManager,
 		items: DockItem[],
 		adminUrl: string,
+		orientation: DockOrientation = 'left',
 	) {
 		this.container = container;
 		this.windowManager = windowManager;
 		this.items = items;
 		this.adminUrl = adminUrl;
+		this.orientation = orientation;
+
+		// Mark the container with the orientation modifier so CSS can
+		// flip flex-direction, indicator-dot position, etc. The base
+		// `.wp-desktop-dock` class still applies — shared styling
+		// stays shared, only the deltas live behind the modifier.
+		this.container.classList.add(
+			orientation === 'bottom'
+				? 'wp-desktop-dock--horizontal'
+				: 'wp-desktop-dock--vertical',
+		);
 
 		// Create tooltip element (shared across all items).
 		this.tooltip = document.createElement( 'div' );
 		this.tooltip.className = 'wp-desktop-dock__tooltip';
 		this.tooltip.setAttribute( 'role', 'tooltip' );
+		if ( orientation === 'bottom' ) {
+			this.tooltip.classList.add( 'wp-desktop-dock__tooltip--above' );
+		}
 		document.body.appendChild( this.tooltip );
 
 		this.render();
 		this.bindWindowEvents();
+	}
+
+	/**
+	 * Replace the menu-derived tile list with a fresh one, preserving
+	 * any JS-registered system tiles (OS Settings today, Jorvy /
+	 * widgets later). Used by the live menu-refresh path: after a
+	 * plugin is activated or deactivated, the shell refetches the
+	 * split payload from `/wp-desktop/v1/menu` and calls this on
+	 * both rails so the dock + taskbar repaint without a tab reload.
+	 *
+	 * Old menu tiles are removed from both the DOM and the lookup
+	 * map; new tiles are inserted before the system separator (or
+	 * appended at the end if none exists yet), so the menu-items →
+	 * hairline → system-items ordering stays intact. Active-state
+	 * classes are re-computed once the new tiles are in place so
+	 * window indicators survive the swap.
+	 *
+	 * @param items New DockItem list. Pass `[]` to clear everything
+	 *              menu-derived — common when the last plugin on the
+	 *              taskbar is deactivated.
+	 */
+	public replaceItems( items: DockItem[] ): void {
+		for ( const el of this.itemElements.values() ) {
+			el.remove();
+		}
+		this.itemElements.clear();
+
+		this.items = items;
+
+		for ( const item of items ) {
+			const btn = this.createItemButton( item );
+			this.itemElements.set( item.id, btn );
+			if ( this.systemSeparator ) {
+				this.container.insertBefore( btn, this.systemSeparator );
+			} else {
+				this.container.appendChild( btn );
+			}
+		}
+
+		this.updateActiveStates();
 	}
 
 	/**
@@ -153,7 +251,7 @@ export class Dock {
 		primary.setAttribute( 'type', 'button' );
 		primary.setAttribute( 'aria-label', item.title );
 
-		primary.appendChild( this.createIcon( item.icon ) );
+		primary.appendChild( this.resolveIcon( item.icon, item.title ) );
 		primary.addEventListener( 'click', () => item.onOpen() );
 
 		tile.appendChild( primary );
@@ -185,7 +283,7 @@ export class Dock {
 		primary.setAttribute( 'type', 'button' );
 		primary.setAttribute( 'aria-label', item.title );
 
-		const iconEl = this.createIcon( item.icon );
+		const iconEl = this.resolveIcon( item.icon, item.title );
 		primary.appendChild( iconEl );
 
 		if ( item.badge > 0 ) {
@@ -240,18 +338,17 @@ export class Dock {
 			// without an immediate click, so this is effectively
 			// desktop-only by nature.
 			addBtn.addEventListener( 'pointerenter', () => {
-				const rect = addBtn.getBoundingClientRect();
-				// translators: %s is the admin-page title (e.g., "Posts")
-				this.tooltip.textContent = sprintf( __( 'Open new %s' ), item.title );
-				this.tooltip.style.top = `${ rect.top + rect.height / 2 - 14 }px`;
+				this.positionTooltip(
+					addBtn,
+					// translators: %s is the admin-page title (e.g., "Posts")
+					sprintf( __( 'Open new %s' ), item.title ),
+				);
 				this.tooltip.classList.add( 'wp-desktop-dock__tooltip--visible' );
 			} );
 			addBtn.addEventListener( 'pointerleave', ( e: PointerEvent ) => {
 				const next = e.relatedTarget as Node | null;
 				if ( next && tile.contains( next ) ) {
-					const rect = tile.getBoundingClientRect();
-					this.tooltip.textContent = item.title;
-					this.tooltip.style.top = `${ rect.top + rect.height / 2 - 14 }px`;
+					this.positionTooltip( tile, item.title );
 					return;
 				}
 				this.tooltip.classList.remove( 'wp-desktop-dock__tooltip--visible' );
@@ -266,9 +363,23 @@ export class Dock {
 	}
 
 	/**
-	 * Create the icon element based on the icon type.
+	 * Resolve a registered icon value into a DOM element.
+	 *
+	 * Priority: dashicons class → inline SVG data URI → image URL →
+	 * letter badge derived from the item's title. The letter fallback is
+	 * important for the taskbar: plugin authors routinely register
+	 * top-level menus with `add_menu_page()` and omit the icon argument
+	 * (defaulting to `'div'` or empty), which would otherwise render as
+	 * an indistinguishable wall of generic wrenches. A colored letter
+	 * tile gives each plugin a stable, unique-ish visual identity with
+	 * zero plugin-side effort — the hue derives deterministically from
+	 * the title so the same plugin always gets the same color.
+	 *
+	 * @param icon  The icon value from the menu entry.
+	 * @param title Human-readable title, used when falling back to a
+	 *              letter badge.
 	 */
-	private createIcon( icon: string ): HTMLElement {
+	private resolveIcon( icon: string, title: string ): HTMLElement {
 		if ( icon.startsWith( 'dashicons-' ) ) {
 			// Dashicon.
 			const el = document.createElement( 'span' );
@@ -291,7 +402,12 @@ export class Dock {
 				el.setAttribute( 'aria-hidden', 'true' );
 				return el;
 			}
-			// Invalid base64 — fall through to generic icon.
+			// Malformed SVG data URI — short-circuit straight to the
+			// letter badge. Falling through would match the generic
+			// "treat as image URL" branch below and render a broken
+			// <img> (the browser would try to load the bogus data
+			// URL, fail, and show a broken-image glyph).
+			return this.createLetterBadge( title );
 		}
 
 		if ( icon && icon !== 'none' && icon !== 'div' ) {
@@ -304,27 +420,79 @@ export class Dock {
 			return img;
 		}
 
-		// Fallback: generic admin icon.
+		// Letter-badge fallback — first letter of the title on a
+		// deterministically-hued tile.
+		return this.createLetterBadge( title );
+	}
+
+	/**
+	 * Create a letter-badge icon — a rounded square tinted with a
+	 * deterministic hue derived from the title, displaying the first
+	 * letter of the title. Mirrors the "app icon placeholder" look
+	 * macOS uses when an app ships without artwork.
+	 *
+	 * The title always drives both the letter and the hue — same plugin,
+	 * same color across reloads. An empty title falls through to a `?`
+	 * on a neutral gray tile, but the menu builder upstream guards
+	 * against empty titles, so this is a defensive branch.
+	 */
+	private createLetterBadge( title: string ): HTMLElement {
 		const el = document.createElement( 'span' );
-		el.className = 'dashicons dashicons-admin-generic';
+		el.className = 'wp-desktop-dock__item-letter';
 		el.setAttribute( 'aria-hidden', 'true' );
+
+		const trimmed = title.trim();
+		// Use the first "letter" — handle accented chars, emoji, etc.
+		// by grabbing the first code point rather than the first char.
+		// Array.from iterates by code point, so [0] is always valid
+		// for non-empty strings.
+		const firstCodePoint = trimmed ? Array.from( trimmed )[ 0 ] : '?';
+		el.textContent = firstCodePoint.toUpperCase();
+
+		const hue = hashTitleToHue( trimmed );
+		// Two-tone gradient for a tiny bit of depth — same hue, two
+		// lightnesses. Keeps the palette harmonious while varying hue
+		// across plugins.
+		el.style.background = `linear-gradient(135deg, hsl(${ hue } 62% 55%), hsl(${ ( hue + 24 ) % 360 } 58% 42%))`;
+
 		return el;
 	}
 
 	/**
-	 * Bind tooltip show/hide on hover.
+	 * Bind tooltip show/hide on hover. Tooltip anchor differs per
+	 * orientation: left dock → vertically centered on the tile, placed
+	 * to its right via CSS; bottom taskbar → horizontally centered,
+	 * placed above the tile via CSS. We set the relevant coordinate
+	 * inline each enter; the CSS takes care of the rest.
 	 */
 	private bindTooltip( el: HTMLElement, text: string ): void {
 		el.addEventListener( 'pointerenter', () => {
-			const rect = el.getBoundingClientRect();
-			this.tooltip.textContent = text;
-			this.tooltip.style.top = `${ rect.top + rect.height / 2 - 14 }px`;
+			this.positionTooltip( el, text );
 			this.tooltip.classList.add( 'wp-desktop-dock__tooltip--visible' );
 		} );
 
 		el.addEventListener( 'pointerleave', () => {
 			this.tooltip.classList.remove( 'wp-desktop-dock__tooltip--visible' );
 		} );
+	}
+
+	/**
+	 * Write the tooltip text + anchor coordinate for `el`. Split out
+	 * because the multi-instance chip's pointerenter handler also
+	 * needs to anchor to a specific element (the chip, not the tile).
+	 */
+	private positionTooltip( el: HTMLElement, text: string ): void {
+		const rect = el.getBoundingClientRect();
+		this.tooltip.textContent = text;
+		if ( this.orientation === 'bottom' ) {
+			// Horizontal centering; CSS handles the vertical offset.
+			this.tooltip.style.left = `${ rect.left + rect.width / 2 }px`;
+			this.tooltip.style.top = `${ rect.top - 14 }px`;
+		} else {
+			// Vertical centering; CSS handles the horizontal offset.
+			this.tooltip.style.top = `${ rect.top + rect.height / 2 - 14 }px`;
+			this.tooltip.style.left = '';
+		}
 	}
 
 	/**

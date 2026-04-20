@@ -103,6 +103,75 @@ export interface WindowConfig {
 }
 
 /**
+ * Canonical shape for a single entry displayed in a monitor /
+ * observability widget. Any plugin that wants to contribute an
+ * entry to monitor widgets applies a `wp-desktop.monitor.entry`
+ * filter returning a mutated `MonitorEntry` or adds one to the
+ * aggregated list. By converging every plugin on this shape we
+ * avoid the "every monitor widget invents its own schema" fragmentation.
+ *
+ * Optional fields are all present so callers can filter / group
+ * consistently: a pure console-log entry leaves `status` / `method`
+ * / `url` unset, while a failed XHR fills them all.
+ *
+ * @public
+ * @since 0.10.0
+ */
+export interface MonitorEntry {
+	/** Unix timestamp in milliseconds (Date.now()). */
+	ts: number;
+	/** Classification tag — used for coloring / grouping in monitor UIs. */
+	type: 'log' | 'warn' | 'error' | 'network' | 'shell-error' | 'iframe-error' | string;
+	/** Human-readable summary. Max ~240 chars in UI — callers may truncate. */
+	message: string;
+	/**
+	 * Free-form source label: window id, widget id, plugin slug,
+	 * file:line, etc. Monitors group by this when rendering lists.
+	 */
+	source?: string;
+	/** HTTP status (network entries). 0 when the request never completed. */
+	status?: number;
+	/** HTTP method (network entries). Uppercase. */
+	method?: string;
+	/** URL (network entries). Cross-origin is fine — monitors decide whether to render. */
+	url?: string;
+	/** Duration in milliseconds (network entries). */
+	duration?: number;
+	/** True when the entry represents a failure — network non-2xx, caught exception. */
+	failed?: boolean;
+	/** Arbitrary extra context. Kept untyped on purpose — MonitorEntry should stay small. */
+	extra?: Record<string, unknown>;
+}
+
+/**
+ * Live geometry + state snapshot for a single window, returned by
+ * `WindowManager.getVisibleRects()`.
+ *
+ * The shape is intentionally small and non-serializable (it carries
+ * a live `HTMLElement` reference) — it exists for runtime overlays
+ * and collision-aware wallpaper plugins, not for persistence. For the
+ * persisted shape see {@link WindowSnapshot}.
+ *
+ * @public
+ */
+export interface VisibleWindowRect {
+	/** Unique window id — matches `Window.id`. */
+	windowId: string;
+	/**
+	 * Current geometry in desktop-area coordinates (matches the
+	 * window element's inline-style `left` / `top` / `width` /
+	 * `height`). For windows on a suppressed (non-active) virtual
+	 * desktop this still reflects the geometry the window would
+	 * paint at once its desktop becomes active.
+	 */
+	rect: { x: number; y: number; width: number; height: number };
+	/** The window's current state. Callers typically filter on this. */
+	state: WindowState;
+	/** Live reference to the outer window element. */
+	element: HTMLElement;
+}
+
+/**
  * Serialized window state for persistence.
  */
 export interface WindowSnapshot {
@@ -140,6 +209,14 @@ export interface DockItemConfig {
 	 * false. Filterable via `wp_desktop_dock_item_multi`.
 	 */
 	multi?: boolean;
+	/**
+	 * Server-side routing hint: `'dock'` for core WordPress menus
+	 * rendered on the left-edge dock, `'taskbar'` for plugin-
+	 * contributed top-level menus rendered in the bottom taskbar.
+	 * Derived by `wpdm_dock_placement` in PHP; filterable via the
+	 * `wp_desktop_dock_placement` hook.
+	 */
+	placement?: 'dock' | 'taskbar';
 }
 
 /**
@@ -209,14 +286,35 @@ export interface DesktopConfig {
 	adminUrl: string;
 	/** The active color scheme slug. */
 	colorScheme: string;
-	/** Dock items derived from the admin menu. */
+	/**
+	 * Dock items derived from the admin menu and filtered to CORE
+	 * WordPress pages (Dashboard, Posts, Plugins, Users, Settings,
+	 * and CPTs). Rendered on the left-edge dock.
+	 */
 	dockItems: DockItemConfig[];
+	/**
+	 * Plugin-contributed top-level menus (anything routed through
+	 * `admin.php?page=*`). Rendered in the bottom taskbar, macOS-
+	 * style. Split from `dockItems` by `wpdm_dock_placement` in PHP
+	 * with the `wp_desktop_dock_placement` filter as an escape hatch
+	 * for plugins that want to override the default heuristic.
+	 */
+	taskbarItems: DockItemConfig[];
 	/** Previously saved session (may be empty on first run). */
 	session: Session;
 	/** REST endpoint for reading/writing the session. */
 	sessionUrl: string;
 	/** REST endpoint for media uploads (wp/v2/media). */
 	mediaUrl: string;
+	/**
+	 * REST endpoint returning the live admin-menu split
+	 * (`{ dockItems, taskbarItems }`). The shell calls it after the
+	 * chromeless bridge signals `wp-desktop-plugins-changed` so
+	 * newly-activated plugins surface on the taskbar without a full
+	 * tab reload. Same payload shape as `dockItems` + `taskbarItems`
+	 * at boot.
+	 */
+	menuUrl: string;
 	/** REST endpoint for saving the default-window preference. */
 	defaultWindowUrl: string;
 	/**

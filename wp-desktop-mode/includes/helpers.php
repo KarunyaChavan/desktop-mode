@@ -259,13 +259,14 @@ function wpdm_build_dock_items() {
 		}
 
 		$dock_item = array(
-			'id'      => sanitize_key( $item[5] ?? $item[2] ),
-			'title'   => $title,
-			'icon'    => $icon,
-			'url'     => $url,
-			'badge'   => $badge,
-			'submenu' => $sub_items,
-			'multi'   => wpdm_dock_item_is_multi( $item[2] ),
+			'id'        => sanitize_key( $item[5] ?? $item[2] ),
+			'title'     => $title,
+			'icon'      => $icon,
+			'url'       => $url,
+			'badge'     => $badge,
+			'submenu'   => $sub_items,
+			'multi'     => wpdm_dock_item_is_multi( $item[2] ),
+			'placement' => wpdm_dock_placement( $item[2] ),
 		);
 
 		/**
@@ -398,6 +399,203 @@ function wpdm_dock_item_is_multi( $menu_slug ) {
 	 * @param string $menu_slug The menu slug (e.g. `edit.php?post_type=page`).
 	 */
 	return (bool) apply_filters( 'wp_desktop_dock_item_multi', $multi, $menu_slug );
+}
+
+/**
+ * Returns true when `$menu_slug` maps to a first-party WordPress
+ * Core admin menu item (Dashboard, Posts, Pages, Media, Settings,
+ * etc.), false otherwise — the caller uses the answer to route the
+ * item to the left dock (core) vs the bottom taskbar (plugin).
+ *
+ * The rule:
+ *
+ *   1. Any known core admin filename (index.php, edit.php, upload.php,
+ *      themes.php, plugins.php, users.php, tools.php, options-*.php,
+ *      edit-comments.php, etc.) is Core.
+ *   2. Any Custom Post Type route (`edit.php?post_type=…`) is Core —
+ *      CPTs are content-oriented even when a plugin registers them,
+ *      so they belong next to Posts / Pages in the dock.
+ *   3. Every `admin.php?page=*` route is Plugin — that's WP's
+ *      universal "a plugin registered its own top-level admin route"
+ *      signal.
+ *   4. Anything else is treated as Plugin (safer default — plugins
+ *      with custom top-level files can still opt in via the filter
+ *      below).
+ *
+ * Plugins + site admins can override any answer via
+ * `wp_desktop_dock_placement`:
+ *
+ * ```php
+ * // Keep Jetpack on the left dock:
+ * add_filter( 'wp_desktop_dock_placement', function ( $placement, $slug ) {
+ *     return 'jetpack' === $slug ? 'dock' : $placement;
+ * }, 10, 2 );
+ * ```
+ *
+ * @since 0.9.0
+ *
+ * @param string $menu_slug Menu item slug (e.g. `edit.php`, `edit.php?post_type=foo`, `woocommerce`).
+ * @return bool True when the slug is a core admin page.
+ */
+function wpdm_is_core_menu_slug( $menu_slug ) {
+	$slug = (string) $menu_slug;
+	$base = strtok( $slug, '?' );
+
+	// Known top-level core admin files. Stable across WP versions —
+	// additions happen maybe once a release, removals almost never.
+	$core_files = array(
+		'index.php',              // Dashboard
+		'edit.php',               // Posts (+ CPTs via ?post_type=)
+		'edit-comments.php',      // Comments
+		'upload.php',             // Media
+		'edit-tags.php',          // Taxonomies
+		'term.php',               // Single-term edit
+		'post-new.php',           // New post form
+		'post.php',               // Edit-post form
+		'themes.php',             // Appearance
+		'nav-menus.php',          // Menus (Appearance > Menus)
+		'widgets.php',            // Widgets (Appearance > Widgets)
+		'customize.php',          // Customizer
+		'plugins.php',            // Plugins
+		'plugin-install.php',     // Plugins > Add New
+		'plugin-editor.php',      // Plugins > Editor
+		'users.php',              // Users
+		'user-new.php',           // Users > Add New
+		'profile.php',            // Profile
+		'user-edit.php',          // Edit another user
+		'tools.php',              // Tools
+		'import.php',             // Tools > Import
+		'export.php',             // Tools > Export
+		'site-health.php',        // Tools > Site Health
+		'export-personal-data.php',
+		'erase-personal-data.php',
+		'options-general.php',    // Settings
+		'options-writing.php',    // Settings > Writing
+		'options-reading.php',    // Settings > Reading
+		'options-discussion.php', // Settings > Discussion
+		'options-media.php',      // Settings > Media
+		'options-permalink.php',  // Settings > Permalinks
+		'options-privacy.php',    // Settings > Privacy
+		'link-manager.php',       // Link manager (legacy)
+		'update-core.php',        // Dashboard > Updates
+	);
+
+	return in_array( $base, $core_files, true );
+}
+
+/**
+ * Resolve the dock placement for a given menu slug. Returns one of
+ * three values:
+ *
+ *   - `'dock'`    — render on the left-edge rail (default for core
+ *                   WordPress pages: Dashboard, Posts, Plugins,
+ *                   Users, Settings, CPTs, taxonomies, …).
+ *   - `'taskbar'` — render on the bottom-edge taskbar (default for
+ *                   everything else — installed plugins routed
+ *                   through `admin.php?page=*`).
+ *   - `'hidden'`  — don't render this item anywhere in the desktop
+ *                   shell. The underlying admin menu entry still
+ *                   exists server-side; this only affects dock /
+ *                   taskbar rendering.
+ *
+ * Plugins + site admins can override any answer via the
+ * `wp_desktop_dock_placement` filter. A plugin that wants to
+ * completely opt out of the shell chrome (e.g. a utility plugin that
+ * only registers sub-screens and shouldn't take up a tile) returns
+ * `'hidden'` for its slug; one that wants first-class billing
+ * returns `'dock'`; the default returns `'taskbar'`.
+ *
+ * @since 0.9.0
+ *
+ * @param string $menu_slug The menu slug (e.g. `edit.php`, `woocommerce`).
+ * @return string `'dock'`, `'taskbar'`, or `'hidden'`.
+ */
+function wpdm_dock_placement( $menu_slug ) {
+	$placement = wpdm_is_core_menu_slug( $menu_slug ) ? 'dock' : 'taskbar';
+
+	/**
+	 * Filter the dock placement for a specific menu item.
+	 *
+	 * Return `'dock'` to show the item in the left-edge core dock,
+	 * `'taskbar'` to show it in the bottom plugin taskbar, or
+	 * `'hidden'` to suppress it from both rails entirely. Any other
+	 * value coerces to the default heuristic answer — a defensive
+	 * guard so a misbehaving filter can't corrupt the split with
+	 * `null` / `false` / arbitrary strings.
+	 *
+	 * @since 0.9.0
+	 *
+	 * @param string $placement Default placement — `'dock'` for core
+	 *                          items, `'taskbar'` for everything else.
+	 * @param string $menu_slug The menu slug triggering the lookup.
+	 */
+	$filtered = apply_filters( 'wp_desktop_dock_placement', $placement, $menu_slug );
+	if ( 'dock' === $filtered || 'taskbar' === $filtered || 'hidden' === $filtered ) {
+		return $filtered;
+	}
+	return $placement;
+}
+
+/**
+ * Assemble the split menu payload consumed by the shell.
+ *
+ * Runs the full dock-builder, then partitions the items into the two
+ * rails by each item's `placement` key. Items with `placement` of
+ * `'hidden'` are dropped entirely — plugins that want to stay out of
+ * the desktop chrome (either because they're background-only tools
+ * or because they own their own surface) filter themselves to
+ * `'hidden'` and disappear from both rails without their server-side
+ * menu entry going away.
+ *
+ * Returns the same shape the boot-time shell config exposes as
+ * `dockItems` + `taskbarItems`, so the client can swap the `config`
+ * values in place after a live refresh (e.g. after plugin activation
+ * / deactivation).
+ *
+ * Extracted out of `includes/render.php` so both the initial PHP
+ * localize AND the `/wp-desktop/v1/menu` REST endpoint read from a
+ * single source of truth — any drift would desync the live refresh.
+ *
+ * @since 0.9.0
+ *
+ * @return array{dockItems: array[], taskbarItems: array[]} Split payload.
+ */
+function wpdm_build_menu_payload() {
+	$all = wpdm_build_dock_items();
+
+	// Hidden items disappear from both rails. The partition below
+	// only ever sees visible items.
+	$visible = array_values(
+		array_filter(
+			$all,
+			static function ( $item ) {
+				return 'hidden' !== ( $item['placement'] ?? 'dock' );
+			}
+		)
+	);
+
+	$dock = array_values(
+		array_filter(
+			$visible,
+			static function ( $item ) {
+				return 'taskbar' !== ( $item['placement'] ?? 'dock' );
+			}
+		)
+	);
+
+	$taskbar = array_values(
+		array_filter(
+			$visible,
+			static function ( $item ) {
+				return 'taskbar' === ( $item['placement'] ?? 'dock' );
+			}
+		)
+	);
+
+	return array(
+		'dockItems'    => $dock,
+		'taskbarItems' => $taskbar,
+	);
 }
 
 /**

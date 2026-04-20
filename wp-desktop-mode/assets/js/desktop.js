@@ -45,6 +45,68 @@ var wpDesktop = function(exports) {
     /** Action mirroring document.visibilitychange for active canvas wallpapers. */
     WALLPAPER_VISIBILITY: "wp-desktop.wallpaper.visibility",
     // ------------------------------------------------------------------
+    // Observability — iframe errors, iframe network, shell-side errors,
+    // monitor entry aggregation. Designed for dashboard / debug widget
+    // plugins that want genuine admin observability (Gutenberg save
+    // failures, admin-ajax 500s, plugin exceptions) rather than just the
+    // shell's own console-error surface.
+    // ------------------------------------------------------------------
+    /**
+     * Action, fires when a chromeless iframe's `error` or
+     * `unhandledrejection` handler catches an exception. Payload: `{
+     * windowId: string, kind: 'error' | 'unhandledrejection', message:
+     * string, filename: string | null, lineno: number | null, colno:
+     * number | null, stack: string | null }`. Origin-filtered at the
+     * parent shell; cross-origin iframe errors never reach here.
+     */
+    IFRAME_ERROR: "wp-desktop.iframe.error",
+    /**
+     * Action, fires when a `fetch` or `XMLHttpRequest` inside a
+     * chromeless iframe completes (success OR failure). Payload: `{
+     * windowId: string, method: string, url: string, status: number,
+     * duration: number, failed: boolean }`. Subscribers get a faithful
+     * view of admin-ajax + REST calls that previously never left the
+     * iframe boundary. `status === 0` indicates a network failure with
+     * no response received.
+     */
+    IFRAME_NETWORK_COMPLETED: "wp-desktop.iframe.network-completed",
+    /**
+     * Action, fires when one of the shell's own try/catch barriers
+     * catches an exception. Payload: `{ scope:
+     * 'widget-mount' | 'widget-teardown' | 'window-open' | 'wallpaper-mount' |
+     * 'wallpaper-teardown' | 'session-save' | 'menu-refresh' | string,
+     * id?: string, error: unknown }`. Paired with the existing
+     * `console.error` calls — a monitor widget can surface these as
+     * first-class entries.
+     */
+    SHELL_ERROR: "wp-desktop.shell.error",
+    /**
+     * Filter, applies to a `MonitorEntry` before a monitor widget
+     * renders it. Plugins can mutate the entry (rewrite the message,
+     * add `extra` fields) or return `null` to suppress it. Used by
+     * monitor widgets to converge every plugin on the same shape —
+     * see `MonitorEntry` in `src/types.ts`.
+     */
+    MONITOR_ENTRY: "wp-desktop.monitor.entry",
+    /**
+     * Filter, applies to the list of "solid" surfaces wallpapers
+     * should consider for collision / accumulation effects (snow
+     * piling, leaves settling, rain splash). Seeded by the shell
+     * with: every visible (non-minimized) window's top edge; the
+     * desktop-area floor; the taskbar top when present; the dock's
+     * inline edge; and every mounted widget card's top edge.
+     *
+     * Plugins that own their own DOM (e.g. floating pickers,
+     * custom overlays) can push additional surfaces so snow
+     * accumulates on them too.
+     *
+     * Each entry is a `WallpaperSurface` — see
+     * `src/wallpapers/surfaces.ts` for the shape. Rects are in
+     * viewport coordinates (clientX / clientY), matching what a
+     * canvas mounted inside `#wp-desktop-wallpaper` reads.
+     */
+    WALLPAPER_SURFACES: "wp-desktop.wallpaper.surfaces",
+    // ------------------------------------------------------------------
     // Window lifecycle actions. All payloads share a `windowId: string`
     // field; additional fields are documented per-hook in the JS
     // reference. These mirror the existing `wp-desktop-window-*`
@@ -53,6 +115,19 @@ var wpDesktop = function(exports) {
     // ------------------------------------------------------------------
     /** Action, fires when a window is added to the stack. */
     WINDOW_OPENED: "wp-desktop.window.opened",
+    /**
+     * Action, fires BEFORE the window's element is detached from the
+     * DOM but AFTER the manager has already removed it from the stack.
+     * Payload: `{ windowId: string, element: HTMLElement }`.
+     *
+     * Use this for cleanup that needs a reference to the live
+     * element (removing anchored snow, wallpaper particles pinned to
+     * window tops, measurement caches keyed by element). `WINDOW_CLOSED`
+     * fires immediately after and only carries the id, which means
+     * subscribers would otherwise have to re-query the DOM — by then
+     * the element is gone, so they can't match at all.
+     */
+    WINDOW_CLOSING: "wp-desktop.window.closing",
     /** Action, fires when a window is removed from the stack. */
     WINDOW_CLOSED: "wp-desktop.window.closed",
     /** Action, fires when focus changes to a different window. */
@@ -69,6 +144,25 @@ var wpDesktop = function(exports) {
     WINDOW_FULLSCREEN_ENTERED: "wp-desktop.window.fullscreen-entered",
     /** Action, fires when a window exits fullscreen / focus mode. */
     WINDOW_FULLSCREEN_EXITED: "wp-desktop.window.fullscreen-exited",
+    /**
+     * Action, fires at most once per animation frame during an
+     * active drag or resize with the live geometry. Payload: `{
+     * windowId: string, x: number, y: number, width: number,
+     * height: number, state: WindowState, phase: 'drag' | 'resize' }`.
+     *
+     * Intended for per-frame collision-aware wallpapers (snow piling
+     * on window tops, rain splash on edges) that would otherwise
+     * poll `getBoundingClientRect` every rAF. Coalesced via
+     * `requestAnimationFrame` so a pointermove storm collapses to
+     * one fire per paint — matches the cadence a wallpaper's own
+     * ticker runs at.
+     *
+     * NOT fired at drag/resize end — `WINDOW_DRAG_END` /
+     * `WINDOW_RESIZE_END` handle the settled geometry. Subscribers
+     * that only want the final position should listen to those
+     * instead.
+     */
+    WINDOW_BOUNDS_CHANGED: "wp-desktop.window.bounds-changed",
     /** Action, fires at drag-end with the final `{ x, y }` position. */
     WINDOW_MOVED: "wp-desktop.window.moved",
     /** Action, fires at resize-end with the final `{ width, height }`. */
@@ -834,7 +928,7 @@ var wpDesktop = function(exports) {
     }
     return { __wpdCss: true, sheet: null, cssText: text };
   }
-  const styles$8 = css`
+  const styles$6 = css`
 	:host {
 		display: inline-flex;
 	}
@@ -934,7 +1028,7 @@ var wpDesktop = function(exports) {
     }
   };
   _WpdWindowButton.props = ["icon", "active", "danger"];
-  _WpdWindowButton.styles = [styles$8];
+  _WpdWindowButton.styles = [styles$6];
   let WpdWindowButton = _WpdWindowButton;
   defineComponent("wpd-window-button", WpdWindowButton);
   const menuStyles = css`
@@ -1089,7 +1183,7 @@ var wpDesktop = function(exports) {
   _WpdMenuItem.styles = [menuItemStyles];
   let WpdMenuItem = _WpdMenuItem;
   defineComponent("wpd-menu-item", WpdMenuItem);
-  const styles$7 = css`
+  const styles$4 = css`
 	:host {
 		display: inline-flex;
 	}
@@ -1188,7 +1282,7 @@ var wpDesktop = function(exports) {
     }
   };
   _WpdTabChip.props = ["variant"];
-  _WpdTabChip.styles = [styles$7];
+  _WpdTabChip.styles = [styles$4];
   let WpdTabChip = _WpdTabChip;
   defineComponent("wpd-tab-chip", WpdTabChip);
   const IDENTITY_PARAMS = ["post_type", "page", "taxonomy"];
@@ -1224,7 +1318,7 @@ var wpDesktop = function(exports) {
   function sanitizeClassName(value) {
     return value.replace(/[^a-zA-Z0-9_-]/g, "");
   }
-  function urlMatchKey(url) {
+  function urlMatchKey$1(url) {
     try {
       const parsed = new URL(url, window.location.origin);
       parsed.searchParams.delete("wp_desktop");
@@ -1367,7 +1461,7 @@ var wpDesktop = function(exports) {
       tabs.setAttribute("role", "tablist");
       tabs.setAttribute("aria-label", sprintf(__("%s sub-pages"), config.title));
       if (config.submenu && config.submenu.length > 0) {
-        const initialKey = urlMatchKey(config.url);
+        const initialKey = urlMatchKey$1(config.url);
         for (const sub of config.submenu) {
           const tab = document.createElement("button");
           tab.className = "wp-desktop-window__tab";
@@ -1376,7 +1470,7 @@ var wpDesktop = function(exports) {
           tab.setAttribute("role", "tab");
           tab.dataset.url = sub.url;
           tab.textContent = sub.title;
-          if (urlMatchKey(sub.url) === initialKey) {
+          if (urlMatchKey$1(sub.url) === initialKey) {
             tab.classList.add("wp-desktop-window__tab--active");
             tab.setAttribute("aria-selected", "true");
           } else {
@@ -1572,10 +1666,10 @@ var wpDesktop = function(exports) {
       }
       return;
     }
-    const activeKey = urlMatchKey(currentUrl);
+    const activeKey = urlMatchKey$1(currentUrl);
     for (const tab of submenuTabs) {
       const tabUrl = tab.dataset.url;
-      const isActive = !!tabUrl && urlMatchKey(tabUrl) === activeKey;
+      const isActive = !!tabUrl && urlMatchKey$1(tabUrl) === activeKey;
       tab.classList.toggle("wp-desktop-window__tab--active", isActive);
       tab.setAttribute("aria-selected", isActive ? "true" : "false");
     }
@@ -1848,6 +1942,27 @@ var wpDesktop = function(exports) {
       const label = typeof data.label === "string" && data.label !== "" ? data.label : data.url;
       addExternalTab(win, data.url, label);
     }
+    if (data.type === "wp-desktop-iframe-error") {
+      doAction(HOOKS.IFRAME_ERROR, {
+        windowId: win.id,
+        kind: data.kind === "unhandledrejection" ? "unhandledrejection" : "error",
+        message: typeof data.message === "string" ? data.message : "",
+        filename: typeof data.filename === "string" ? data.filename : null,
+        lineno: typeof data.lineno === "number" ? data.lineno : null,
+        colno: typeof data.colno === "number" ? data.colno : null,
+        stack: typeof data.stack === "string" ? data.stack : null
+      });
+    }
+    if (data.type === "wp-desktop-iframe-network") {
+      doAction(HOOKS.IFRAME_NETWORK_COMPLETED, {
+        windowId: win.id,
+        method: typeof data.method === "string" ? data.method : "GET",
+        url: typeof data.url === "string" ? data.url : "",
+        status: typeof data.status === "number" ? data.status : 0,
+        duration: typeof data.duration === "number" ? data.duration : 0,
+        failed: !!data.failed
+      });
+    }
   }
   function addScreenMetaButtons(win, panels) {
     const container = win.element.querySelector(".wp-desktop-window__screen-meta");
@@ -1981,8 +2096,8 @@ var wpDesktop = function(exports) {
     let isDefault = false;
     if (pref && pref.enabled && typeof pref.url === "string") {
       try {
-        const currentKey = urlMatchKey(win.getCurrentUrl());
-        const prefKey = urlMatchKey(pref.url);
+        const currentKey = urlMatchKey$1(win.getCurrentUrl());
+        const prefKey = urlMatchKey$1(pref.url);
         isDefault = currentKey === prefKey;
       } catch {
         isDefault = false;
@@ -1993,6 +2108,39 @@ var wpDesktop = function(exports) {
     } else {
       item.removeAttribute("checked");
     }
+  }
+  function makeBoundsEmitter(win, phase) {
+    let pending2 = false;
+    return () => {
+      if (pending2) {
+        return;
+      }
+      pending2 = true;
+      requestAnimationFrame(() => {
+        pending2 = false;
+        if (phase === "drag" && !win._isDragging) {
+          return;
+        }
+        if (phase === "resize" && !win._isResizing) {
+          return;
+        }
+        if (win._isDestroyed || !win.element.isConnected) {
+          return;
+        }
+        try {
+          doAction(HOOKS.WINDOW_BOUNDS_CHANGED, {
+            windowId: win.id,
+            x: win.element.offsetLeft,
+            y: win.element.offsetTop,
+            width: win.element.offsetWidth,
+            height: win.element.offsetHeight,
+            state: win.state,
+            phase
+          });
+        } catch {
+        }
+      });
+    };
   }
   function handleDragStart(win, e) {
     const target = e.target;
@@ -2008,6 +2156,7 @@ var wpDesktop = function(exports) {
     const unstateParams = needsUnstate ? captureUnstateParams(win, e) : null;
     win._titleBar.setPointerCapture(pointerId);
     const snap = win.snapConfigProvider?.() ?? { enabled: false, cellWidth: 0, cellHeight: 0 };
+    const emitBoundsChanged = makeBoundsEmitter(win, "drag");
     let started = false;
     const beginDrag = (cursorX, cursorY) => {
       if (started) {
@@ -2062,6 +2211,7 @@ var wpDesktop = function(exports) {
       win.element.style.left = `${x}px`;
       win.element.style.top = `${y}px`;
       win.onDragMove?.(win, ev.clientX, ev.clientY);
+      emitBoundsChanged();
     };
     const releaseCapture = () => {
       try {
@@ -2173,6 +2323,7 @@ var wpDesktop = function(exports) {
     handle.setPointerCapture(e.pointerId);
     win.element.classList.add("wp-desktop-window--resizing");
     doAction(HOOKS.WINDOW_RESIZE_START, { windowId: win.id });
+    const emitBoundsChanged = makeBoundsEmitter(win, "resize");
     const snap = win.snapConfigProvider?.() ?? { enabled: false, cellWidth: 0, cellHeight: 0 };
     if (snap.enabled) {
       win.element.classList.add("wp-desktop-window--snap-drag");
@@ -2206,6 +2357,7 @@ var wpDesktop = function(exports) {
       win.element.style.top = `${geom.y}px`;
       win.element.style.width = `${geom.width}px`;
       win.element.style.height = `${geom.height}px`;
+      emitBoundsChanged();
     };
     const onResizeEnd = () => {
       if (!win._isResizing) {
@@ -4252,6 +4404,11 @@ var wpDesktop = function(exports) {
       if (this._stack.length > 0) {
         this.focus(this._stack[this._stack.length - 1]);
       }
+      const closingDetail = { windowId: win.id, element: win.element };
+      document.dispatchEvent(
+        new CustomEvent("wp-desktop-window-closing", { detail: closingDetail })
+      );
+      doAction(HOOKS.WINDOW_CLOSING, closingDetail);
       const closedDetail = { windowId: win.id };
       document.dispatchEvent(
         new CustomEvent("wp-desktop-window-closed", { detail: closedDetail })
@@ -4372,6 +4529,49 @@ var wpDesktop = function(exports) {
       exitOverview(this, selected, maximize);
     }
     /**
+     * Snapshot every open window's current geometry + state.
+     *
+     * Returns a plain array of `{ windowId, rect, state, element }`
+     * entries — one per window in the stack, regardless of which
+     * virtual desktop owns it. Rect coordinates are in desktop-area
+     * space (the same coordinate space the windows themselves use
+     * inline-style left/top); `state` is the live `WindowState`, and
+     * `element` is the window's outer DOM node.
+     *
+     * Intended for wallpaper / overlay plugins that used to scrape
+     * `document.querySelectorAll('.wp-desktop-window')` + read the
+     * `--minimized` / `--maximized` modifier classes by name. The
+     * accessor decouples plugin code from the shell's CSS class
+     * naming, so a future refactor of modifier prefixes is not an
+     * ecosystem break.
+     *
+     * The array contains every window in the stack — callers filter
+     * on `state` if they want only "actually visible" (typically
+     * `state !== 'minimized'`). Minimized windows are included so
+     * plugins that care about the "will be restored to X geometry"
+     * case still have the data; filtering them out would be a
+     * subtraction the caller can do but the provider can't reverse.
+     *
+     * Order matches the internal z-stack: earliest-opened first,
+     * focused window last.
+     */
+    getVisibleRects() {
+      return this._stack.map((w) => {
+        const snap = w.getSnapshot();
+        return {
+          windowId: w.id,
+          rect: {
+            x: snap.x,
+            y: snap.y,
+            width: snap.width,
+            height: snap.height
+          },
+          state: snap.state,
+          element: w.element
+        };
+      });
+    }
+    /**
      * Serialize the current window stack for session persistence.
      *
      * Order in the returned `windows` array mirrors z-order (earliest
@@ -4412,8 +4612,18 @@ var wpDesktop = function(exports) {
       seedDesktops(this, desktops, activeDesktopId);
     }
   }
+  function hashTitleToHue(title) {
+    if (!title) {
+      return 214;
+    }
+    let hash = 5381;
+    for (let i = 0; i < title.length; i++) {
+      hash = Math.imul(hash, 33) + title.charCodeAt(i);
+    }
+    return (hash % 360 + 360) % 360;
+  }
   class Dock {
-    constructor(container, windowManager, items, adminUrl) {
+    constructor(container, windowManager, items, adminUrl, orientation = "left") {
       this.itemElements = /* @__PURE__ */ new Map();
       this.systemItems = [];
       this.systemItemElements = /* @__PURE__ */ new Map();
@@ -4422,12 +4632,55 @@ var wpDesktop = function(exports) {
       this.windowManager = windowManager;
       this.items = items;
       this.adminUrl = adminUrl;
+      this.orientation = orientation;
+      this.container.classList.add(
+        orientation === "bottom" ? "wp-desktop-dock--horizontal" : "wp-desktop-dock--vertical"
+      );
       this.tooltip = document.createElement("div");
       this.tooltip.className = "wp-desktop-dock__tooltip";
       this.tooltip.setAttribute("role", "tooltip");
+      if (orientation === "bottom") {
+        this.tooltip.classList.add("wp-desktop-dock__tooltip--above");
+      }
       document.body.appendChild(this.tooltip);
       this.render();
       this.bindWindowEvents();
+    }
+    /**
+     * Replace the menu-derived tile list with a fresh one, preserving
+     * any JS-registered system tiles (OS Settings today, Jorvy /
+     * widgets later). Used by the live menu-refresh path: after a
+     * plugin is activated or deactivated, the shell refetches the
+     * split payload from `/wp-desktop/v1/menu` and calls this on
+     * both rails so the dock + taskbar repaint without a tab reload.
+     *
+     * Old menu tiles are removed from both the DOM and the lookup
+     * map; new tiles are inserted before the system separator (or
+     * appended at the end if none exists yet), so the menu-items →
+     * hairline → system-items ordering stays intact. Active-state
+     * classes are re-computed once the new tiles are in place so
+     * window indicators survive the swap.
+     *
+     * @param items New DockItem list. Pass `[]` to clear everything
+     *              menu-derived — common when the last plugin on the
+     *              taskbar is deactivated.
+     */
+    replaceItems(items) {
+      for (const el of this.itemElements.values()) {
+        el.remove();
+      }
+      this.itemElements.clear();
+      this.items = items;
+      for (const item of items) {
+        const btn = this.createItemButton(item);
+        this.itemElements.set(item.id, btn);
+        if (this.systemSeparator) {
+          this.container.insertBefore(btn, this.systemSeparator);
+        } else {
+          this.container.appendChild(btn);
+        }
+      }
+      this.updateActiveStates();
     }
     /**
      * Append a JS-registered system item to the dock.
@@ -4476,7 +4729,7 @@ var wpDesktop = function(exports) {
       primary.className = "wp-desktop-dock__item-primary";
       primary.setAttribute("type", "button");
       primary.setAttribute("aria-label", item.title);
-      primary.appendChild(this.createIcon(item.icon));
+      primary.appendChild(this.resolveIcon(item.icon, item.title));
       primary.addEventListener("click", () => item.onOpen());
       tile2.appendChild(primary);
       this.bindTooltip(tile2, item.title);
@@ -4502,7 +4755,7 @@ var wpDesktop = function(exports) {
       primary.className = "wp-desktop-dock__item-primary";
       primary.setAttribute("type", "button");
       primary.setAttribute("aria-label", item.title);
-      const iconEl = this.createIcon(item.icon);
+      const iconEl = this.resolveIcon(item.icon, item.title);
       primary.appendChild(iconEl);
       if (item.badge > 0) {
         const badge = document.createElement("span");
@@ -4538,17 +4791,17 @@ var wpDesktop = function(exports) {
           this.openNewInstance(item);
         });
         addBtn.addEventListener("pointerenter", () => {
-          const rect = addBtn.getBoundingClientRect();
-          this.tooltip.textContent = sprintf(__("Open new %s"), item.title);
-          this.tooltip.style.top = `${rect.top + rect.height / 2 - 14}px`;
+          this.positionTooltip(
+            addBtn,
+            // translators: %s is the admin-page title (e.g., "Posts")
+            sprintf(__("Open new %s"), item.title)
+          );
           this.tooltip.classList.add("wp-desktop-dock__tooltip--visible");
         });
         addBtn.addEventListener("pointerleave", (e) => {
           const next = e.relatedTarget;
           if (next && tile2.contains(next)) {
-            const rect = tile2.getBoundingClientRect();
-            this.tooltip.textContent = item.title;
-            this.tooltip.style.top = `${rect.top + rect.height / 2 - 14}px`;
+            this.positionTooltip(tile2, item.title);
             return;
           }
           this.tooltip.classList.remove("wp-desktop-dock__tooltip--visible");
@@ -4559,27 +4812,42 @@ var wpDesktop = function(exports) {
       return tile2;
     }
     /**
-     * Create the icon element based on the icon type.
+     * Resolve a registered icon value into a DOM element.
+     *
+     * Priority: dashicons class → inline SVG data URI → image URL →
+     * letter badge derived from the item's title. The letter fallback is
+     * important for the taskbar: plugin authors routinely register
+     * top-level menus with `add_menu_page()` and omit the icon argument
+     * (defaulting to `'div'` or empty), which would otherwise render as
+     * an indistinguishable wall of generic wrenches. A colored letter
+     * tile gives each plugin a stable, unique-ish visual identity with
+     * zero plugin-side effort — the hue derives deterministically from
+     * the title so the same plugin always gets the same color.
+     *
+     * @param icon  The icon value from the menu entry.
+     * @param title Human-readable title, used when falling back to a
+     *              letter badge.
      */
-    createIcon(icon) {
+    resolveIcon(icon, title) {
       if (icon.startsWith("dashicons-")) {
-        const el2 = document.createElement("span");
-        el2.className = `dashicons ${icon}`;
-        el2.setAttribute("aria-hidden", "true");
-        return el2;
+        const el = document.createElement("span");
+        el.className = `dashicons ${icon}`;
+        el.setAttribute("aria-hidden", "true");
+        return el;
       }
       if (icon.startsWith("data:image/svg+xml;base64,")) {
         const base64Part = icon.slice("data:image/svg+xml;base64,".length);
         if (/^[A-Za-z0-9+/=]+$/.test(base64Part)) {
-          const el2 = document.createElement("span");
-          el2.className = "wp-desktop-dock__item-svg";
-          el2.style.backgroundImage = `url("${icon}")`;
-          el2.style.backgroundSize = "contain";
-          el2.style.backgroundRepeat = "no-repeat";
-          el2.style.backgroundPosition = "center";
-          el2.setAttribute("aria-hidden", "true");
-          return el2;
+          const el = document.createElement("span");
+          el.className = "wp-desktop-dock__item-svg";
+          el.style.backgroundImage = `url("${icon}")`;
+          el.style.backgroundSize = "contain";
+          el.style.backgroundRepeat = "no-repeat";
+          el.style.backgroundPosition = "center";
+          el.setAttribute("aria-hidden", "true");
+          return el;
         }
+        return this.createLetterBadge(title);
       }
       if (icon && icon !== "none" && icon !== "div") {
         const img = document.createElement("img");
@@ -4589,24 +4857,61 @@ var wpDesktop = function(exports) {
         img.setAttribute("aria-hidden", "true");
         return img;
       }
+      return this.createLetterBadge(title);
+    }
+    /**
+     * Create a letter-badge icon — a rounded square tinted with a
+     * deterministic hue derived from the title, displaying the first
+     * letter of the title. Mirrors the "app icon placeholder" look
+     * macOS uses when an app ships without artwork.
+     *
+     * The title always drives both the letter and the hue — same plugin,
+     * same color across reloads. An empty title falls through to a `?`
+     * on a neutral gray tile, but the menu builder upstream guards
+     * against empty titles, so this is a defensive branch.
+     */
+    createLetterBadge(title) {
       const el = document.createElement("span");
-      el.className = "dashicons dashicons-admin-generic";
+      el.className = "wp-desktop-dock__item-letter";
       el.setAttribute("aria-hidden", "true");
+      const trimmed = title.trim();
+      const firstCodePoint = trimmed ? Array.from(trimmed)[0] : "?";
+      el.textContent = firstCodePoint.toUpperCase();
+      const hue = hashTitleToHue(trimmed);
+      el.style.background = `linear-gradient(135deg, hsl(${hue} 62% 55%), hsl(${(hue + 24) % 360} 58% 42%))`;
       return el;
     }
     /**
-     * Bind tooltip show/hide on hover.
+     * Bind tooltip show/hide on hover. Tooltip anchor differs per
+     * orientation: left dock → vertically centered on the tile, placed
+     * to its right via CSS; bottom taskbar → horizontally centered,
+     * placed above the tile via CSS. We set the relevant coordinate
+     * inline each enter; the CSS takes care of the rest.
      */
     bindTooltip(el, text) {
       el.addEventListener("pointerenter", () => {
-        const rect = el.getBoundingClientRect();
-        this.tooltip.textContent = text;
-        this.tooltip.style.top = `${rect.top + rect.height / 2 - 14}px`;
+        this.positionTooltip(el, text);
         this.tooltip.classList.add("wp-desktop-dock__tooltip--visible");
       });
       el.addEventListener("pointerleave", () => {
         this.tooltip.classList.remove("wp-desktop-dock__tooltip--visible");
       });
+    }
+    /**
+     * Write the tooltip text + anchor coordinate for `el`. Split out
+     * because the multi-instance chip's pointerenter handler also
+     * needs to anchor to a specific element (the chip, not the tile).
+     */
+    positionTooltip(el, text) {
+      const rect = el.getBoundingClientRect();
+      this.tooltip.textContent = text;
+      if (this.orientation === "bottom") {
+        this.tooltip.style.left = `${rect.left + rect.width / 2}px`;
+        this.tooltip.style.top = `${rect.top - 14}px`;
+      } else {
+        this.tooltip.style.top = `${rect.top + rect.height / 2 - 14}px`;
+        this.tooltip.style.left = "";
+      }
     }
     /**
      * Open an admin page in a window (or focus if already open).
@@ -4715,7 +5020,7 @@ var wpDesktop = function(exports) {
       }
     }
   }
-  const styles$6 = css`
+  const styles$8 = css`
 	:host {
 		display: block;
 		margin-block-end: 28px;
@@ -4753,10 +5058,10 @@ var wpDesktop = function(exports) {
     }
   };
   _WpdSection.props = ["heading", "description"];
-  _WpdSection.styles = [styles$6];
+  _WpdSection.styles = [styles$8];
   let WpdSection = _WpdSection;
   defineComponent("wpd-section", WpdSection);
-  const styles$5 = css`
+  const styles$7 = css`
 	:host {
 		display: inline-flex;
 	}
@@ -4830,10 +5135,10 @@ var wpDesktop = function(exports) {
     }
   };
   _WpdButton.props = ["variant", "disabled", "type", "busy"];
-  _WpdButton.styles = [styles$5];
+  _WpdButton.styles = [styles$7];
   let WpdButton = _WpdButton;
   defineComponent("wpd-button", WpdButton);
-  const styles$4 = css`
+  const styles$1 = css`
 	:host {
 		display: block;
 		width: 100%;
@@ -4921,10 +5226,10 @@ var wpDesktop = function(exports) {
     }
   };
   _WpdSwatch.props = ["value", "label", "selected", "preview", "size", "variant"];
-  _WpdSwatch.styles = [styles$4];
+  _WpdSwatch.styles = [styles$1];
   let WpdSwatch = _WpdSwatch;
   defineComponent("wpd-swatch", WpdSwatch);
-  const styles$3 = css`
+  const styles$5 = css`
 	:host {
 		display: grid;
 		grid-template-columns: repeat(
@@ -4955,7 +5260,7 @@ var wpDesktop = function(exports) {
     }
   };
   _WpdSwatchGrid.props = ["label", "columns", "mode"];
-  _WpdSwatchGrid.styles = [styles$3];
+  _WpdSwatchGrid.styles = [styles$5];
   let WpdSwatchGrid = _WpdSwatchGrid;
   defineComponent("wpd-swatch-grid", WpdSwatchGrid);
   const segmentedStyles = css`
@@ -5045,7 +5350,7 @@ var wpDesktop = function(exports) {
   _WpdSegmented.styles = [segmentedStyles];
   let WpdSegmented = _WpdSegmented;
   defineComponent("wpd-segmented", WpdSegmented);
-  const styles$2 = css`
+  const styles = css`
 	:host {
 		display: inline-flex;
 		align-items: center;
@@ -5121,10 +5426,10 @@ var wpDesktop = function(exports) {
     }
   };
   _WpdColorField.props = ["label", "value", "variant"];
-  _WpdColorField.styles = [styles$2];
+  _WpdColorField.styles = [styles];
   let WpdColorField = _WpdColorField;
   defineComponent("wpd-color-field", WpdColorField);
-  const styles$1 = css`
+  const styles$3 = css`
 	:host {
 		display: flex;
 		align-items: center;
@@ -5175,10 +5480,10 @@ var wpDesktop = function(exports) {
     }
   };
   _WpdRangeField.props = ["label", "value", "min", "max", "step", "suffix"];
-  _WpdRangeField.styles = [styles$1];
+  _WpdRangeField.styles = [styles$3];
   let WpdRangeField = _WpdRangeField;
   defineComponent("wpd-range-field", WpdRangeField);
-  const styles = css`
+  const styles$2 = css`
 	:host {
 		display: inline-flex;
 		align-items: center;
@@ -5224,7 +5529,7 @@ var wpDesktop = function(exports) {
     }
   };
   _WpdCheckboxLabel.props = ["label", "checked"];
-  _WpdCheckboxLabel.styles = [styles];
+  _WpdCheckboxLabel.styles = [styles$2];
   let WpdCheckboxLabel = _WpdCheckboxLabel;
   defineComponent("wpd-checkbox-label", WpdCheckboxLabel);
   const tabsStyles = css`
@@ -6550,6 +6855,7 @@ var wpDesktop = function(exports) {
       try {
         teardown();
       } catch (err) {
+        doAction(HOOKS.SHELL_ERROR, { scope: "wallpaper-teardown", id, error: err });
         if (typeof console !== "undefined") {
           console.error(
             `[wp-desktop-mode] Wallpaper "${id}" teardown threw:`,
@@ -6621,6 +6927,7 @@ var wpDesktop = function(exports) {
     handleMountFailure(id, err) {
       this.element.innerHTML = "";
       doAction(HOOKS.WALLPAPER_MOUNT_FAILED, { id, error: err });
+      doAction(HOOKS.SHELL_ERROR, { scope: "wallpaper-mount", id, error: err });
       if (typeof console !== "undefined") {
         console.error(
           `[wp-desktop-mode] Wallpaper "${id}" failed to mount:`,
@@ -6685,6 +6992,100 @@ var wpDesktop = function(exports) {
       default:
         return fallback;
     }
+  }
+  function collectWallpaperSurfaces(manager) {
+    const seed2 = [];
+    for (const w of manager.getVisibleRects()) {
+      if (w.state === "minimized") {
+        continue;
+      }
+      if (w.element.offsetParent === null) {
+        continue;
+      }
+      const r = w.element.getBoundingClientRect();
+      seed2.push({
+        id: `window:${w.windowId}`,
+        kind: "window",
+        rect: rectFromDom(r),
+        face: "top",
+        element: w.element
+      });
+    }
+    const shellEl = document.getElementById("wp-desktop-shell");
+    if (shellEl) {
+      const r = shellEl.getBoundingClientRect();
+      seed2.push({
+        id: "shell:floor",
+        kind: "shell",
+        rect: {
+          x: r.left,
+          y: r.bottom - 1,
+          width: r.width,
+          height: 1
+        },
+        face: "top",
+        element: shellEl
+      });
+    }
+    const taskbarEl = document.getElementById("wp-desktop-taskbar");
+    if (taskbarEl && !taskbarEl.hidden) {
+      const r = taskbarEl.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) {
+        seed2.push({
+          id: "taskbar:top",
+          kind: "taskbar",
+          rect: rectFromDom(r),
+          face: "top",
+          element: taskbarEl
+        });
+      }
+    }
+    const dockEl = document.getElementById("wp-desktop-dock");
+    if (dockEl) {
+      const r = dockEl.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) {
+        seed2.push({
+          id: "dock:edge",
+          kind: "dock",
+          rect: {
+            x: r.right - 1,
+            y: r.top,
+            width: 1,
+            height: r.height
+          },
+          face: "right",
+          element: dockEl
+        });
+      }
+    }
+    const widgetCards = document.querySelectorAll(
+      ".wp-desktop-widgets__card"
+    );
+    let widgetIndex = 0;
+    widgetCards.forEach((card) => {
+      const r = card.getBoundingClientRect();
+      if (r.width === 0 && r.height === 0) {
+        return;
+      }
+      const id = card.dataset.widgetId ?? String(widgetIndex++);
+      seed2.push({
+        id: `widget:${id}`,
+        kind: "widget",
+        rect: rectFromDom(r),
+        face: "top",
+        element: card
+      });
+    });
+    const filtered = applyFilters(HOOKS.WALLPAPER_SURFACES, seed2);
+    return Array.isArray(filtered) ? filtered : seed2;
+  }
+  function rectFromDom(r) {
+    return {
+      x: r.left,
+      y: r.top,
+      width: r.width,
+      height: r.height
+    };
   }
   const seed = [];
   function register(def) {
@@ -6926,7 +7327,7 @@ var wpDesktop = function(exports) {
       card.classList.add(RESIZABLE_CLASS);
     }
     if (movable) {
-      card.appendChild(buildChrome(def, handlers.onRemove));
+      card.appendChild(buildChrome(def, handlers.onRemove, handlers.onRedock));
     } else {
       card.appendChild(buildCornerClose(def, handlers.onRemove));
     }
@@ -6983,7 +7384,7 @@ var wpDesktop = function(exports) {
       }
     };
   }
-  function buildChrome(def, onRemove) {
+  function buildChrome(def, onRemove, onRedock) {
     const chrome = document.createElement("header");
     chrome.className = "wp-desktop-widgets__chrome";
     const grip = document.createElement("span");
@@ -6994,9 +7395,28 @@ var wpDesktop = function(exports) {
     title.className = "wp-desktop-widgets__title";
     title.textContent = def.label;
     chrome.appendChild(title);
+    chrome.appendChild(buildRedockButton(def, onRedock));
     const close = buildCloseButton(def, onRemove);
     chrome.appendChild(close);
     return chrome;
+  }
+  function buildRedockButton(def, onRedock) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "wp-desktop-widgets__card-redock";
+    btn.setAttribute(
+      "aria-label",
+      // translators: %s is the widget label (e.g., "Clock")
+      sprintf(__("Dock %s back to widget column"), def.label)
+    );
+    btn.innerHTML = '<svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true"><path d="M2 6h6M5.5 3.5L8 6l-2.5 2.5M10 2.5v7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>';
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      onRedock();
+    });
+    btn.dataset.noDrag = "true";
+    return btn;
   }
   function buildCornerClose(def, onRemove) {
     const close = buildCloseButton(def, onRemove);
@@ -7310,6 +7730,52 @@ var wpDesktop = function(exports) {
     }
     return { x, y, width, height };
   }
+  function createWidgetStorage(widgetId) {
+    const prefix = `wp-desktop.widget.${widgetId}.`;
+    const safeGet = (key) => {
+      try {
+        return localStorage.getItem(prefix + key);
+      } catch {
+        return null;
+      }
+    };
+    return {
+      get(key) {
+        const raw = safeGet(key);
+        if (raw === null) {
+          return null;
+        }
+        try {
+          return JSON.parse(raw);
+        } catch {
+          return null;
+        }
+      },
+      set(key, value) {
+        try {
+          localStorage.setItem(prefix + key, JSON.stringify(value));
+        } catch {
+        }
+      },
+      remove(key) {
+        try {
+          localStorage.removeItem(prefix + key);
+        } catch {
+        }
+      },
+      clear() {
+        try {
+          for (let i = localStorage.length - 1; i >= 0; i--) {
+            const key = localStorage.key(i);
+            if (key && key.startsWith(prefix)) {
+              localStorage.removeItem(key);
+            }
+          }
+        } catch {
+        }
+      }
+    };
+  }
   const DEFAULT_ENABLED_IDS = ["clock"];
   class WidgetLayer {
     /**
@@ -7399,6 +7865,30 @@ var wpDesktop = function(exports) {
       return [...this.enabledIds];
     }
     /**
+     * Guarantee the widget identified by `id` is currently mounted,
+     * adding it to the enabled list if it isn't. No-op when the
+     * widget is already on screen. Intended for companion plugins
+     * that want to pin their widget programmatically — a monitor
+     * plugin that auto-pins itself on the first error burst, a
+     * first-run onboarding flow that ensures the quick-start widget
+     * is present, etc.
+     *
+     * Returns `true` when the widget is mounted (either newly added
+     * or already present), `false` when the id isn't registered —
+     * callers can branch on the failure without having to maintain
+     * their own registry snapshot.
+     */
+    ensureMounted(id) {
+      if (!get(id)) {
+        return false;
+      }
+      if (this.enabledIds.includes(id)) {
+        return true;
+      }
+      this.add(id);
+      return true;
+    }
+    /**
      * Tear down every widget. Called on shell unload via `pagehide`
      * so intervals / RAF loops stop before the beacon flush.
      */
@@ -7421,7 +7911,8 @@ var wpDesktop = function(exports) {
         {
           onRemove: () => this.remove(id),
           onGeometryChanged: (geom) => this.persistGeometry(id, geom),
-          onLiberate: (geom) => this.liberate(id, geom)
+          onLiberate: (geom) => this.liberate(id, geom),
+          onRedock: () => this.redock(id)
         }
       );
       const floating = !!initialGeometry;
@@ -7434,7 +7925,11 @@ var wpDesktop = function(exports) {
       };
       this.mounted.set(id, record);
       this.placeCard(frame.card, floating);
-      const ctx = { id, pluginUrl: this.pluginUrl };
+      const ctx = {
+        id,
+        pluginUrl: this.pluginUrl,
+        storage: createWidgetStorage(id)
+      };
       doAction(HOOKS.WIDGET_MOUNTING, { id, container: frame.body, ctx });
       const onResolve = (teardown) => {
         const current = this.mounted.get(id);
@@ -7474,6 +7969,7 @@ var wpDesktop = function(exports) {
       try {
         record.teardown?.();
       } catch (err) {
+        doAction(HOOKS.SHELL_ERROR, { scope: "widget-teardown", id, error: err });
         if (typeof console !== "undefined") {
           console.error(
             `[wp-desktop-mode] Widget "${id}" teardown threw:`,
@@ -7492,6 +7988,7 @@ var wpDesktop = function(exports) {
         this.mounted.delete(id);
       }
       doAction(HOOKS.WIDGET_MOUNT_FAILED, { id, error: err });
+      doAction(HOOKS.SHELL_ERROR, { scope: "widget-mount", id, error: err });
       if (typeof console !== "undefined") {
         console.error(
           `[wp-desktop-mode] Widget "${id}" failed to mount:`,
@@ -7551,6 +8048,36 @@ var wpDesktop = function(exports) {
       this.floatingHost.appendChild(record.frame.card);
       applyGeometry(record.frame.card, geometry);
       this.persistGeometry(id, geometry);
+      this.paintEmptyState();
+    }
+    /**
+     * Inverse of {@link liberate}: move a floating card back into
+     * the column and drop its persisted geometry so a subsequent
+     * shell boot brings it up docked. Called when the user clicks
+     * the re-dock button in the card's chrome header.
+     *
+     * Idempotent — a docked widget silently no-ops. The `--floating`
+     * class on the card is removed as part of the same write so CSS
+     * rules that depend on it (re-dock button visibility, absolute
+     * positioning) flip back in one paint.
+     */
+    redock(id) {
+      const record = this.mounted.get(id);
+      if (!record || !record.floating) {
+        return;
+      }
+      record.floating = false;
+      if (this.geometry[id]) {
+        delete this.geometry[id];
+        saveGeometry(this.geometry);
+      }
+      const card = record.frame.card;
+      card.classList.remove("wp-desktop-widgets__card--floating");
+      card.style.left = "";
+      card.style.top = "";
+      card.style.width = "";
+      card.style.height = "";
+      this.listEl.appendChild(card);
       this.paintEmptyState();
     }
     persistGeometry(id, geometry) {
@@ -8106,7 +8633,7 @@ var wpDesktop = function(exports) {
     const dockEl = document.getElementById("wp-desktop-dock");
     let dock = null;
     if (dockEl && config.dockItems) {
-      dock = new Dock(dockEl, manager, config.dockItems, config.adminUrl);
+      dock = new Dock(dockEl, manager, config.dockItems, config.adminUrl, "left");
       desktopArea.classList.add("wp-desktop-area--with-dock");
       dock.appendSystemItem({
         id: OS_SETTINGS_WINDOW_ID,
@@ -8143,6 +8670,22 @@ var wpDesktop = function(exports) {
         }
       });
     }
+    const taskbarEl = document.getElementById("wp-desktop-taskbar");
+    let taskbar = null;
+    if (taskbarEl) {
+      const initialTaskbarItems = Array.isArray(config.taskbarItems) ? config.taskbarItems : [];
+      taskbar = new Dock(
+        taskbarEl,
+        manager,
+        initialTaskbarItems,
+        config.adminUrl,
+        "bottom"
+      );
+      taskbarEl.hidden = initialTaskbarItems.length === 0;
+      if (initialTaskbarItems.length > 0) {
+        desktopArea.classList.add("wp-desktop-area--with-taskbar");
+      }
+    }
     const hasSession = !!(config.session && config.session.windows && config.session.windows.length > 0);
     if (hasSession) {
       restoreSession(manager, config, desktopArea);
@@ -8176,6 +8719,7 @@ var wpDesktop = function(exports) {
           })
         );
       } catch (err) {
+        doAction(HOOKS.SHELL_ERROR, { scope: "default-window-save", error: err });
         if (typeof console !== "undefined") {
           console.error(
             "[wp-desktop-mode] Failed to save default window:",
@@ -8187,13 +8731,15 @@ var wpDesktop = function(exports) {
     manager.onToggleStartupRequested = (win) => {
       const currentPref = config.defaultWindow;
       const winUrl = win.getCurrentUrl();
-      const alreadyDefault = !!currentPref?.enabled && urlMatchKey(currentPref.url) === urlMatchKey(winUrl);
+      const alreadyDefault = !!currentPref?.enabled && urlMatchKey$1(currentPref.url) === urlMatchKey$1(winUrl);
       void setDefaultWindow(alreadyDefault ? null : winUrl);
     };
+    const refreshMenu = bindMenuRefresh(dock, taskbar, taskbarEl, desktopArea, config);
     window.wp = window.wp || {};
     window.wp.desktop = {
       windowManager: manager,
       dock,
+      taskbar,
       saveSession,
       hooks: rawHooks(),
       HOOKS,
@@ -8205,11 +8751,14 @@ var wpDesktop = function(exports) {
       registerWidget: (def) => {
         register(def);
       },
+      widgetLayer,
       loadVendorScript,
+      getWallpaperSurfaces: () => collectWallpaperSurfaces(manager),
       registerModule,
       loadModules,
       whenReady,
       setDefaultWindow,
+      refreshMenu,
       config
     };
     doAction(HOOKS.INIT, { config });
@@ -8434,7 +8983,8 @@ var wpDesktop = function(exports) {
           // Best-effort: we don't block the UI on persistence.
           keepalive: true
         });
-      } catch {
+      } catch (err) {
+        doAction(HOOKS.SHELL_ERROR, { scope: "session-save", error: err });
       } finally {
         inFlight = false;
       }
@@ -8501,6 +9051,77 @@ var wpDesktop = function(exports) {
         state: document.hidden ? "hidden" : "visible"
       });
     });
+  }
+  const MENU_REFRESH_DEBOUNCE_MS = 250;
+  function bindMenuRefresh(dock, taskbar, taskbarEl, desktopArea, config) {
+    const applyPayload = (payload) => {
+      const dockItems = payload.dockItems;
+      const taskbarItems = payload.taskbarItems;
+      if (!Array.isArray(dockItems) || dockItems.length === 0) {
+        return;
+      }
+      if (dock) {
+        dock.replaceItems(dockItems);
+        config.dockItems = dockItems;
+      }
+      if (Array.isArray(taskbarItems)) {
+        taskbar?.replaceItems(
+          taskbarItems
+        );
+        config.taskbarItems = taskbarItems;
+        if (taskbarEl) {
+          taskbarEl.hidden = taskbarItems.length === 0;
+        }
+        desktopArea.classList.toggle(
+          "wp-desktop-area--with-taskbar",
+          taskbarItems.length > 0
+        );
+      }
+    };
+    const refresh = async () => {
+      if (!config.menuUrl) {
+        return;
+      }
+      try {
+        const res = await fetch(config.menuUrl, {
+          method: "GET",
+          credentials: "same-origin",
+          headers: { "X-WP-Nonce": config.restNonce }
+        });
+        if (!res.ok) {
+          return;
+        }
+        const data = await res.json();
+        applyPayload(data);
+      } catch (err) {
+        doAction(HOOKS.SHELL_ERROR, { scope: "menu-refresh", error: err });
+      }
+    };
+    let debounceTimer = null;
+    window.addEventListener("message", (e) => {
+      if (e.origin !== window.location.origin) {
+        return;
+      }
+      const data = e.data;
+      if (!data || data.type !== "wp-desktop-plugins-changed") {
+        return;
+      }
+      if (data.payload) {
+        applyPayload(data.payload);
+        return;
+      }
+      if (!config.menuUrl) {
+        return;
+      }
+      if (debounceTimer !== null) {
+        window.clearTimeout(debounceTimer);
+      }
+      debounceTimer = window.setTimeout(() => {
+        debounceTimer = null;
+        void refresh();
+      }, MENU_REFRESH_DEBOUNCE_MS);
+    });
+    return refresh;
   }
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", init);

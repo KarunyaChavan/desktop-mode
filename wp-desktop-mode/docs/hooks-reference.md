@@ -286,6 +286,67 @@ add_filter( 'wp_desktop_dock_item_multi', function ( $multi, $slug ) {
 
 ---
 
+### `wp_desktop_dock_placement` — Stable
+
+Chooses where a menu item appears in the desktop shell. Three values are recognized:
+
+- `'dock'` — left-edge vertical strip (core WordPress menus — Dashboard, Posts, Media, Users, Settings, CPTs, taxonomies…).
+- `'taskbar'` — bottom horizontal pill (default for installed-plugin top-level menus routed through `admin.php?page=*`).
+- `'hidden'` — suppress the item entirely. The underlying admin menu entry still exists server-side; this only prevents rendering on either desktop-mode rail. Plugins that don't want to claim chrome real estate (utility tools, background services, plugins that render only into existing surfaces) set this.
+
+```php
+apply_filters( 'wp_desktop_dock_placement', string $placement, string $menu_slug );
+```
+
+The built-in routing heuristic (`wpdm_dock_placement`) returns `'dock'` for:
+
+- Hardcoded core menu files (`index.php`, `edit.php`, `upload.php`, `plugins.php`, `users.php`, `tools.php`, `options-*.php`, `themes.php`, `site-health.php`, `update-core.php`, and every admin file in the core allowlist).
+- Every `edit.php?post_type=*` route (all Custom Post Types render alongside core menus).
+- Every `edit-tags.php?taxonomy=*` route (taxonomies follow their parent).
+
+Every other top-level menu returns `'taskbar'`. Return `'dock'` to promote a plugin menu onto the left rail, `'taskbar'` to demote a core-looking menu out of it, or `'hidden'` to remove it from the shell entirely.
+
+Return values other than those three are silently ignored — the item falls back to the default. That keeps a misbehaving filter (returning `null`, a bool, etc.) from corrupting the rail split.
+
+**Example — pin a plugin menu to the left dock because it's a first-class admin surface on this install:**
+
+```php
+add_filter( 'wp_desktop_dock_placement', function ( $placement, $slug ) {
+    if ( 'woocommerce' === $slug ) {
+        return 'dock';
+    }
+    return $placement;
+}, 10, 2 );
+```
+
+**Example — move Tools down to the taskbar because the site never uses it:**
+
+```php
+add_filter( 'wp_desktop_dock_placement', function ( $placement, $slug ) {
+    if ( 'tools.php' === $slug ) {
+        return 'taskbar';
+    }
+    return $placement;
+}, 10, 2 );
+```
+
+**Example — hide a plugin from the shell entirely (from inside that plugin's own PHP):**
+
+```php
+add_filter( 'wp_desktop_dock_placement', function ( $placement, $slug ) {
+    if ( 'my-background-tool' === $slug ) {
+        return 'hidden';
+    }
+    return $placement;
+}, 10, 2 );
+```
+
+The split happens once per request, server-side, in `includes/render.php` — each item's `placement` key is computed when `wpdm_build_dock_items()` runs, then the shell splits the list into `config.dockItems` + `config.taskbarItems` before localizing to JS. Hidden items are dropped before either list is built. The client never re-sorts, so the filter is the only place to override routing.
+
+The live menu-refresh endpoint (`GET /wp-desktop/v1/menu`, fired after plugin activation / deactivation inside a windowed `plugins.php`) runs the same builder, so a filter change takes effect without a full tab reload.
+
+---
+
 ### `wp_desktop_arrange_menu_items` — Stable
 
 The list of plugin-contributed items appended to the admin bar's **Arrange** submenu — the dropdown that sits next to the "Switch to…" toggle when desktop mode is active. Built-ins (Cascade, Overview, Snap to grid, Tile all windows) are always present; this filter adds to them. Only invoked when the user is viewing the desktop shell.

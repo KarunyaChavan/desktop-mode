@@ -161,6 +161,70 @@ export const HOOKS = {
 	WALLPAPER_VISIBILITY: 'wp-desktop.wallpaper.visibility',
 
 	// ------------------------------------------------------------------
+	// Observability — iframe errors, iframe network, shell-side errors,
+	// monitor entry aggregation. Designed for dashboard / debug widget
+	// plugins that want genuine admin observability (Gutenberg save
+	// failures, admin-ajax 500s, plugin exceptions) rather than just the
+	// shell's own console-error surface.
+	// ------------------------------------------------------------------
+
+	/**
+	 * Action, fires when a chromeless iframe's `error` or
+	 * `unhandledrejection` handler catches an exception. Payload: `{
+	 * windowId: string, kind: 'error' | 'unhandledrejection', message:
+	 * string, filename: string | null, lineno: number | null, colno:
+	 * number | null, stack: string | null }`. Origin-filtered at the
+	 * parent shell; cross-origin iframe errors never reach here.
+	 */
+	IFRAME_ERROR: 'wp-desktop.iframe.error',
+	/**
+	 * Action, fires when a `fetch` or `XMLHttpRequest` inside a
+	 * chromeless iframe completes (success OR failure). Payload: `{
+	 * windowId: string, method: string, url: string, status: number,
+	 * duration: number, failed: boolean }`. Subscribers get a faithful
+	 * view of admin-ajax + REST calls that previously never left the
+	 * iframe boundary. `status === 0` indicates a network failure with
+	 * no response received.
+	 */
+	IFRAME_NETWORK_COMPLETED: 'wp-desktop.iframe.network-completed',
+	/**
+	 * Action, fires when one of the shell's own try/catch barriers
+	 * catches an exception. Payload: `{ scope:
+	 * 'widget-mount' | 'widget-teardown' | 'window-open' | 'wallpaper-mount' |
+	 * 'wallpaper-teardown' | 'session-save' | 'menu-refresh' | string,
+	 * id?: string, error: unknown }`. Paired with the existing
+	 * `console.error` calls — a monitor widget can surface these as
+	 * first-class entries.
+	 */
+	SHELL_ERROR: 'wp-desktop.shell.error',
+	/**
+	 * Filter, applies to a `MonitorEntry` before a monitor widget
+	 * renders it. Plugins can mutate the entry (rewrite the message,
+	 * add `extra` fields) or return `null` to suppress it. Used by
+	 * monitor widgets to converge every plugin on the same shape —
+	 * see `MonitorEntry` in `src/types.ts`.
+	 */
+	MONITOR_ENTRY: 'wp-desktop.monitor.entry',
+	/**
+	 * Filter, applies to the list of "solid" surfaces wallpapers
+	 * should consider for collision / accumulation effects (snow
+	 * piling, leaves settling, rain splash). Seeded by the shell
+	 * with: every visible (non-minimized) window's top edge; the
+	 * desktop-area floor; the taskbar top when present; the dock's
+	 * inline edge; and every mounted widget card's top edge.
+	 *
+	 * Plugins that own their own DOM (e.g. floating pickers,
+	 * custom overlays) can push additional surfaces so snow
+	 * accumulates on them too.
+	 *
+	 * Each entry is a `WallpaperSurface` — see
+	 * `src/wallpapers/surfaces.ts` for the shape. Rects are in
+	 * viewport coordinates (clientX / clientY), matching what a
+	 * canvas mounted inside `#wp-desktop-wallpaper` reads.
+	 */
+	WALLPAPER_SURFACES: 'wp-desktop.wallpaper.surfaces',
+
+	// ------------------------------------------------------------------
 	// Window lifecycle actions. All payloads share a `windowId: string`
 	// field; additional fields are documented per-hook in the JS
 	// reference. These mirror the existing `wp-desktop-window-*`
@@ -169,6 +233,19 @@ export const HOOKS = {
 	// ------------------------------------------------------------------
 	/** Action, fires when a window is added to the stack. */
 	WINDOW_OPENED: 'wp-desktop.window.opened',
+	/**
+	 * Action, fires BEFORE the window's element is detached from the
+	 * DOM but AFTER the manager has already removed it from the stack.
+	 * Payload: `{ windowId: string, element: HTMLElement }`.
+	 *
+	 * Use this for cleanup that needs a reference to the live
+	 * element (removing anchored snow, wallpaper particles pinned to
+	 * window tops, measurement caches keyed by element). `WINDOW_CLOSED`
+	 * fires immediately after and only carries the id, which means
+	 * subscribers would otherwise have to re-query the DOM — by then
+	 * the element is gone, so they can't match at all.
+	 */
+	WINDOW_CLOSING: 'wp-desktop.window.closing',
 	/** Action, fires when a window is removed from the stack. */
 	WINDOW_CLOSED: 'wp-desktop.window.closed',
 	/** Action, fires when focus changes to a different window. */
@@ -185,6 +262,25 @@ export const HOOKS = {
 	WINDOW_FULLSCREEN_ENTERED: 'wp-desktop.window.fullscreen-entered',
 	/** Action, fires when a window exits fullscreen / focus mode. */
 	WINDOW_FULLSCREEN_EXITED: 'wp-desktop.window.fullscreen-exited',
+	/**
+	 * Action, fires at most once per animation frame during an
+	 * active drag or resize with the live geometry. Payload: `{
+	 * windowId: string, x: number, y: number, width: number,
+	 * height: number, state: WindowState, phase: 'drag' | 'resize' }`.
+	 *
+	 * Intended for per-frame collision-aware wallpapers (snow piling
+	 * on window tops, rain splash on edges) that would otherwise
+	 * poll `getBoundingClientRect` every rAF. Coalesced via
+	 * `requestAnimationFrame` so a pointermove storm collapses to
+	 * one fire per paint — matches the cadence a wallpaper's own
+	 * ticker runs at.
+	 *
+	 * NOT fired at drag/resize end — `WINDOW_DRAG_END` /
+	 * `WINDOW_RESIZE_END` handle the settled geometry. Subscribers
+	 * that only want the final position should listen to those
+	 * instead.
+	 */
+	WINDOW_BOUNDS_CHANGED: 'wp-desktop.window.bounds-changed',
 	/** Action, fires at drag-end with the final `{ x, y }` position. */
 	WINDOW_MOVED: 'wp-desktop.window.moved',
 	/** Action, fires at resize-end with the final `{ width, height }`. */

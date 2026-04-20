@@ -23,7 +23,13 @@
  */
 
 import { HOOKS, doAction } from '../hooks';
-import type { Desktop, Session, SessionWindow, WindowConfig } from '../types';
+import type {
+	Desktop,
+	Session,
+	SessionWindow,
+	VisibleWindowRect,
+	WindowConfig,
+} from '../types';
 import { Window } from '../window';
 
 import {
@@ -541,7 +547,24 @@ export class WindowManager {
 			this.focus( this._stack[ this._stack.length - 1 ] );
 		}
 
-		// Dispatch custom event + action.
+		// `closing` fires FIRST, while the element is still in the DOM
+		// (the `Window.close()` animation runs after this return).
+		// Carries an element reference so subscribers that anchor DOM
+		// nodes to a specific window (falling snow, wallpaper
+		// overlays, measurement caches) can do a race-free detach —
+		// without the ref they'd have to re-query by id right as the
+		// fade-out starts, which is an unnecessary footgun.
+		const closingDetail = { windowId: win.id, element: win.element };
+		document.dispatchEvent(
+			new CustomEvent( 'wp-desktop-window-closing', { detail: closingDetail } ),
+		);
+		doAction( HOOKS.WINDOW_CLOSING, closingDetail );
+
+		// `closed` still fires here (not after the fade-out) for
+		// back-compat — historically subscribers have relied on it
+		// to update counts / taskbar state as soon as the user
+		// clicks the X. Keep that timing; plugins that need the live
+		// element now have `closing` above.
 		const closedDetail = { windowId: win.id };
 		document.dispatchEvent(
 			new CustomEvent( 'wp-desktop-window-closed', { detail: closedDetail } ),
@@ -674,6 +697,50 @@ export class WindowManager {
 	}
 	public exitOverview( selected?: Window, maximize = false ): void {
 		exitOverview( this, selected, maximize );
+	}
+
+	/**
+	 * Snapshot every open window's current geometry + state.
+	 *
+	 * Returns a plain array of `{ windowId, rect, state, element }`
+	 * entries — one per window in the stack, regardless of which
+	 * virtual desktop owns it. Rect coordinates are in desktop-area
+	 * space (the same coordinate space the windows themselves use
+	 * inline-style left/top); `state` is the live `WindowState`, and
+	 * `element` is the window's outer DOM node.
+	 *
+	 * Intended for wallpaper / overlay plugins that used to scrape
+	 * `document.querySelectorAll('.wp-desktop-window')` + read the
+	 * `--minimized` / `--maximized` modifier classes by name. The
+	 * accessor decouples plugin code from the shell's CSS class
+	 * naming, so a future refactor of modifier prefixes is not an
+	 * ecosystem break.
+	 *
+	 * The array contains every window in the stack — callers filter
+	 * on `state` if they want only "actually visible" (typically
+	 * `state !== 'minimized'`). Minimized windows are included so
+	 * plugins that care about the "will be restored to X geometry"
+	 * case still have the data; filtering them out would be a
+	 * subtraction the caller can do but the provider can't reverse.
+	 *
+	 * Order matches the internal z-stack: earliest-opened first,
+	 * focused window last.
+	 */
+	public getVisibleRects(): VisibleWindowRect[] {
+		return this._stack.map( ( w ) => {
+			const snap = w.getSnapshot();
+			return {
+				windowId: w.id,
+				rect: {
+					x: snap.x,
+					y: snap.y,
+					width: snap.width,
+					height: snap.height,
+				},
+				state: snap.state,
+				element: w.element,
+			};
+		} );
 	}
 
 	/**

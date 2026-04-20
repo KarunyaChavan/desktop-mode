@@ -10,6 +10,7 @@
  * @since 0.8.1
  */
 
+import { doAction, HOOKS } from '../hooks';
 import { addExternalTab } from './tabs';
 import type { Window } from './index';
 
@@ -67,6 +68,42 @@ export function handleWindowMessage( win: Window, event: MessageEvent ): void {
 			? data.label
 			: data.url;
 		addExternalTab( win, data.url, label );
+	}
+
+	// Iframe error relay — the chromeless bridge posts
+	// `wp-desktop-iframe-error` from inside the iframe's error +
+	// unhandledrejection handlers. We annotate with the owning
+	// windowId and dispatch the hook, where monitor widgets pick it
+	// up. Shape matches `HOOKS.IFRAME_ERROR`.
+	if ( data.type === 'wp-desktop-iframe-error' ) {
+		doAction( HOOKS.IFRAME_ERROR, {
+			windowId: win.id,
+			kind: data.kind === 'unhandledrejection'
+				? 'unhandledrejection'
+				: 'error',
+			message: typeof data.message === 'string' ? data.message : '',
+			filename: typeof data.filename === 'string' ? data.filename : null,
+			lineno: typeof data.lineno === 'number' ? data.lineno : null,
+			colno: typeof data.colno === 'number' ? data.colno : null,
+			stack: typeof data.stack === 'string' ? data.stack : null,
+		} );
+	}
+
+	// Iframe network completion — bridged from the fetch + XHR
+	// wrappers inside the chromeless iframe. Every completed call
+	// (success or failure) fires here. `status === 0` indicates a
+	// network-level failure before a response arrived; `failed` is
+	// pre-computed server-side so subscribers don't have to re-derive
+	// the success / 4xx / 5xx / network boundary.
+	if ( data.type === 'wp-desktop-iframe-network' ) {
+		doAction( HOOKS.IFRAME_NETWORK_COMPLETED, {
+			windowId: win.id,
+			method: typeof data.method === 'string' ? data.method : 'GET',
+			url: typeof data.url === 'string' ? data.url : '',
+			status: typeof data.status === 'number' ? data.status : 0,
+			duration: typeof data.duration === 'number' ? data.duration : 0,
+			failed: !! data.failed,
+		} );
 	}
 }
 

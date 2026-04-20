@@ -17,6 +17,72 @@ import { doAction, HOOKS } from '../hooks';
 import { DRAG_THRESHOLD_SQUARED, EDGE_MARGIN } from './constants';
 import type { Window } from './index';
 
+/**
+ * Build a rAF-coalesced emitter for `WINDOW_BOUNDS_CHANGED` during a
+ * drag or resize session.
+ *
+ * The emitter can be called at every `pointermove` but the actual
+ * hook fire happens at most once per animation frame — matches the
+ * cadence canvas wallpapers paint at, so a collision-aware wallpaper
+ * can use the payload directly without re-reading DOM rects. Frames
+ * where no move arrived are silent; frames with many coalesce into
+ * one fire carrying the latest geometry.
+ *
+ * The phase flag (`drag` vs. `resize`) is baked in at construction
+ * so subscribers can distinguish the two without inspecting window
+ * state. On the trailing edge — the frame in which the user has
+ * just released — the scheduled fire is suppressed: the
+ * `WINDOW_DRAG_END` / `WINDOW_RESIZE_END` hooks already carry the
+ * settled geometry, so firing bounds-changed there too would be a
+ * duplicate with ambiguous ordering.
+ */
+function makeBoundsEmitter(
+	win: Window,
+	phase: 'drag' | 'resize',
+): () => void {
+	let pending = false;
+	return () => {
+		if ( pending ) {
+			return;
+		}
+		pending = true;
+		requestAnimationFrame( () => {
+			pending = false;
+			// Trailing-edge guard: if the session ended between
+			// scheduling and the rAF callback firing, skip.
+			if ( phase === 'drag' && ! win._isDragging ) {
+				return;
+			}
+			if ( phase === 'resize' && ! win._isResizing ) {
+				return;
+			}
+			// Extra guard: if the window has been destroyed or detached
+			// between scheduling and firing (e.g. a close during drag),
+			// skip rather than touch a dead node. Also silences a
+			// test-only race where jsdom flushes a queued rAF after
+			// the test has torn down the hooks stub.
+			if ( win._isDestroyed || ! win.element.isConnected ) {
+				return;
+			}
+			try {
+				doAction( HOOKS.WINDOW_BOUNDS_CHANGED, {
+					windowId: win.id,
+					x: win.element.offsetLeft,
+					y: win.element.offsetTop,
+					width: win.element.offsetWidth,
+					height: win.element.offsetHeight,
+					state: win.state,
+					phase,
+				} );
+			} catch {
+				/* Pathological: the hook bus was removed mid-drag. No
+				 * good recovery — swallow so one wayward plugin can't
+				 * break pointer handling for the rest of the shell. */
+			}
+		} );
+	};
+}
+
 /** Snapshot of everything needed to commit a max/snap un-state. */
 interface UnstateParams {
 	isMaximized: boolean;
@@ -68,6 +134,12 @@ export function handleDragStart( win: Window, e: PointerEvent ): void {
 	// threshold crosses (which would warrant starting with the grid
 	// quantization already in effect).
 	const snap = win.snapConfigProvider?.() ?? { enabled: false, cellWidth: 0, cellHeight: 0 };
+
+	// Emitter for `WINDOW_BOUNDS_CHANGED` — rAF-coalesced so a
+	// pointermove storm collapses to one fire per paint. Built
+	// eagerly because the emitter carries per-drag state
+	// (pending-flag) and we want a fresh one for each session.
+	const emitBoundsChanged = makeBoundsEmitter( win, 'drag' );
 
 	// `started` flips true once the drag has actually begun. For
 	// windows that don't need un-state (state === 'normal' etc.) we
@@ -162,6 +234,11 @@ export function handleDragStart( win: Window, e: PointerEvent ): void {
 		// update the snap preview + arm the commit. Dragging outside
 		// the zone clears preview state.
 		win.onDragMove?.( win, ev.clientX, ev.clientY );
+
+		// Live bounds-changed hook — rAF-coalesced. Collision-aware
+		// wallpapers (snow piling on window tops, rain splash) listen
+		// here instead of polling `getBoundingClientRect` each frame.
+		emitBoundsChanged();
 	};
 
 	const releaseCapture = (): void => {
@@ -340,6 +417,12 @@ export function handleResizeStart( win: Window, e: PointerEvent ): void {
 	win.element.classList.add( 'wp-desktop-window--resizing' );
 	doAction( HOOKS.WINDOW_RESIZE_START, { windowId: win.id } );
 
+	// Per-session rAF-coalesced bounds emitter — same pattern as
+	// drag. Live wallpaper plugins hook the single
+	// `WINDOW_BOUNDS_CHANGED` action for both gestures and branch
+	// on the `phase` field.
+	const emitBoundsChanged = makeBoundsEmitter( win, 'resize' );
+
 	const snap = win.snapConfigProvider?.() ?? { enabled: false, cellWidth: 0, cellHeight: 0 };
 	if ( snap.enabled ) {
 		win.element.classList.add( 'wp-desktop-window--snap-drag' );
@@ -379,6 +462,8 @@ export function handleResizeStart( win: Window, e: PointerEvent ): void {
 		win.element.style.top = `${ geom.y }px`;
 		win.element.style.width = `${ geom.width }px`;
 		win.element.style.height = `${ geom.height }px`;
+
+		emitBoundsChanged();
 	};
 
 	const onResizeEnd = (): void => {

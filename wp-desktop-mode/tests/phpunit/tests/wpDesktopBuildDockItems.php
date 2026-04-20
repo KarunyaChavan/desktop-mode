@@ -38,6 +38,7 @@ class Tests_DesktopMode_WpDesktopBuildDockItems extends WP_UnitTestCase {
 		$submenu = $this->original_submenu;
 		remove_all_filters( 'wp_desktop_dock_items' );
 		remove_all_filters( 'wp_desktop_dock_item' );
+		remove_all_filters( 'wp_desktop_dock_placement' );
 		parent::tear_down();
 	}
 
@@ -370,5 +371,140 @@ class Tests_DesktopMode_WpDesktopBuildDockItems extends WP_UnitTestCase {
 		$this->assertSame( 'dashicons-admin-postonerroralert1', $items[0]['icon'] );
 		$this->assertStringNotContainsString( '"', $items[0]['icon'] );
 		$this->assertStringNotContainsString( ' ', $items[0]['icon'] );
+	}
+
+	/**
+	 * Every built dock item carries a `placement` field — `'dock'`
+	 * for core admin pages + CPTs, `'taskbar'` for plugin-installed
+	 * top-level routes.
+	 *
+	 * @covers ::wpdm_build_dock_items
+	 * @covers ::wpdm_is_core_menu_slug
+	 * @covers ::wpdm_dock_placement
+	 */
+	public function test_placement_distinguishes_core_from_plugin_menus() {
+		global $menu;
+		$menu = array(
+			$this->make_menu_row( 'Dashboard', 'read', 'index.php' ),
+			$this->make_menu_row( 'Posts', 'edit_posts', 'edit.php' ),
+			$this->make_menu_row( 'Settings', 'manage_options', 'options-general.php' ),
+			$this->make_menu_row( 'Plugins', 'activate_plugins', 'plugins.php' ),
+			// Plugin-registered top-level route. WP stores these as
+			// the slug passed to `add_menu_page()` (no .php extension)
+			// and routes them through admin.php?page=<slug>.
+			$this->make_menu_row( 'WooCommerce', 'read', 'woocommerce' ),
+			$this->make_menu_row( 'Yoast SEO', 'read', 'wpseo_dashboard' ),
+		);
+
+		$items = wpdm_build_dock_items();
+		$by_id = array();
+		foreach ( $items as $item ) {
+			$by_id[ $item['id'] ] = $item;
+		}
+
+		$this->assertSame( 'dock', $by_id['menu-index-php']['placement'] );
+		$this->assertSame( 'dock', $by_id['menu-edit-php']['placement'] );
+		$this->assertSame( 'dock', $by_id['menu-options-general-php']['placement'] );
+		$this->assertSame( 'dock', $by_id['menu-plugins-php']['placement'] );
+		$this->assertSame( 'taskbar', $by_id['menu-woocommerce']['placement'] );
+		$this->assertSame( 'taskbar', $by_id['menu-wpseo_dashboard']['placement'] );
+	}
+
+	/**
+	 * CPTs registered by plugins route through `edit.php?post_type=…`.
+	 * They should be treated as Core (left dock) because conceptually
+	 * they're content, same as Posts and Pages.
+	 *
+	 * @covers ::wpdm_is_core_menu_slug
+	 */
+	public function test_cpt_routes_count_as_core() {
+		$this->assertTrue( wpdm_is_core_menu_slug( 'edit.php?post_type=product' ) );
+		$this->assertTrue( wpdm_is_core_menu_slug( 'edit.php?post_type=wp_block' ) );
+	}
+
+	/**
+	 * `wp_desktop_dock_placement` lets plugins + site admins re-home
+	 * any menu item. Return `'dock'` to promote a plugin to the left
+	 * bar, `'taskbar'` to demote a core item to the bottom.
+	 *
+	 * @covers ::wpdm_dock_placement
+	 */
+	public function test_placement_filter_can_promote_or_demote() {
+		add_filter(
+			'wp_desktop_dock_placement',
+			static function ( $placement, $slug ) {
+				if ( 'jetpack' === $slug ) {
+					return 'dock';
+				}
+				if ( 'tools.php' === $slug ) {
+					return 'taskbar';
+				}
+				return $placement;
+			},
+			10,
+			2
+		);
+
+		$this->assertSame( 'dock', wpdm_dock_placement( 'jetpack' ) );
+		$this->assertSame( 'taskbar', wpdm_dock_placement( 'tools.php' ) );
+		// Unrelated slugs still get the default answer.
+		$this->assertSame( 'dock', wpdm_dock_placement( 'edit.php' ) );
+		$this->assertSame( 'taskbar', wpdm_dock_placement( 'my-other-plugin' ) );
+	}
+
+	/**
+	 * A filter that returns garbage is ignored — the heuristic's
+	 * default wins to keep the shell rendering predictably.
+	 *
+	 * @covers ::wpdm_dock_placement
+	 */
+	public function test_placement_filter_rejects_unknown_values() {
+		add_filter(
+			'wp_desktop_dock_placement',
+			static function () {
+				return 'sidebar'; // not a valid placement
+			}
+		);
+		$this->assertSame( 'dock', wpdm_dock_placement( 'edit.php' ) );
+		$this->assertSame( 'taskbar', wpdm_dock_placement( 'some-plugin' ) );
+	}
+
+	/**
+	 * Plugins that don't want to claim chrome real estate can return
+	 * `'hidden'` from the placement filter. The item must disappear
+	 * from both rails in the shell payload while still being a valid
+	 * server-side menu entry.
+	 *
+	 * @covers ::wpdm_dock_placement
+	 * @covers ::wpdm_build_menu_payload
+	 */
+	public function test_hidden_placement_removes_item_from_both_rails() {
+		add_filter(
+			'wp_desktop_dock_placement',
+			static function ( $placement, $slug ) {
+				if ( 'background-tool' === $slug ) {
+					return 'hidden';
+				}
+				return $placement;
+			},
+			10,
+			2
+		);
+
+		$this->assertSame( 'hidden', wpdm_dock_placement( 'background-tool' ) );
+
+		global $menu;
+		$menu = array(
+			$this->make_menu_row( 'Background Tool', 'manage_options', 'background-tool' ),
+			$this->make_menu_row( 'Other Plugin', 'manage_options', 'other-plugin' ),
+		);
+
+		$payload  = wpdm_build_menu_payload();
+		$dock_ids = wp_list_pluck( $payload['dockItems'], 'id' );
+		$bar_ids  = wp_list_pluck( $payload['taskbarItems'], 'id' );
+
+		$this->assertNotContains( 'menu-background-tool', $dock_ids );
+		$this->assertNotContains( 'menu-background-tool', $bar_ids );
+		$this->assertContains( 'menu-other-plugin', $bar_ids );
 	}
 }

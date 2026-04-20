@@ -118,6 +118,7 @@ export class WallpaperLayer {
 		} catch ( err ) {
 			// A throwing teardown shouldn't prevent subsequent mounts
 			// from succeeding. Log but keep going.
+			doAction( HOOKS.SHELL_ERROR, { scope: 'wallpaper-teardown', id, error: err } );
 			if ( typeof console !== 'undefined' ) {
 				console.error(
 					`[wp-desktop-mode] Wallpaper "${ id }" teardown threw:`,
@@ -220,6 +221,7 @@ export class WallpaperLayer {
 	private handleMountFailure( id: string, err: unknown ): void {
 		this.element.innerHTML = '';
 		doAction( HOOKS.WALLPAPER_MOUNT_FAILED, { id, error: err } );
+		doAction( HOOKS.SHELL_ERROR, { scope: 'wallpaper-mount', id, error: err } );
 		if ( typeof console !== 'undefined' ) {
 			console.error(
 				`[wp-desktop-mode] Wallpaper "${ id }" failed to mount:`,

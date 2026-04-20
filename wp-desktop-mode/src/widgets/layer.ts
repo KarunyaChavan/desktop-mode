@@ -36,6 +36,7 @@ import {
 	saveEnabledIds,
 	saveGeometry,
 } from './state';
+import { createWidgetStorage } from './storage';
 import type { WidgetGeometry, WidgetTeardown } from './types';
 
 /** First-run default — the clock. Removable like any other. */
@@ -176,6 +177,31 @@ export class WidgetLayer {
 	}
 
 	/**
+	 * Guarantee the widget identified by `id` is currently mounted,
+	 * adding it to the enabled list if it isn't. No-op when the
+	 * widget is already on screen. Intended for companion plugins
+	 * that want to pin their widget programmatically — a monitor
+	 * plugin that auto-pins itself on the first error burst, a
+	 * first-run onboarding flow that ensures the quick-start widget
+	 * is present, etc.
+	 *
+	 * Returns `true` when the widget is mounted (either newly added
+	 * or already present), `false` when the id isn't registered —
+	 * callers can branch on the failure without having to maintain
+	 * their own registry snapshot.
+	 */
+	public ensureMounted( id: string ): boolean {
+		if ( ! registry.get( id ) ) {
+			return false;
+		}
+		if ( this.enabledIds.includes( id ) ) {
+			return true;
+		}
+		this.add( id );
+		return true;
+	}
+
+	/**
 	 * Tear down every widget. Called on shell unload via `pagehide`
 	 * so intervals / RAF loops stop before the beacon flush.
 	 */
@@ -201,6 +227,7 @@ export class WidgetLayer {
 				onRemove: () => this.remove( id ),
 				onGeometryChanged: ( geom ) => this.persistGeometry( id, geom ),
 				onLiberate: ( geom ) => this.liberate( id, geom ),
+				onRedock: () => this.redock( id ),
 			},
 		);
 
@@ -215,7 +242,11 @@ export class WidgetLayer {
 		this.mounted.set( id, record );
 		this.placeCard( frame.card, floating );
 
-		const ctx = { id, pluginUrl: this.pluginUrl };
+		const ctx = {
+			id,
+			pluginUrl: this.pluginUrl,
+			storage: createWidgetStorage( id ),
+		};
 		doAction( HOOKS.WIDGET_MOUNTING, { id, container: frame.body, ctx } );
 
 		const onResolve = ( teardown: WidgetTeardown ): void => {
@@ -261,6 +292,7 @@ export class WidgetLayer {
 		try {
 			record.teardown?.();
 		} catch ( err ) {
+			doAction( HOOKS.SHELL_ERROR, { scope: 'widget-teardown', id, error: err } );
 			if ( typeof console !== 'undefined' ) {
 				console.error(
 					`[wp-desktop-mode] Widget "${ id }" teardown threw:`,
@@ -282,6 +314,7 @@ export class WidgetLayer {
 			this.mounted.delete( id );
 		}
 		doAction( HOOKS.WIDGET_MOUNT_FAILED, { id, error: err } );
+		doAction( HOOKS.SHELL_ERROR, { scope: 'widget-mount', id, error: err } );
 		if ( typeof console !== 'undefined' ) {
 			console.error(
 				`[wp-desktop-mode] Widget "${ id }" failed to mount:`,
@@ -344,6 +377,45 @@ export class WidgetLayer {
 		this.floatingHost.appendChild( record.frame.card );
 		applyGeometry( record.frame.card, geometry );
 		this.persistGeometry( id, geometry );
+		this.paintEmptyState();
+	}
+
+	/**
+	 * Inverse of {@link liberate}: move a floating card back into
+	 * the column and drop its persisted geometry so a subsequent
+	 * shell boot brings it up docked. Called when the user clicks
+	 * the re-dock button in the card's chrome header.
+	 *
+	 * Idempotent — a docked widget silently no-ops. The `--floating`
+	 * class on the card is removed as part of the same write so CSS
+	 * rules that depend on it (re-dock button visibility, absolute
+	 * positioning) flip back in one paint.
+	 */
+	private redock( id: string ): void {
+		const record = this.mounted.get( id );
+		if ( ! record || ! record.floating ) {
+			return;
+		}
+		record.floating = false;
+		// Clear the persisted geometry BEFORE re-parenting so a
+		// concurrent boot doesn't pick up stale floating coords.
+		if ( this.geometry[ id ] ) {
+			delete this.geometry[ id ];
+			saveGeometry( this.geometry );
+		}
+		// Strip the inline geometry so the card renders back at its
+		// flex-column natural size — no phantom left/top offsets
+		// bleed into column layout.
+		const card = record.frame.card;
+		card.classList.remove( 'wp-desktop-widgets__card--floating' );
+		card.style.left = '';
+		card.style.top = '';
+		card.style.width = '';
+		card.style.height = '';
+		// Re-append before the add-tile so the card lands at the
+		// bottom of the existing stack (matches the new-widget
+		// insertion order — "most recently added / redocked is last").
+		this.listEl.appendChild( card );
 		this.paintEmptyState();
 	}
 

@@ -63,8 +63,15 @@ document.addEventListener( 'wp-desktop-window-focused', ( e ) => {
 
 ---
 
+### `wp-desktop-window-closing` — Stable
+Fires when the user closes a window, BEFORE the outer element is detached from the DOM. Subscribers needing an element reference (wallpaper overlays anchored to specific windows, snow that has piled on the window top, measurement caches) should listen here rather than to `wp-desktop-window-closed` — by the time the `closed` handler runs the element may be mid-fade-out.
+
+**`detail` shape:** `{ windowId: string, element: HTMLElement }`
+
+---
+
 ### `wp-desktop-window-closed` — Stable
-Fires after the window is removed from the stack and begins its closing animation.
+Fires after the window is removed from the stack and begins its closing animation. Payload intentionally minimal; use `wp-desktop-window-closing` above when you need the element reference.
 
 **`detail` shape:** `{ windowId: string }`
 
@@ -126,6 +133,18 @@ manager.getByBaseId( baseId: string ): Window | undefined;
 manager.getAll(): Window[];
 manager.getFocused(): Window | undefined;
 manager.snapshot(): Session;
+manager.getVisibleRects(): VisibleWindowRect[];
+```
+
+**`getVisibleRects()`** — snapshot every open window's current geometry + state. One entry per window in the stack (regardless of virtual desktop), carrying a live element reference. Intended for wallpaper / overlay plugins that previously scraped `document.querySelectorAll( '.wp-desktop-window' )` and sniffed modifier class names to derive state. Callers filter on `state` themselves — minimized windows are included so the consumer can decide.
+
+```typescript
+interface VisibleWindowRect {
+    windowId: string;
+    rect: { x: number; y: number; width: number; height: number };
+    state: WindowState;
+    element: HTMLElement;
+}
 ```
 
 **Example — open a window from your own code:**
@@ -162,7 +181,18 @@ The server-side `wp_desktop_dock_item_multi` filter controls which admin pages s
 ---
 
 ### `dock` — Stable
-The `Dock` instance (or `null` if the dock element wasn't in the DOM). Calling it directly is usually unnecessary — dock items are data-driven via `wp_desktop_dock_items`.
+The left-edge `Dock` instance (or `null` if the dock element wasn't in the DOM). Hosts **core WordPress menus** — Dashboard, Posts, Pages, Media, Users, Settings, CPTs, taxonomies. Calling it directly is usually unnecessary — dock items are data-driven via `wp_desktop_dock_items`.
+
+---
+
+### `taskbar` — Stable
+The bottom-edge `Dock` instance (or `null` if the shell markup lacks the taskbar element OR if no plugin-contributed menus were routed to it). Hosts **installed-plugin top-level menus** — anything routed through `admin.php?page=*` that isn't recognized as a core file.
+
+Rendered as a floating macOS-style pill at the bottom of the shell. Same class, same tooltip / active-dot / "+" chip behaviour as the left dock — only orientation + CSS differ.
+
+Server-side the split is driven by `wpdm_dock_placement()` and the `wp_desktop_dock_placement` filter — see the [Hooks reference](./hooks-reference.md#wp_desktop_dock_placement--stable) for how to override routing (pin a plugin to the dock; move a core menu to the taskbar).
+
+**Icon fallback:** when a plugin registers a menu without a dashicon / SVG / URL, the taskbar renders a **letter badge** in a hue deterministically derived from the menu title. Same plugin, same colour across reloads. Plugins shipping their own icon art always override the fallback.
 
 ---
 
@@ -297,6 +327,7 @@ wp.hooks.addAction( 'wp-desktop.init', 'my-plugin/boot', () => {
 | `wp-desktop.wallpaper.unmounting` | action | Stable | `{ id }` |
 | `wp-desktop.wallpaper.mount-failed` | action | Stable | `{ id, error }` |
 | `wp-desktop.wallpaper.visibility` | action | Stable | `{ id, state: 'visible' \| 'hidden' }` |
+| `wp-desktop.wallpaper.surfaces` | filter | Stable | `WallpaperSurface[] → WallpaperSurface[]` — see below |
 
 #### Arrange & Overview
 
@@ -409,6 +440,7 @@ All window actions include at minimum `{ windowId: string }` — additional fiel
 | Hook | Kind | Status | Payload |
 |---|---|---|---|
 | `wp-desktop.window.opened` | action | Stable | `{ windowId, page, title, url }` |
+| `wp-desktop.window.closing` | action | Stable | `{ windowId, element }` — fires BEFORE the element is detached (use this when you need an element reference, e.g. for anchored wallpaper overlays) |
 | `wp-desktop.window.closed` | action | Stable | `{ windowId }` |
 | `wp-desktop.window.focused` | action | Stable | `{ windowId }` — fires on focus changes |
 | `wp-desktop.window.title-changed` | action | Stable | `{ windowId, title }` — iframe-sourced title updates |
@@ -424,7 +456,10 @@ All window actions include at minimum `{ windowId: string }` — additional fiel
 | `wp-desktop.window.resize-start` | action | Stable | `{ windowId }` |
 | `wp-desktop.window.resize-end` | action | Stable | `{ windowId, width, height }` |
 | `wp-desktop.window.resized` | action | Stable | `{ windowId, width, height }` — fires with resize-end |
+| `wp-desktop.window.bounds-changed` | action | Stable | `{ windowId, x, y, width, height, state, phase: 'drag' \| 'resize' }` — rAF-coalesced, fires at most once per animation frame during an active drag or resize. See below. |
 | `wp-desktop.window.detached` | action | Stable | `{ windowId, url }` — user opened in a classic-admin tab |
+
+**About `bounds-changed`.** Intended for per-frame collision-aware effects (snow piling on window tops, rain splashes, physics-driven overlays). Coalesced via `requestAnimationFrame` so a pointermove storm collapses to one fire per paint — matches the cadence a canvas wallpaper's own ticker runs at, and replaces the "poll `getBoundingClientRect` every rAF" pattern. NOT fired at drag/resize end — use `wp-desktop.window.drag-end` / `wp-desktop.window.resize-end` for settled geometry.
 
 The window hooks fan out alongside the existing `wp-desktop-window-*` CustomEvents (see section 2) — both APIs fire for every state change. New code should prefer the hook bus.
 
@@ -581,12 +616,76 @@ wp.desktop.registerWallpaper( {
 | `dock` | Stable | Dock instance (null if no dock element) |
 | `saveSession()` | Stable | Force a session write |
 | `hooks` | Stable | Alias of `window.wp.hooks` |
+| `taskbar` | Stable | Bottom-edge Dock instance (null if no element or no plugin menus routed to taskbar) |
 | `registerWallpaper( def )` | Stable | Add a wallpaper to the registry + re-apply |
+| `registerWidget( def )` | Stable | Add a widget to the registry |
 | `loadVendorScript( url )` | Stable | Memoized `<script>` injector. Low-level; most plugins use `needs` instead. |
+| `getWallpaperSurfaces()` | Stable | Live `WallpaperSurface[]` for collision-aware wallpapers. See "Wallpaper surfaces" below. |
 | `registerModule( def )` | Stable | Register a shared vendor library under a stable id. |
 | `loadModules( ids )` | Stable | Imperatively load registered modules. Usually unnecessary — canvas wallpapers declare `needs[]` and the shell resolves. |
 | `whenReady( cb )` | Stable | Run `cb` after `wp-desktop.init` has fired |
+| `refreshMenu()` | Stable | Force a refetch of the live admin-menu split. Auto-fired on plugin activation / deactivation. |
+| `setDefaultWindow( url \| null )` | Stable | Update the user's "open on startup" preference. |
 | `config` | Stable | The `DesktopConfig` that booted the shell |
+
+### Wallpaper surfaces
+
+Collision-aware wallpapers (snow, rain, leaves, particle effects) need to know where things can "land" — window tops, the desktop floor, the taskbar top, the dock's inline edge, widget cards. Rather than having every wallpaper hand-query the shell's DOM + hope the class names don't move, the shell emits a live surface list through `wp.desktop.getWallpaperSurfaces()`.
+
+```typescript
+interface WallpaperSurface {
+    id: string;             // 'window:foo', 'shell:floor', 'taskbar:top', 'dock:edge', 'widget:clock', or plugin-supplied
+    kind: 'window' | 'shell' | 'taskbar' | 'dock' | 'widget' | 'custom';
+    rect: { x: number; y: number; width: number; height: number };  // viewport coordinates
+    face: 'top' | 'bottom' | 'left' | 'right';  // which edge is solid
+    element: HTMLElement | null;                // null for synthetic surfaces
+}
+```
+
+**Shell-seeded surfaces** (the baseline, before the filter runs):
+
+- `window:<id>` — every non-minimized window's top edge (`face: 'top'`), one per window.
+- `shell:floor` — bottom edge of the shell container.
+- `taskbar:top` — top of the bottom taskbar pill, when present.
+- `dock:edge` — right (inline-end) edge of the left-edge dock.
+- `widget:<id>` — top edge of every mounted widget card.
+
+**Adding a custom surface.** Plugins that own floating DOM use the `wp-desktop.wallpaper.surfaces` filter:
+
+```javascript
+wp.hooks.addFilter(
+    'wp-desktop.wallpaper.surfaces',
+    'myplugin/picker',
+    ( surfaces ) => {
+        const picker = document.querySelector( '.myplugin-picker' );
+        if ( ! picker ) return surfaces;
+        const r = picker.getBoundingClientRect();
+        return [
+            ...surfaces,
+            {
+                id: 'myplugin:picker',
+                kind: 'custom',
+                rect: { x: r.left, y: r.top, width: r.width, height: r.height },
+                face: 'top',
+                element: picker,
+            },
+        ];
+    }
+);
+```
+
+**Usage from a canvas wallpaper:**
+
+```javascript
+function onTick() {
+    const surfaces = wp.desktop.getWallpaperSurfaces();
+    // Rebuild collision cache from `surfaces`, run physics step, draw.
+}
+```
+
+Call it each frame (or throttled — the function is cheap but it does walk the DOM). Rects are in viewport coordinates so a canvas mounted inside `#wp-desktop-wallpaper` can translate to its own drawing space using the wallpaper element's own `getBoundingClientRect()`.
+
+**Pair with `wp-desktop.window.bounds-changed`.** During a drag or resize the shell fires `bounds-changed` once per animation frame with the live `{ x, y, width, height }`. Subscribe there to invalidate your surface cache instead of polling `getBoundingClientRect()` each tick.
 
 ### Pre-registered modules
 

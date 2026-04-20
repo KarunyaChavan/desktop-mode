@@ -65,6 +65,14 @@ export interface FrameHandlers {
 	 * its state.
 	 */
 	onLiberate( initialGeometry: WidgetGeometry ): void;
+	/**
+	 * Fired when the user clicks the re-dock button in the chrome of
+	 * a floating widget. Handler should clear persisted geometry,
+	 * re-parent the card back into the right-column list, and remove
+	 * the `--floating` class so the card drops back into flow.
+	 * Inverse of `onLiberate`.
+	 */
+	onRedock(): void;
 }
 
 export interface FrameContext {
@@ -112,7 +120,7 @@ export function buildFrame(
 	// Chrome header only renders for movable widgets. Non-movable
 	// widgets keep the classic close-on-hover × in the top-right.
 	if ( movable ) {
-		card.appendChild( buildChrome( def, handlers.onRemove ) );
+		card.appendChild( buildChrome( def, handlers.onRemove, handlers.onRedock ) );
 	} else {
 		card.appendChild( buildCornerClose( def, handlers.onRemove ) );
 	}
@@ -192,7 +200,11 @@ export function buildFrame(
 // DOM builders
 // ------------------------------------------------------------------
 
-function buildChrome( def: WidgetDef, onRemove: () => void ): HTMLElement {
+function buildChrome(
+	def: WidgetDef,
+	onRemove: () => void,
+	onRedock: () => void,
+): HTMLElement {
 	const chrome = document.createElement( 'header' );
 	chrome.className = 'wp-desktop-widgets__chrome';
 
@@ -208,10 +220,56 @@ function buildChrome( def: WidgetDef, onRemove: () => void ): HTMLElement {
 	title.textContent = def.label;
 	chrome.appendChild( title );
 
+	// Re-dock button — inverse of the drag-to-liberate transition.
+	// Rendered unconditionally but hidden by CSS unless the card
+	// carries `--floating`, so a docked widget shows only the close
+	// button while a floating widget shows re-dock + close side by
+	// side. Cheaper than rebuilding chrome on state change.
+	chrome.appendChild( buildRedockButton( def, onRedock ) );
+
 	const close = buildCloseButton( def, onRemove );
 	chrome.appendChild( close );
 
 	return chrome;
+}
+
+/**
+ * Build the re-dock button — arrow pointing to the right-column
+ * home. Click fires `onRedock`, which the layer turns into a
+ * "remove geometry + re-parent to column" op (the inverse of
+ * liberate). Visibility is CSS-gated on the `--floating` class so
+ * it never appears on a docked widget; the DOM stays stable
+ * regardless.
+ */
+function buildRedockButton(
+	def: WidgetDef,
+	onRedock: () => void,
+): HTMLButtonElement {
+	const btn = document.createElement( 'button' );
+	btn.type = 'button';
+	btn.className = 'wp-desktop-widgets__card-redock';
+	btn.setAttribute(
+		'aria-label',
+		// translators: %s is the widget label (e.g., "Clock")
+		sprintf( __( 'Dock %s back to widget column' ), def.label ),
+	);
+	// Right-arrow + edge glyph: a rail-ish affordance pointing to
+	// where the widget is going back to. Inline SVG so the icon
+	// picks up `currentColor` like the close button above.
+	btn.innerHTML =
+		'<svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true">' +
+		'<path d="M2 6h6M5.5 3.5L8 6l-2.5 2.5M10 2.5v7" ' +
+		'stroke="currentColor" stroke-width="1.6" stroke-linecap="round" ' +
+		'stroke-linejoin="round" fill="none"/></svg>';
+	btn.addEventListener( 'click', ( e ) => {
+		e.preventDefault();
+		e.stopPropagation();
+		onRedock();
+	} );
+	// Drag-excluded — click on the button must fire the handler
+	// cleanly, not start a reparent-drag on the chrome.
+	btn.dataset.noDrag = 'true';
+	return btn;
 }
 
 function buildCornerClose( def: WidgetDef, onRemove: () => void ): HTMLElement {

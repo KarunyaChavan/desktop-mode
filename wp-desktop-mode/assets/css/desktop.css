@@ -381,6 +381,48 @@ body.wp-desktop-has-fullscreen-window .wp-desktop-shell {
 }
 
 /*
+ * Re-dock button — sits in the chrome next to the close button and
+ * returns a floating widget to the right column. Visibility is
+ * gated on the `--floating` modifier class so docked widgets never
+ * expose it (tapping it on a docked card would be a confusing
+ * no-op). The DOM node stays mounted either way so state flips
+ * don't rebuild chrome.
+ *
+ * Styling mirrors the inline close button: 20×20 round tile,
+ * dimmed by default, full-opacity on hover / focus. Distinct hover
+ * color (theme accent, not red) signals "put back" vs. "remove."
+ */
+.wp-desktop-widgets__card-redock {
+	display: none;
+	align-items: center;
+	justify-content: center;
+	padding: 0;
+	border: 0;
+	background: rgba( 0, 0, 0, 0.55 );
+	color: rgba( 255, 255, 255, 0.75 );
+	border-radius: 50%;
+	width: 20px;
+	height: 20px;
+	cursor: pointer;
+	opacity: 0.7;
+	transition:
+		opacity 0.15s ease,
+		background-color 0.15s ease,
+		color 0.15s ease;
+}
+
+.wp-desktop-widgets__card--floating .wp-desktop-widgets__card-redock {
+	display: flex;
+}
+
+.wp-desktop-widgets__card-redock:hover,
+.wp-desktop-widgets__card-redock:focus-visible {
+	opacity: 1;
+	background: var( --wp-admin-theme-color, #2271b1 );
+	color: #fff;
+}
+
+/*
  * Floating widgets — absolute-positioned, inline top/left/width/height
  * written by the frame. The hover translate-X effect would fight the
  * user's chosen position, so disable it.

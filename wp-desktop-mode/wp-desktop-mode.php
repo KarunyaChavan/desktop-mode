@@ -30,6 +30,7 @@ require_once WPDM_DIR . 'includes/session.php';
 require_once WPDM_DIR . 'includes/portal.php';
 require_once WPDM_DIR . 'includes/default-window.php';
 require_once WPDM_DIR . 'includes/media-query.php';
+require_once WPDM_DIR . 'includes/menu.php';
 require_once WPDM_DIR . 'includes/render.php';
 
 /**

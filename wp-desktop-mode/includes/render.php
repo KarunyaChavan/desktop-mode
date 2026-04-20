@@ -97,8 +97,17 @@ function wpdm_enqueue_assets() {
 		}
 	}
 
-	// Build dock items from the admin menu.
-	$dock_items = wpdm_build_dock_items();
+	// Build dock items from the admin menu, then split by placement.
+	// Core pages (Dashboard, Posts, Plugins, Users, Settings, …) go
+	// to the left-edge dock; installed-plugin top-level routes go to
+	// the bottom taskbar. `wpdm_is_core_menu_slug` is the heuristic;
+	// `wp_desktop_dock_placement` is the per-item filter escape hatch.
+	// `wpdm_build_menu_payload` is shared with the REST menu endpoint
+	// so a live refresh (post plugin-activation) produces the same
+	// split the boot payload did.
+	$menu_payload  = wpdm_build_menu_payload();
+	$dock_items    = $menu_payload['dockItems'];
+	$taskbar_items = $menu_payload['taskbarItems'];
 
 	// Build the current page URL from $pagenow + $_GET. Strip the portal
 	// marker so the derived window ID matches what the dock would produce
@@ -123,10 +132,12 @@ function wpdm_enqueue_assets() {
 	 *     @type string $currentIcon  Dashicon class for the current page.
 	 *     @type string $adminUrl     The base admin URL.
 	 *     @type string $colorScheme  The active admin color scheme.
-	 *     @type array  $dockItems    Dock items derived from admin menu.
+	 *     @type array  $dockItems    Dock items derived from the admin menu, filtered to CORE WordPress pages (Dashboard, Posts, Plugins, Users, Settings, CPTs…).
+	 *     @type array  $taskbarItems Plugin-contributed top-level menu items (admin.php?page=*). Rendered in the bottom taskbar — see `wpdm_dock_placement` + `wp_desktop_dock_placement` for the routing heuristic.
 	 *     @type array  $session      Saved session (windows, focused, updated).
 	 *     @type string $sessionUrl       REST endpoint for saving the session.
 	 *     @type string $mediaUrl         REST endpoint for media uploads (wp/v2/media).
+	 *     @type string $menuUrl          REST endpoint for fetching the current admin-menu split (live refresh after plugin activation/deactivation).
 	 *     @type string $defaultWindowUrl REST endpoint for saving the default-window preference.
 	 *     @type array  $defaultWindow    { enabled: bool, url: string } — current default-window preference.
 	 *     @type bool   $canUpload        Whether the user holds the `upload_files` capability.
@@ -145,9 +156,11 @@ function wpdm_enqueue_assets() {
 			'adminUrl'         => esc_url( admin_url() ),
 			'colorScheme'      => sanitize_html_class( get_user_option( 'admin_color' ), 'fresh' ),
 			'dockItems'        => $dock_items,
+			'taskbarItems'     => $taskbar_items,
 			'session'          => wpdm_get_session( get_current_user_id() ),
 			'sessionUrl'       => esc_url_raw( rest_url( 'wp-desktop/v1/session' ) ),
 			'mediaUrl'         => esc_url_raw( rest_url( 'wp/v2/media' ) ),
+			'menuUrl'          => esc_url_raw( rest_url( 'wp-desktop/v1/menu' ) ),
 			'defaultWindowUrl' => esc_url_raw( rest_url( 'wp-desktop/v1/default-window' ) ),
 			'defaultWindow'    => wpdm_get_default_window( get_current_user_id() ),
 			'canUpload'        => current_user_can( 'upload_files' ),
@@ -227,6 +240,23 @@ function wpdm_render_shell() {
 				<aside id="wp-desktop-widgets" class="wp-desktop-widgets" aria-label="<?php esc_attr_e( 'Widgets', 'wp-desktop-mode' ); ?>"></aside>
 			</div>
 		</div>
+		<?php
+		/*
+		 * Taskbar — bottom-edge horizontal rail for plugin-contributed
+		 * top-level menus (`admin.php?page=*` routes). Sibling of the
+		 * shell body rather than a child, so the column flex layout
+		 * gives body `flex: 1` and the taskbar auto-sized height at
+		 * the bottom. JS hides it (`hidden=true`) when no plugins
+		 * contributed taskbar items — see `src/desktop.ts`.
+		 *
+		 * Shares `Dock` class + CSS with the left-edge dock, switched
+		 * to horizontal via the `--horizontal` modifier + orientation
+		 * argument to the TS constructor. Tooltip anchors flip to
+		 * above-tile and the active-window indicator dot flips to the
+		 * top of each tile — see dock.css.
+		 */
+		?>
+		<nav id="wp-desktop-taskbar" class="wp-desktop-dock wp-desktop-dock--horizontal" role="toolbar" aria-label="<?php esc_attr_e( 'Plugin navigation', 'wp-desktop-mode' ); ?>"></nav>
 	</div>
 	<?php
 	/**
@@ -365,6 +395,39 @@ function wpdm_chromeless_bridge_script() {
 	 */
 	do_action( 'wp_desktop_chromeless_after', isset( $GLOBALS['hook_suffix'] ) ? $GLOBALS['hook_suffix'] : '' );
 
+	// Menu payload — built from the LIVE $menu / $submenu globals
+	// populated by real admin-context bootstrapping. We capture it here
+	// rather than making the parent refetch via REST because many
+	// plugins evaluate `is_admin()` at plugin-file-load time and only
+	// register their `admin_menu` hook when it returns true; in a REST
+	// context `WP_ADMIN` isn't defined at load, so those plugins never
+	// hook in and their menu entries are missing from any endpoint we
+	// could expose. Here we're INSIDE an admin request (plugins.php,
+	// plugin-install.php, update.php, themes.php) where every plugin's
+	// menu registered normally, so `$menu` carries the authoritative
+	// post-activation state.
+	//
+	// Narrowed to the set of pages whose completion commonly mutates
+	// the admin menu (activation / deactivation / install / theme
+	// switch). Navigating to edit.php or similar doesn't change the
+	// menu so we don't bother sending a payload — the debounce +
+	// idempotent replaceItems on the parent side would still make it
+	// safe, just wasteful.
+	$menu_payload_json = 'null';
+	$pagenow           = isset( $GLOBALS['pagenow'] ) ? (string) $GLOBALS['pagenow'] : '';
+	if (
+		in_array(
+			$pagenow,
+			array( 'plugins.php', 'plugin-install.php', 'update.php', 'themes.php' ),
+			true
+		)
+	) {
+		$encoded = wp_json_encode( wpdm_build_menu_payload() );
+		if ( false !== $encoded ) {
+			$menu_payload_json = $encoded;
+		}
+	}
+
 	// Emit via wp_print_inline_script_tag so CSP nonces and `<script>`
 	// attribute hygiene go through Core rather than being hand-rolled.
 	$js = <<<'JS'
@@ -389,6 +452,218 @@ function wpdm_chromeless_bridge_script() {
 			 * navigate somewhere worse. */
 		}
 		return;
+	}
+
+	/*
+	 * Observability — iframe error + network capture.
+	 *
+	 * Everything admin-interesting (REST failures from Gutenberg,
+	 * admin-ajax 500s, plugin console warnings) fires INSIDE the
+	 * iframe whose parent is the desktop shell. Without relaying
+	 * those events to the shell, monitor / debug widgets would only
+	 * ever see the shell's own errors — the smallest, least-
+	 * interesting surface in the whole admin.
+	 *
+	 * Two listeners and two wrappers land here:
+	 *
+	 *   - `error` + `unhandledrejection` on window → postMessage
+	 *     `wp-desktop-iframe-error`. Parent dispatches `HOOKS.
+	 *     IFRAME_ERROR`.
+	 *   - `fetch` + `XMLHttpRequest` are wrapped so every completed
+	 *     request (including failures) posts
+	 *     `wp-desktop-iframe-network` with `{ method, url, status,
+	 *     duration, failed }`. Parent dispatches `HOOKS.
+	 *     IFRAME_NETWORK_COMPLETED`.
+	 *
+	 * Privacy: request / response bodies are NEVER captured — only
+	 * method, URL, status, duration. Monitor widgets that want the
+	 * full payload must ship their own deeper wrapper (at which
+	 * point they own the consent conversation).
+	 */
+	try {
+		window.addEventListener( 'error', function ( e ) {
+			try {
+				window.parent.postMessage( {
+					type: 'wp-desktop-iframe-error',
+					kind: 'error',
+					message: e && e.message ? String( e.message ) : '',
+					filename: e && e.filename ? String( e.filename ) : null,
+					lineno: e && typeof e.lineno === 'number' ? e.lineno : null,
+					colno: e && typeof e.colno === 'number' ? e.colno : null,
+					stack: e && e.error && e.error.stack ? String( e.error.stack ) : null
+				}, window.location.origin );
+			} catch ( _err ) { /* swallow: don't let the relay compound the error */ }
+		} );
+
+		window.addEventListener( 'unhandledrejection', function ( e ) {
+			try {
+				var reason = e && 'reason' in e ? e.reason : null;
+				var message = '';
+				var stack = null;
+				if ( reason instanceof Error ) {
+					message = reason.message;
+					stack = reason.stack || null;
+				} else if ( reason !== null && reason !== undefined ) {
+					try { message = String( reason ); } catch ( _s ) { message = '[unstringifiable]'; }
+				}
+				window.parent.postMessage( {
+					type: 'wp-desktop-iframe-error',
+					kind: 'unhandledrejection',
+					message: message,
+					filename: null,
+					lineno: null,
+					colno: null,
+					stack: stack
+				}, window.location.origin );
+			} catch ( _err ) { /* swallow */ }
+		} );
+
+		var wpdReportNetwork = function ( method, url, status, duration, failed ) {
+			try {
+				window.parent.postMessage( {
+					type: 'wp-desktop-iframe-network',
+					method: String( method || 'GET' ).toUpperCase(),
+					url: String( url || '' ),
+					status: typeof status === 'number' ? status : 0,
+					duration: typeof duration === 'number' ? duration : 0,
+					failed: !! failed
+				}, window.location.origin );
+			} catch ( _err ) { /* swallow */ }
+		};
+
+		// Wrap fetch. Called AFTER `admin_footer` runs — plugin code
+		// using fetch during synchronous page boot (rare in wp-admin)
+		// bypasses this, but lazy calls (the common case) are captured.
+		if ( typeof window.fetch === 'function' ) {
+			var wpdOrigFetch = window.fetch;
+			window.fetch = function ( input, init ) {
+				var start = ( typeof performance !== 'undefined' && performance.now )
+					? performance.now()
+					: Date.now();
+				var method = 'GET';
+				var url = '';
+				if ( typeof input === 'string' ) {
+					url = input;
+					if ( init && typeof init.method === 'string' ) {
+						method = init.method;
+					}
+				} else if ( input && typeof input === 'object' ) {
+					url = input.url || '';
+					method = ( input.method || ( init && init.method ) || 'GET' );
+				}
+				var promise;
+				try {
+					promise = wpdOrigFetch.apply( this, arguments );
+				} catch ( sync ) {
+					wpdReportNetwork( method, url, 0, 0, true );
+					throw sync;
+				}
+				return promise.then(
+					function ( res ) {
+						var dur = ( ( typeof performance !== 'undefined' && performance.now )
+							? performance.now()
+							: Date.now() ) - start;
+						wpdReportNetwork( method, url, res.status, Math.round( dur ), ! res.ok );
+						return res;
+					},
+					function ( err ) {
+						var dur = ( ( typeof performance !== 'undefined' && performance.now )
+							? performance.now()
+							: Date.now() ) - start;
+						wpdReportNetwork( method, url, 0, Math.round( dur ), true );
+						throw err;
+					}
+				);
+			};
+		}
+
+		// Wrap XHR — admin-ajax runs through jQuery which runs through
+		// XHR, so fetch-only instrumentation would miss most of the
+		// legacy admin surface. Record method + URL on open; fire on
+		// loadend regardless of success / failure.
+		if ( typeof XMLHttpRequest !== 'undefined' ) {
+			var wpdOrigOpen = XMLHttpRequest.prototype.open;
+			var wpdOrigSend = XMLHttpRequest.prototype.send;
+			XMLHttpRequest.prototype.open = function ( method, url ) {
+				try {
+					this.__wpdMethod = method;
+					this.__wpdUrl = url;
+				} catch ( _err ) { /* frozen instance — skip */ }
+				return wpdOrigOpen.apply( this, arguments );
+			};
+			XMLHttpRequest.prototype.send = function () {
+				var xhr = this;
+				var start = ( typeof performance !== 'undefined' && performance.now )
+					? performance.now()
+					: Date.now();
+				var fire = function () {
+					var dur = ( ( typeof performance !== 'undefined' && performance.now )
+						? performance.now()
+						: Date.now() ) - start;
+					wpdReportNetwork(
+						xhr.__wpdMethod,
+						xhr.__wpdUrl,
+						xhr.status,
+						Math.round( dur ),
+						xhr.status === 0 || xhr.status >= 400
+					);
+				};
+				try {
+					xhr.addEventListener( 'loadend', fire );
+				} catch ( _err ) { /* swallow */ }
+				return wpdOrigSend.apply( this, arguments );
+			};
+		}
+	} catch ( _err ) {
+		/* Whole observability block is best-effort. If something in
+		 * the environment disagrees (frozen prototypes, CSP blocking
+		 * postMessage, etc.) we don't want to tank the rest of the
+		 * chromeless bridge. */
+	}
+
+	/*
+	 * Menu-changed signal.
+	 *
+	 * The shell's dock + taskbar are built from `$menu` at page-load
+	 * time and then frozen — the iframe reload that follows plugin
+	 * activation / deactivation / installation doesn't tell the
+	 * parent the admin menu just mutated. This handler fires inside
+	 * the iframe that JUST LOADED plugins.php (or a sibling menu-
+	 * affecting page) and hands the parent a fresh payload the PHP
+	 * side built server-side from the live $menu globals.
+	 *
+	 * Why not a REST roundtrip: plugins commonly gate their
+	 * `admin_menu` registration on `is_admin()` evaluated AT PLUGIN
+	 * LOAD. REST requests don't define `WP_ADMIN` at plugin-load
+	 * time, so those plugins never register and a REST-context
+	 * bootstrap can't retroactively make them. By capturing the
+	 * payload here, inside a real admin context, we get the
+	 * authoritative post-activation state that any REST endpoint
+	 * would miss.
+	 *
+	 * Covered pages:
+	 *   - plugins.php         — activate, deactivate, bulk, delete.
+	 *   - plugin-install.php  — install new, install-and-activate.
+	 *   - update.php          — update / install handler (install-
+	 *                           plugin + upload-plugin actions).
+	 *   - themes.php          — theme switch (rare but can add menus).
+	 */
+	var __WP_DESKTOP_MENU_PAYLOAD__ = /*__WPDM_MENU_PAYLOAD__*/;
+	try {
+		if ( __WP_DESKTOP_MENU_PAYLOAD__ ) {
+			window.parent.postMessage(
+				{
+					type: 'wp-desktop-plugins-changed',
+					payload: __WP_DESKTOP_MENU_PAYLOAD__
+				},
+				window.location.origin
+			);
+		}
+	} catch ( err ) {
+		/* postMessage throws only on structured-clone failures, which
+		 * this static payload won't hit. Swallow defensively so a
+		 * wayward extension wrapping window.parent can't break the
+		 * rest of the bridge. */
 	}
 
 	/*
@@ -675,6 +950,13 @@ function wpdm_chromeless_bridge_script() {
 	} );
 } )();
 JS;
+
+	// Substitute the server-built menu payload into the bridge
+	// script. `wp_json_encode` guarantees safe JSON output — no need
+	// for an additional escape pass. When the page isn't on our
+	// menu-altering allowlist the placeholder resolves to `null` and
+	// the bridge skips the postMessage.
+	$js = str_replace( '/*__WPDM_MENU_PAYLOAD__*/', $menu_payload_json, $js );
 
 	wp_print_inline_script_tag( $js );
 }

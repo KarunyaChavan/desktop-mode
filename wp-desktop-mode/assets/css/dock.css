@@ -159,6 +159,37 @@
 	fill: currentColor;
 }
 
+/*
+ * Letter-badge icon — rendered for items registered without a
+ * dashicon / SVG / image URL. Visually a miniature macOS-style
+ * "app placeholder": rounded square tinted with a title-derived
+ * hue, first letter of the title centered inside. Sized a little
+ * larger than a bare dashicon so the letter has visual weight.
+ */
+.wp-desktop-dock__item-letter {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	border-radius: 8px;
+	color: #fff;
+	font-size: 15px;
+	font-weight: 700;
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+	line-height: 1;
+	letter-spacing: 0;
+	text-shadow: 0 1px 1px rgba( 0, 0, 0, 0.22 );
+	/*
+	 * Inner highlight + subtle outer darkening gives the tile a
+	 * tiny bevel. Keeps the letter badge from looking flat next to
+	 * real app icons on the taskbar.
+	 */
+	box-shadow:
+		inset 0 1px 0 rgba( 255, 255, 255, 0.2 ),
+		inset 0 -1px 0 rgba( 0, 0, 0, 0.15 );
+}
+
 .wp-desktop-dock__item img.wp-desktop-dock__item-img {
 	width: var(--wp-desktop-dock-icon-size, 20px);
 	height: var(--wp-desktop-dock-icon-size, 20px);
@@ -236,4 +267,168 @@
 /* System tiles — same footprint as menu tiles, no badges, no rails. */
 .wp-desktop-dock__item--system .wp-desktop-dock__item-primary {
 	color: rgba(255, 255, 255, 0.8);
+}
+
+/* ---------------------------------------------------------------
+ * Horizontal (taskbar) orientation.
+ *
+ * The taskbar shares the Dock class and most of the CSS above —
+ * these rules only override the parts that are axis-dependent:
+ * the container's flex direction, the separator between menu and
+ * system items, the active-indicator dot position, and the
+ * tooltip anchor.
+ *
+ * Rendered as a sibling of `.wp-desktop-shell__body` at the
+ * bottom of `#wp-desktop-shell` (see includes/render.php) — the
+ * shell is a column flex, so the taskbar takes its natural
+ * height at the bottom and the body flex-1 shrinks vertically
+ * to fit.
+ *
+ * Used for plugin-contributed top-level admin menus
+ * (`admin.php?page=*`) — see wpdm_dock_placement in helpers.php.
+ * --------------------------------------------------------------- */
+
+.wp-desktop-dock--horizontal {
+	/*
+	 * Floating pill — detaches from the shell edges AND the shell's
+	 * column flex. An earlier version used `align-self: center` +
+	 * `margin: 0 0 12px` which worked visually but left the taskbar
+	 * as a flex sibling that stole vertical space: the left dock
+	 * couldn't reach the bottom of the shell because the column
+	 * flex partitioned the height between body and taskbar.
+	 *
+	 * `position: absolute` pulls the taskbar out of flow entirely
+	 * — the shell body (dock + desktop area) regains the full shell
+	 * height and the taskbar hovers above as pure chrome. Matches
+	 * the macOS Dock, which is a floating layer over the desktop
+	 * rather than a reserved strip.
+	 *
+	 * Centered horizontally via symmetric insets + `margin: auto`
+	 * (direction-agnostic for RTL). Width: fit-content so the pill
+	 * sizes to its tile count; max-width caps it on narrow
+	 * viewports so it never collides with the right-edge widgets
+	 * column.
+	 */
+	position: absolute;
+	inset-inline-start: 0;
+	inset-inline-end: 0;
+	bottom: 12px;
+	margin: 0 auto;
+	width: fit-content;
+	max-width: calc( 100% - 32px );
+	flex-direction: row;
+	justify-content: center;
+	padding: 8px 12px;
+	gap: 6px;
+	border-radius: 18px;
+
+	/*
+	 * Glass tint distinct from the left dock. Slightly warmer, more
+	 * saturated, and more translucent so the wallpaper showing
+	 * through reads as deliberate chrome — not a clone of the
+	 * sidebar.
+	 */
+	background: rgba( 22, 22, 26, 0.42 );
+	backdrop-filter: blur( 28px ) saturate( 170% );
+	-webkit-backdrop-filter: blur( 28px ) saturate( 170% );
+
+	/*
+	 * 1 px hairline border wraps the pill; the inset highlight at
+	 * the top adds just enough of a bevel that the pill reads as a
+	 * physical object lifted off the wallpaper. The drop shadow is
+	 * soft and wide — no harsh edge — so the pill floats rather
+	 * than stamping.
+	 */
+	border: 1px solid rgba( 255, 255, 255, 0.12 );
+	border-inline-end: 1px solid rgba( 255, 255, 255, 0.12 );
+	border-block-start: 1px solid rgba( 255, 255, 255, 0.18 );
+	box-shadow:
+		inset 0 1px 0 rgba( 255, 255, 255, 0.08 ),
+		0 10px 32px rgba( 0, 0, 0, 0.45 );
+}
+
+/*
+ * When empty (all plugin menus filtered out, or no plugins
+ * registered one), JS sets `hidden` which maps to `display:
+ * none`. Nothing else to do — the shell's column flex reclaims
+ * the space automatically.
+ */
+.wp-desktop-dock--horizontal[hidden] {
+	display: none;
+}
+
+/*
+ * The separator between menu items and JS-registered system
+ * items is vertical in the left dock (horizontal line rule with
+ * margin-top: auto pushing system items to the bottom). In the
+ * taskbar it's a vertical hairline with margin-inline-start:
+ * auto so system items cluster at the right edge.
+ *
+ * Today there are no system items on the taskbar, but the rule
+ * is here so Jorvy / future plugins that want to register a
+ * shell-level tile via `appendSystemItem` don't need a CSS
+ * change.
+ */
+.wp-desktop-dock--horizontal .wp-desktop-dock__separator {
+	width: 1px;
+	height: 60%;
+	margin: auto 4px auto 8px;
+	margin-inline-start: auto;
+}
+
+/*
+ * Active-indicator dot flips from left-edge vertical pill to
+ * below-tile horizontal pill — macOS Dock convention. The
+ * absolute positioning still reads `inset-inline-*` so RTL
+ * layouts get the same centered anchor.
+ */
+.wp-desktop-dock--horizontal .wp-desktop-dock__item--active::before {
+	inset-inline-start: 50%;
+	top: auto;
+	bottom: -4px;
+	transform: translateX(-50%);
+}
+
+.wp-desktop-dock--horizontal .wp-desktop-dock__item--focused::before {
+	width: 16px;
+	height: 4px;
+	border-radius: 2px;
+}
+
+/*
+ * The "Open another" floating chip sits off the right edge of
+ * tiles in the vertical dock. On the horizontal taskbar the
+ * same position would overlap the next tile — move it to the
+ * top-right corner of the tile instead. Same visual affordance
+ * ("+" badge on a tile that already has ≥1 instance) but
+ * positioned where it doesn't collide with neighbours.
+ */
+.wp-desktop-dock--horizontal .wp-desktop-dock__item-new {
+	top: -6px;
+	inset-inline-end: -6px;
+	transform: none;
+}
+
+.wp-desktop-dock--horizontal .wp-desktop-dock__item-new:hover {
+	transform: scale(1.1);
+}
+
+/*
+ * Tooltip-above variant — tooltip positions itself above the
+ * hovered tile instead of to the right of the dock. JS writes
+ * the anchor coordinates (left = tile horizontal center, top =
+ * tile top - 14px); CSS translates the tooltip up by its own
+ * height so it sits cleanly above the tile.
+ *
+ * Entry animation still uses the opacity + small translate
+ * pattern — we bake the -100% Y offset into the base transform
+ * so the animation just changes the Y delta.
+ */
+.wp-desktop-dock__tooltip--above {
+	inset-inline-start: auto;
+	transform: translate(-50%, calc(-100% - 4px));
+}
+
+.wp-desktop-dock__tooltip--above.wp-desktop-dock__tooltip--visible {
+	transform: translate(-50%, -100%);
 }

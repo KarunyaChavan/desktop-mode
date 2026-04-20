@@ -8,12 +8,12 @@ A high-level tour, mostly so hook reference + examples make sense.
 Browser tab
 ├── Parent shell  (wp-admin, desktop class on body)
 │   ├── Admin bar            — classic WP toolbar + desktop-mode toggle
-│   ├── Dock                 — left edge, icons from $menu
+│   ├── Dock                 — left edge, core WP menus from $menu
 │   ├── Desktop area         — wallpaper; hosts windows + desktop icons
 │   │   ├── Window A         — <iframe src="edit.php?wp_desktop=1">
 │   │   ├── Window B         — <iframe src="upload.php?wp_desktop=1">
 │   │   └── Window C (native)— <div> with plugin-rendered content
-│   └── Taskbar (planned)    — per-window tabs + clock
+│   └── Taskbar              — bottom pill, plugin-contributed admin.php?page=* menus
 │
 └── Each iframe renders a chromeless admin page
     — real WordPress request, stripped of wp-admin chrome

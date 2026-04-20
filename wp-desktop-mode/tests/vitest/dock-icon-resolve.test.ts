@@ -1,0 +1,290 @@
+/**
+ * Icon-resolver + letter-badge fallback tests for `src/dock.ts`.
+ *
+ * The resolver is a private method so we exercise it through the
+ * public `Dock` constructor — render the dock, inspect the produced
+ * DOM. That also catches any caller/callee skew between
+ * `createItemButton` / `createSystemItemButton` and the icon path.
+ *
+ * The title→hue hash is exported directly — it's a pure function and
+ * the hash stability is a public contract (same plugin, same colour
+ * across reloads), so it gets its own tests.
+ */
+import { afterEach, beforeEach, describe, expect, test } from 'vitest';
+import { Dock, hashTitleToHue, type DockItem } from '../../src/dock';
+import { installHooksStub, clearHooksStub } from './helpers/hooks-stub';
+
+// Minimal WindowManager stub. The icon resolver never consults the
+// manager, so the Dock doesn't need the real one — just enough
+// surface to satisfy the constructor + updateActiveStates().
+function makeManagerStub() {
+	return {
+		getFocused: () => null,
+		getAllByBaseId: () => [],
+		getById: () => undefined,
+		getActiveDesktopId: () => 'default-1',
+	} as unknown as ConstructorParameters< typeof Dock >[ 1 ];
+}
+
+function makeItem( overrides: Partial< DockItem > = {} ): DockItem {
+	return {
+		id: 'some-plugin',
+		title: 'Analytics',
+		icon: '',
+		url: 'http://localhost/wp-admin/admin.php?page=some-plugin',
+		badge: 0,
+		submenu: [],
+		multi: false,
+		...overrides,
+	};
+}
+
+function mountDock( items: DockItem[], orientation: 'left' | 'bottom' = 'bottom' ) {
+	const container = document.createElement( 'nav' );
+	document.body.appendChild( container );
+	const dock = new Dock( container, makeManagerStub(), items, 'http://localhost/wp-admin/', orientation );
+	return { container, dock };
+}
+
+describe( 'dock icon resolution', () => {
+	beforeEach( () => installHooksStub() );
+	afterEach( () => {
+		clearHooksStub();
+		document.body.innerHTML = '';
+	} );
+
+	test( 'dashicons class renders a dashicon span', () => {
+		const { container } = mountDock( [ makeItem( { icon: 'dashicons-chart-bar' } ) ] );
+		const icon = container.querySelector( '.dashicons' );
+		expect( icon ).not.toBeNull();
+		expect( icon?.className ).toContain( 'dashicons-chart-bar' );
+		expect( container.querySelector( '.wp-desktop-dock__item-letter' ) ).toBeNull();
+	} );
+
+	test( 'inline SVG data URI renders a background-image span', () => {
+		const svg = 'PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciLz4=';
+		const { container } = mountDock( [ makeItem( { icon: `data:image/svg+xml;base64,${ svg }` } ) ] );
+		const icon = container.querySelector< HTMLElement >( '.wp-desktop-dock__item-svg' );
+		expect( icon ).not.toBeNull();
+		expect( icon?.style.backgroundImage ).toContain( 'data:image/svg+xml;base64,' );
+	} );
+
+	test( 'http URL renders an <img>', () => {
+		const { container } = mountDock( [
+			makeItem( { icon: 'http://localhost/plugin-icon.png' } ),
+		] );
+		const img = container.querySelector< HTMLImageElement >(
+			'img.wp-desktop-dock__item-img',
+		);
+		expect( img ).not.toBeNull();
+		expect( img?.src ).toContain( '/plugin-icon.png' );
+	} );
+
+	test( 'missing icon falls back to a letter badge from the title', () => {
+		const { container } = mountDock( [ makeItem( { icon: '', title: 'Jetpack' } ) ] );
+		const badge = container.querySelector< HTMLElement >(
+			'.wp-desktop-dock__item-letter',
+		);
+		expect( badge ).not.toBeNull();
+		expect( badge?.textContent ).toBe( 'J' );
+		// Background gradient was written inline and references HSL.
+		expect( badge?.style.background ).toContain( 'linear-gradient' );
+		expect( badge?.style.background ).toContain( 'hsl' );
+	} );
+
+	test( "'none' icon falls back to the letter badge", () => {
+		const { container } = mountDock( [ makeItem( { icon: 'none', title: 'WooCommerce' } ) ] );
+		expect(
+			container.querySelector< HTMLElement >( '.wp-desktop-dock__item-letter' )
+				?.textContent,
+		).toBe( 'W' );
+	} );
+
+	test( "'div' sentinel icon falls back to the letter badge", () => {
+		const { container } = mountDock( [ makeItem( { icon: 'div', title: 'Yoast SEO' } ) ] );
+		expect(
+			container.querySelector< HTMLElement >( '.wp-desktop-dock__item-letter' )
+				?.textContent,
+		).toBe( 'Y' );
+	} );
+
+	test( 'malformed SVG data URI falls back to the letter badge', () => {
+		// Payload isn't valid base64 — resolver rejects it and falls
+		// through to the letter badge rather than shipping a broken image.
+		const { container } = mountDock( [
+			makeItem( { icon: 'data:image/svg+xml;base64,not-b64!', title: 'Queue' } ),
+		] );
+		const badge = container.querySelector< HTMLElement >(
+			'.wp-desktop-dock__item-letter',
+		);
+		expect( badge ).not.toBeNull();
+		expect( badge?.textContent ).toBe( 'Q' );
+	} );
+
+	test( 'letter uppercases and accepts non-ASCII first characters', () => {
+		const { container } = mountDock( [
+			makeItem( { icon: '', title: 'über-analytics' } ),
+		] );
+		expect(
+			container.querySelector< HTMLElement >( '.wp-desktop-dock__item-letter' )
+				?.textContent,
+		).toBe( 'Ü' );
+	} );
+
+	test( 'empty title degrades to ? on the fallback badge', () => {
+		const { container } = mountDock( [ makeItem( { icon: '', title: '   ' } ) ] );
+		expect(
+			container.querySelector< HTMLElement >( '.wp-desktop-dock__item-letter' )
+				?.textContent,
+		).toBe( '?' );
+	} );
+} );
+
+describe( 'hashTitleToHue', () => {
+	test( 'is deterministic — same input → same output', () => {
+		expect( hashTitleToHue( 'Jetpack' ) ).toBe( hashTitleToHue( 'Jetpack' ) );
+		expect( hashTitleToHue( 'WooCommerce' ) ).toBe( hashTitleToHue( 'WooCommerce' ) );
+	} );
+
+	test( 'produces a value in [0, 360)', () => {
+		for ( const title of [ 'A', 'Jetpack', 'WooCommerce', 'Yoast', 'überwatch', 'plugin-with-dashes' ] ) {
+			const hue = hashTitleToHue( title );
+			expect( hue ).toBeGreaterThanOrEqual( 0 );
+			expect( hue ).toBeLessThan( 360 );
+			expect( Number.isInteger( hue ) ).toBe( true );
+		}
+	} );
+
+	test( 'empty string resolves to a neutral hue', () => {
+		expect( hashTitleToHue( '' ) ).toBe( 214 );
+	} );
+
+	test( 'tends to spread titles across the hue wheel', () => {
+		// Twelve realistic plugin names — we don't guarantee perfect
+		// distribution, but we do guarantee they're not all collapsed
+		// to the same hue. "All distinct" is stronger than the
+		// contract but a useful smoke signal that the hash is working.
+		const titles = [
+			'Jetpack',
+			'Yoast',
+			'WooCommerce',
+			'Elementor',
+			'Akismet',
+			'Wordfence',
+			'Contact Form 7',
+			'BuddyPress',
+			'bbPress',
+			'WP Super Cache',
+			'Redirection',
+			'Query Monitor',
+		];
+		const hues = titles.map( hashTitleToHue );
+		const unique = new Set( hues );
+		// Two collisions worth of slack — the algorithm is a weak
+		// hash, but still shouldn't collapse real-world titles to a
+		// single bucket.
+		expect( unique.size ).toBeGreaterThanOrEqual( titles.length - 2 );
+	} );
+} );
+
+describe( 'Dock.replaceItems', () => {
+	beforeEach( () => installHooksStub() );
+	afterEach( () => {
+		clearHooksStub();
+		document.body.innerHTML = '';
+	} );
+
+	test( 'rebuilds menu tiles with the new list', () => {
+		const { container, dock } = mountDock( [
+			makeItem( { id: 'plugin-a', title: 'Analytics', icon: 'dashicons-chart-bar' } ),
+			makeItem( { id: 'plugin-b', title: 'Backup', icon: 'dashicons-backup' } ),
+		] );
+		expect( container.querySelectorAll( '.wp-desktop-dock__item' ).length ).toBe( 2 );
+
+		dock.replaceItems( [
+			makeItem( { id: 'plugin-c', title: 'Commerce', icon: 'dashicons-cart' } ),
+		] );
+
+		const tiles = container.querySelectorAll( '.wp-desktop-dock__item' );
+		expect( tiles.length ).toBe( 1 );
+		const slug = ( tiles[ 0 ] as HTMLElement ).dataset.menuSlug;
+		expect( slug ).toBe( 'plugin-c' );
+	} );
+
+	test( 'clears everything when passed an empty list', () => {
+		const { container, dock } = mountDock( [
+			makeItem( { id: 'plugin-a', title: 'Analytics', icon: 'dashicons-chart-bar' } ),
+		] );
+		expect( container.querySelectorAll( '.wp-desktop-dock__item' ).length ).toBe( 1 );
+
+		dock.replaceItems( [] );
+		expect( container.querySelectorAll( '.wp-desktop-dock__item' ).length ).toBe( 0 );
+	} );
+
+	test( 'preserves system items across a menu replacement', () => {
+		const { container, dock } = mountDock( [
+			makeItem( { id: 'plugin-a', title: 'Analytics', icon: 'dashicons-chart-bar' } ),
+		] );
+		dock.appendSystemItem( {
+			id: 'os-settings',
+			title: 'OS Settings',
+			icon: 'dashicons-admin-generic',
+			onOpen: () => undefined,
+		} );
+
+		// Menu item + separator + system item.
+		expect(
+			container.querySelector( '.wp-desktop-dock__item--system' ),
+		).not.toBeNull();
+		expect( container.querySelector( '.wp-desktop-dock__separator' ) ).not.toBeNull();
+
+		dock.replaceItems( [
+			makeItem( { id: 'plugin-c', title: 'Commerce', icon: 'dashicons-cart' } ),
+		] );
+
+		// After replacement: new menu tile + original separator + original system tile.
+		const tiles = container.querySelectorAll( '.wp-desktop-dock__item' );
+		expect( tiles.length ).toBe( 2 ); // 1 menu + 1 system
+		expect(
+			container.querySelector( '.wp-desktop-dock__item--system' ),
+		).not.toBeNull();
+		expect( container.querySelector( '.wp-desktop-dock__separator' ) ).not.toBeNull();
+
+		// Menu item must come BEFORE the separator (rendering order).
+		const sep = container.querySelector( '.wp-desktop-dock__separator' );
+		const sys = container.querySelector( '.wp-desktop-dock__item--system' );
+		const menuTile = container.querySelector(
+			'.wp-desktop-dock__item:not(.wp-desktop-dock__item--system)',
+		);
+		expect( sep ).not.toBeNull();
+		expect( sys ).not.toBeNull();
+		expect( menuTile ).not.toBeNull();
+		// DOM position check — menu tile < separator < system tile
+		expect(
+			menuTile!.compareDocumentPosition( sep! ) & Node.DOCUMENT_POSITION_FOLLOWING,
+		).toBeTruthy();
+		expect(
+			sep!.compareDocumentPosition( sys! ) & Node.DOCUMENT_POSITION_FOLLOWING,
+		).toBeTruthy();
+	} );
+} );
+
+describe( 'dock orientation modifiers', () => {
+	beforeEach( () => installHooksStub() );
+	afterEach( () => {
+		clearHooksStub();
+		document.body.innerHTML = '';
+	} );
+
+	test( 'left orientation adds vertical modifier', () => {
+		const { container } = mountDock( [ makeItem( { icon: 'dashicons-admin-post' } ) ], 'left' );
+		expect( container.classList.contains( 'wp-desktop-dock--vertical' ) ).toBe( true );
+		expect( container.classList.contains( 'wp-desktop-dock--horizontal' ) ).toBe( false );
+	} );
+
+	test( 'bottom orientation adds horizontal modifier', () => {
+		const { container } = mountDock( [ makeItem( { icon: 'dashicons-admin-post' } ) ], 'bottom' );
+		expect( container.classList.contains( 'wp-desktop-dock--horizontal' ) ).toBe( true );
+		expect( container.classList.contains( 'wp-desktop-dock--vertical' ) ).toBe( false );
+	} );
+} );

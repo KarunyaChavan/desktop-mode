@@ -265,6 +265,14 @@ export const HOOKS = {
 	 * original.
 	 */
 	ARRANGE_SNAP_CELL_SIZE: 'wp-desktop.arrange.snap.cell-size',
+	/**
+	 * Action, fires when the user clicks a plugin-registered entry in
+	 * the Arrange admin-bar submenu (items added via the
+	 * `wp_desktop_arrange_menu_items` PHP filter). Payload `{ id }`
+	 * where `id` is the item's `id` field as registered. Plugins
+	 * subscribe here to run their custom arrangement logic.
+	 */
+	ARRANGE_CUSTOM_ACTION: 'wp-desktop.arrange.custom-action',
 
 	// ------------------------------------------------------------------
 	// Widgets — the right-side column. Widgets paint above the

@@ -51,6 +51,37 @@ export interface WidgetDef {
 	/** Dashicons class name (e.g., `dashicons-clock`). */
 	icon: string;
 	/**
+	 * Allow the user to drag the widget out of the right-side column
+	 * and place it anywhere on the desktop. When `true`, a thin chrome
+	 * header (grip + label + remove button) renders above the body;
+	 * drag is only initiated from the chrome, so text inputs inside
+	 * the widget body are unaffected. Default `false`.
+	 */
+	movable?: boolean;
+	/**
+	 * Allow the user to resize the widget. When combined with
+	 * `movable: true`, renders 8 grip handles (corners + edges). When
+	 * `false` / absent for movability, only the bottom edge is
+	 * draggable so width stays locked to the column. Default `false`.
+	 */
+	resizable?: boolean;
+	/** Minimum width the user can shrink the card to (px). */
+	minWidth?: number;
+	/** Minimum height the user can shrink the card to (px). */
+	minHeight?: number;
+	/** Optional upper bound on user-driven resizing (px). */
+	maxWidth?: number;
+	/** Optional upper bound on user-driven resizing (px). */
+	maxHeight?: number;
+	/**
+	 * Initial size applied the first time the widget mounts floating.
+	 * Ignored when the widget sits in the column (that's
+	 * column-width-driven). Default falls back to a sensible minimum
+	 * if unset.
+	 */
+	defaultWidth?: number;
+	defaultHeight?: number;
+	/**
 	 * Paint the widget into `container`. Return a teardown. May be
 	 * sync or async — async mounts are awaited and race-checked
 	 * against a generation counter so a rapid add/remove doesn't
@@ -60,4 +91,16 @@ export interface WidgetDef {
 		container: HTMLElement,
 		ctx: WidgetContext,
 	) => WidgetTeardown | Promise<WidgetTeardown>;
+}
+
+/**
+ * Persisted user geometry for a floating (liberated-from-column)
+ * widget. Absent from storage for column-docked widgets — the column
+ * drives their geometry directly.
+ */
+export interface WidgetGeometry {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
 }

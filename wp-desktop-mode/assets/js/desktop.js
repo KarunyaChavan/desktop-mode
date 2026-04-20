@@ -5027,7 +5027,7 @@ var wpDesktop = function(exports) {
     }
     return false;
   }
-  const STORAGE_KEY$1 = "wp-desktop-os-settings";
+  const STORAGE_KEY = "wp-desktop-os-settings";
   const HD_MIN_WIDTH = 1920;
   const HD_MIN_HEIGHT = 1080;
   const MEDIA_PER_PAGE = 40;
@@ -5087,7 +5087,7 @@ var wpDesktop = function(exports) {
   }
   function loadState() {
     try {
-      const raw = window.localStorage.getItem(STORAGE_KEY$1);
+      const raw = window.localStorage.getItem(STORAGE_KEY);
       if (!raw) {
         return structuredDefaults();
       }
@@ -5110,7 +5110,7 @@ var wpDesktop = function(exports) {
   }
   function saveState(state) {
     try {
-      window.localStorage.setItem(STORAGE_KEY$1, JSON.stringify(state));
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     } catch {
     }
   }
@@ -6507,41 +6507,436 @@ var wpDesktop = function(exports) {
     panel.style.top = `${Math.round(top)}px`;
     panel.style.visibility = "";
   }
-  const STORAGE_KEY = "wp-desktop-widgets";
+  const FLOATING_CLASS = "wp-desktop-widgets__card--floating";
+  const MOVABLE_CLASS = "wp-desktop-widgets__card--movable";
+  const RESIZABLE_CLASS = "wp-desktop-widgets__card--resizable";
+  const DRAGGING_CLASS = "wp-desktop-widgets__card--dragging";
+  const RESIZING_CLASS = "wp-desktop-widgets__card--resizing";
+  const DEFAULT_MIN_WIDTH = 160;
+  const DEFAULT_MIN_HEIGHT = 80;
+  const DEFAULT_WIDTH = 280;
+  const DEFAULT_HEIGHT = 180;
+  const VIEWPORT_MARGIN = 20;
+  const DRAG_EXCLUDED_SELECTORS = 'input, textarea, select, button, a, [contenteditable="true"]';
+  function buildFrame(def, ctx, handlers) {
+    const card = document.createElement("div");
+    card.className = "wp-desktop-widgets__card";
+    card.dataset.widgetId = def.id;
+    const movable = def.movable === true;
+    const resizable = def.resizable === true;
+    if (movable) {
+      card.classList.add(MOVABLE_CLASS);
+    }
+    if (resizable) {
+      card.classList.add(RESIZABLE_CLASS);
+    }
+    if (movable) {
+      card.appendChild(buildChrome(def, handlers.onRemove));
+    } else {
+      card.appendChild(buildCornerClose(def, handlers.onRemove));
+    }
+    const body = document.createElement("div");
+    body.className = "wp-desktop-widgets__card-body";
+    card.appendChild(body);
+    let isFloating = false;
+    if (ctx.geometry) {
+      applyGeometry(card, ctx.geometry);
+      card.classList.add(FLOATING_CLASS);
+      isFloating = true;
+    }
+    const resizeCleanups = [];
+    if (resizable) {
+      for (const dir of allHandleDirs()) {
+        const handle = document.createElement("div");
+        handle.className = `wp-desktop-widgets__resize wp-desktop-widgets__resize--${dir}`;
+        handle.setAttribute("aria-hidden", "true");
+        handle.dataset.dir = dir;
+        card.appendChild(handle);
+        resizeCleanups.push(
+          attachResize(card, handle, dir, def, ctx, handlers, () => isFloating)
+        );
+      }
+    }
+    let dragCleanup = null;
+    if (movable) {
+      const chrome = card.querySelector(
+        ".wp-desktop-widgets__chrome"
+      );
+      if (chrome) {
+        dragCleanup = attachDrag(card, chrome, def, ctx, handlers, (next) => {
+          isFloating = next;
+        });
+      }
+    }
+    return {
+      card,
+      body,
+      dispose: () => {
+        for (const fn of resizeCleanups) {
+          try {
+            fn();
+          } catch {
+          }
+        }
+        if (dragCleanup) {
+          try {
+            dragCleanup();
+          } catch {
+          }
+        }
+        card.remove();
+      }
+    };
+  }
+  function buildChrome(def, onRemove) {
+    const chrome = document.createElement("header");
+    chrome.className = "wp-desktop-widgets__chrome";
+    const grip = document.createElement("span");
+    grip.className = "wp-desktop-widgets__grip";
+    grip.setAttribute("aria-hidden", "true");
+    chrome.appendChild(grip);
+    const title = document.createElement("span");
+    title.className = "wp-desktop-widgets__title";
+    title.textContent = def.label;
+    chrome.appendChild(title);
+    const close = buildCloseButton(def, onRemove);
+    chrome.appendChild(close);
+    return chrome;
+  }
+  function buildCornerClose(def, onRemove) {
+    const close = buildCloseButton(def, onRemove);
+    close.classList.add("wp-desktop-widgets__card-close--corner");
+    return close;
+  }
+  function buildCloseButton(def, onRemove) {
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "wp-desktop-widgets__card-close";
+    close.setAttribute("aria-label", sprintf(__("Remove %s"), def.label));
+    close.innerHTML = '<svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
+    close.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      onRemove();
+    });
+    return close;
+  }
+  function attachDrag(card, chrome, def, ctx, handlers, setFloating) {
+    let pointerId = null;
+    let startX = 0;
+    let startY = 0;
+    let initialLeft = 0;
+    let initialTop = 0;
+    const onDown = (e) => {
+      if (e.button !== 0) {
+        return;
+      }
+      const target = e.target;
+      if (target && target.closest(DRAG_EXCLUDED_SELECTORS)) {
+        return;
+      }
+      e.preventDefault();
+      if (!card.classList.contains(FLOATING_CLASS)) {
+        const parentRect = ctx.floatingParent.getBoundingClientRect();
+        const rect = card.getBoundingClientRect();
+        const initial = {
+          x: rect.left - parentRect.left,
+          y: rect.top - parentRect.top,
+          width: def.defaultWidth ?? (rect.width || DEFAULT_WIDTH),
+          height: def.defaultHeight ?? (rect.height || DEFAULT_HEIGHT)
+        };
+        applyGeometry(card, initial);
+        card.classList.add(FLOATING_CLASS);
+        setFloating(true);
+        handlers.onLiberate(initial);
+      }
+      pointerId = e.pointerId;
+      startX = e.clientX;
+      startY = e.clientY;
+      initialLeft = parseFloat(card.style.left) || 0;
+      initialTop = parseFloat(card.style.top) || 0;
+      chrome.setPointerCapture(pointerId);
+      card.classList.add(DRAGGING_CLASS);
+    };
+    const onMove = (e) => {
+      if (pointerId === null || e.pointerId !== pointerId) {
+        return;
+      }
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      const clamped = clampToParent(
+        initialLeft + dx,
+        initialTop + dy,
+        card.offsetWidth,
+        card.offsetHeight,
+        ctx.floatingParent
+      );
+      card.style.left = `${clamped.x}px`;
+      card.style.top = `${clamped.y}px`;
+    };
+    const onUp = (e) => {
+      if (pointerId === null || e.pointerId !== pointerId) {
+        return;
+      }
+      try {
+        chrome.releasePointerCapture(pointerId);
+      } catch {
+      }
+      pointerId = null;
+      card.classList.remove(DRAGGING_CLASS);
+      handlers.onGeometryChanged(currentGeometry(card));
+    };
+    chrome.addEventListener("pointerdown", onDown);
+    chrome.addEventListener("pointermove", onMove);
+    chrome.addEventListener("pointerup", onUp);
+    chrome.addEventListener("pointercancel", onUp);
+    return () => {
+      chrome.removeEventListener("pointerdown", onDown);
+      chrome.removeEventListener("pointermove", onMove);
+      chrome.removeEventListener("pointerup", onUp);
+      chrome.removeEventListener("pointercancel", onUp);
+    };
+  }
+  function attachResize(card, handle, dir, def, ctx, handlers, isFloating) {
+    let pointerId = null;
+    let startX = 0;
+    let startY = 0;
+    let startLeft = 0;
+    let startTop = 0;
+    let startW = 0;
+    let startH = 0;
+    const onDown = (e) => {
+      if (e.button !== 0) {
+        return;
+      }
+      if (!isFloating() && !isHeightOnlyDir(dir)) {
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      pointerId = e.pointerId;
+      startX = e.clientX;
+      startY = e.clientY;
+      const rect = card.getBoundingClientRect();
+      const parentRect = ctx.floatingParent.getBoundingClientRect();
+      startLeft = rect.left - parentRect.left;
+      startTop = rect.top - parentRect.top;
+      startW = rect.width;
+      startH = rect.height;
+      handle.setPointerCapture(pointerId);
+      card.classList.add(RESIZING_CLASS);
+    };
+    const onMove = (e) => {
+      if (pointerId === null || e.pointerId !== pointerId) {
+        return;
+      }
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      const next = computeResize(
+        dir,
+        dx,
+        dy,
+        startLeft,
+        startTop,
+        startW,
+        startH,
+        def,
+        ctx.floatingParent,
+        isFloating()
+      );
+      if (isFloating()) {
+        card.style.left = `${next.x}px`;
+        card.style.top = `${next.y}px`;
+        card.style.width = `${next.width}px`;
+      }
+      card.style.height = `${next.height}px`;
+    };
+    const onUp = (e) => {
+      if (pointerId === null || e.pointerId !== pointerId) {
+        return;
+      }
+      try {
+        handle.releasePointerCapture(pointerId);
+      } catch {
+      }
+      pointerId = null;
+      card.classList.remove(RESIZING_CLASS);
+      handlers.onGeometryChanged(currentGeometry(card));
+    };
+    handle.addEventListener("pointerdown", onDown);
+    handle.addEventListener("pointermove", onMove);
+    handle.addEventListener("pointerup", onUp);
+    handle.addEventListener("pointercancel", onUp);
+    return () => {
+      handle.removeEventListener("pointerdown", onDown);
+      handle.removeEventListener("pointermove", onMove);
+      handle.removeEventListener("pointerup", onUp);
+      handle.removeEventListener("pointercancel", onUp);
+    };
+  }
+  function allHandleDirs() {
+    return ["n", "e", "s", "w", "ne", "nw", "se", "sw"];
+  }
+  function isHeightOnlyDir(dir) {
+    return dir === "s";
+  }
+  function applyGeometry(card, geometry) {
+    card.style.left = `${geometry.x}px`;
+    card.style.top = `${geometry.y}px`;
+    card.style.width = `${geometry.width}px`;
+    card.style.height = `${geometry.height}px`;
+  }
+  function currentGeometry(card) {
+    return {
+      x: parseFloat(card.style.left) || 0,
+      y: parseFloat(card.style.top) || 0,
+      width: card.offsetWidth,
+      height: card.offsetHeight
+    };
+  }
+  function clampToParent(x, y, width, height, parent) {
+    const parentWidth = parent.clientWidth || parent.getBoundingClientRect().width;
+    const parentHeight = parent.clientHeight || parent.getBoundingClientRect().height;
+    const maxX = Math.max(0, parentWidth - width - VIEWPORT_MARGIN);
+    const maxY = Math.max(0, parentHeight - height - VIEWPORT_MARGIN);
+    return {
+      x: Math.min(Math.max(VIEWPORT_MARGIN, x), maxX),
+      y: Math.min(Math.max(VIEWPORT_MARGIN, y), maxY)
+    };
+  }
+  function computeResize(dir, dx, dy, startLeft, startTop, startW, startH, def, parent, floating) {
+    const minW = def.minWidth ?? DEFAULT_MIN_WIDTH;
+    const minH = def.minHeight ?? DEFAULT_MIN_HEIGHT;
+    const maxW = def.maxWidth ?? Infinity;
+    const maxH = def.maxHeight ?? Infinity;
+    const parentWidth = parent.clientWidth || parent.getBoundingClientRect().width;
+    const parentHeight = parent.clientHeight || parent.getBoundingClientRect().height;
+    let x = startLeft;
+    let y = startTop;
+    let width = startW;
+    let height = startH;
+    if (dir === "e" || dir === "ne" || dir === "se") {
+      width = clamp(startW + dx, minW, Math.min(maxW, parentWidth - startLeft));
+    }
+    if (dir === "w" || dir === "nw" || dir === "sw") {
+      const nextWidth = clamp(startW - dx, minW, Math.min(maxW, startLeft + startW));
+      x = startLeft + (startW - nextWidth);
+      width = nextWidth;
+    }
+    if (dir === "s" || dir === "se" || dir === "sw") {
+      height = clamp(
+        startH + dy,
+        minH,
+        Math.min(maxH, parentHeight - startTop)
+      );
+    }
+    if (dir === "n" || dir === "ne" || dir === "nw") {
+      const nextHeight = clamp(startH - dy, minH, Math.min(maxH, startTop + startH));
+      y = startTop + (startH - nextHeight);
+      height = nextHeight;
+    }
+    if (!floating) {
+      width = startW;
+      x = startLeft;
+    }
+    return { x, y, width, height };
+  }
+  function clamp(value, min, max) {
+    if (max < min) {
+      return min;
+    }
+    return Math.min(Math.max(value, min), max);
+  }
+  const IDS_KEY = "wp-desktop-widgets";
+  const GEOMETRY_KEY = "wp-desktop-widgets-geometry";
+  function readRawEnabled() {
+    try {
+      return window.localStorage.getItem(IDS_KEY);
+    } catch {
+      return null;
+    }
+  }
+  function loadEnabledIds() {
+    const raw = readRawEnabled();
+    if (raw === null) {
+      return [];
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) {
+        return [];
+      }
+      return parsed.filter((x) => typeof x === "string");
+    } catch {
+      return [];
+    }
+  }
+  function saveEnabledIds(ids) {
+    try {
+      window.localStorage.setItem(IDS_KEY, JSON.stringify(ids));
+    } catch {
+    }
+  }
+  function loadGeometry() {
+    try {
+      const raw = window.localStorage.getItem(GEOMETRY_KEY);
+      if (!raw) {
+        return {};
+      }
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object") {
+        return {};
+      }
+      const out = {};
+      for (const [id, rawEntry] of Object.entries(parsed)) {
+        const entry = sanitizeGeometry(rawEntry);
+        if (entry) {
+          out[id] = entry;
+        }
+      }
+      return out;
+    } catch {
+      return {};
+    }
+  }
+  function saveGeometry(geometry) {
+    try {
+      window.localStorage.setItem(GEOMETRY_KEY, JSON.stringify(geometry));
+    } catch {
+    }
+  }
+  function sanitizeGeometry(raw) {
+    if (!raw || typeof raw !== "object") {
+      return null;
+    }
+    const { x, y, width, height } = raw;
+    if (typeof x !== "number" || !Number.isFinite(x) || typeof y !== "number" || !Number.isFinite(y) || typeof width !== "number" || !Number.isFinite(width) || width <= 0 || typeof height !== "number" || !Number.isFinite(height) || height <= 0) {
+      return null;
+    }
+    return { x, y, width, height };
+  }
   const DEFAULT_ENABLED_IDS = ["clock"];
   class WidgetLayer {
-    constructor(root, pluginUrl) {
+    /**
+     * @param root         The column element (`#wp-desktop-widgets`).
+     * @param pluginUrl    Absolute plugin URL — passed to widget ctx.
+     * @param floatingHost Parent for liberated (floating) widgets.
+     *                     Defaults to the column's parent (the desktop
+     *                     area) so floats are bounded by the visible
+     *                     desktop, not the 320 px-wide column.
+     */
+    constructor(root, pluginUrl, floatingHost) {
       this.mounted = /* @__PURE__ */ new Map();
       this.generation = 0;
       this.root = root;
       this.pluginUrl = pluginUrl;
       this.enabledIds = loadEnabledIds();
+      this.geometry = loadGeometry();
+      this.floatingHost = floatingHost ?? root.parentElement ?? root;
       this.listEl = document.createElement("div");
       this.listEl.className = "wp-desktop-widgets__list";
       this.root.appendChild(this.listEl);
-      this.addTile = document.createElement("button");
-      this.addTile.type = "button";
-      this.addTile.className = "wp-desktop-widgets__add";
-      this.addTile.setAttribute("aria-label", __("Add widget"));
-      const addPlus = document.createElement("span");
-      addPlus.className = "wp-desktop-widgets__add-plus";
-      addPlus.setAttribute("aria-hidden", "true");
-      addPlus.textContent = "+";
-      const addLabel = document.createElement("span");
-      addLabel.className = "wp-desktop-widgets__add-label";
-      addLabel.textContent = __("Add widget");
-      this.addTile.appendChild(addPlus);
-      this.addTile.appendChild(addLabel);
-      this.addTile.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        openWidgetPicker({
-          anchor: this.addTile,
-          registry: () => all(),
-          enabledIds: () => [...this.enabledIds],
-          onAdd: (id) => this.add(id)
-        });
-      });
+      this.addTile = this.buildAddTile();
       this.root.appendChild(this.addTile);
       this.paintEmptyState();
     }
@@ -6552,7 +6947,7 @@ var wpDesktop = function(exports) {
      * `mounted` map dedupes.
      */
     hydrate() {
-      if (readRawStored() === null) {
+      if (readRawEnabled() === null) {
         this.enabledIds = DEFAULT_ENABLED_IDS.filter(
           (id) => !!get(id)
         );
@@ -6568,8 +6963,7 @@ var wpDesktop = function(exports) {
     }
     /**
      * Add a widget by id — called by the picker after the user
-     * selects an available entry. Idempotent: adding an already-
-     * enabled widget is a no-op.
+     * selects an available entry. Idempotent.
      */
     add(id) {
       if (this.enabledIds.includes(id)) {
@@ -6587,7 +6981,7 @@ var wpDesktop = function(exports) {
     }
     /**
      * Remove a widget by id — called from the card's × button and
-     * also from the picker if that's wired later. Idempotent.
+     * from the picker. Idempotent.
      */
     remove(id) {
       const before = this.enabledIds.length;
@@ -6596,6 +6990,10 @@ var wpDesktop = function(exports) {
         return;
       }
       saveEnabledIds(this.enabledIds);
+      if (this.geometry[id]) {
+        delete this.geometry[id];
+        saveGeometry(this.geometry);
+      }
       this.unmountById(id);
       this.paintEmptyState();
       doAction(HOOKS.WIDGET_REMOVED, { id });
@@ -6621,21 +7019,28 @@ var wpDesktop = function(exports) {
         return;
       }
       const gen = ++this.generation;
-      const card = this.buildCard(def);
-      const body = card.querySelector(
-        ".wp-desktop-widgets__card-body"
+      const initialGeometry = def.movable === true ? this.geometry[id] : void 0;
+      const frame = buildFrame(
+        def,
+        { floatingParent: this.floatingHost, geometry: initialGeometry },
+        {
+          onRemove: () => this.remove(id),
+          onGeometryChanged: (geom) => this.persistGeometry(id, geom),
+          onLiberate: (geom) => this.liberate(id, geom)
+        }
       );
+      const floating = !!initialGeometry;
       const record = {
         id,
-        card,
-        body,
+        frame,
         generation: gen,
-        teardown: null
+        teardown: null,
+        floating
       };
       this.mounted.set(id, record);
-      this.listEl.appendChild(card);
+      this.placeCard(frame.card, floating);
       const ctx = { id, pluginUrl: this.pluginUrl };
-      doAction(HOOKS.WIDGET_MOUNTING, { id, container: body, ctx });
+      doAction(HOOKS.WIDGET_MOUNTING, { id, container: frame.body, ctx });
       const onResolve = (teardown) => {
         const current = this.mounted.get(id);
         if (!current || current.generation !== gen) {
@@ -6646,11 +7051,11 @@ var wpDesktop = function(exports) {
           return;
         }
         current.teardown = teardown;
-        doAction(HOOKS.WIDGET_MOUNTED, { id, container: body, ctx });
+        doAction(HOOKS.WIDGET_MOUNTED, { id, container: frame.body, ctx });
       };
       let result;
       try {
-        result = def.mount(body, ctx);
+        result = def.mount(frame.body, ctx);
       } catch (err) {
         this.handleMountFailure(id, err);
         return;
@@ -6682,13 +7087,13 @@ var wpDesktop = function(exports) {
         }
       }
       this.generation++;
-      record.card.remove();
+      record.frame.dispose();
       this.mounted.delete(id);
     }
     handleMountFailure(id, err) {
       const record = this.mounted.get(id);
       if (record) {
-        record.card.remove();
+        record.frame.dispose();
         this.mounted.delete(id);
       }
       doAction(HOOKS.WIDGET_MOUNT_FAILED, { id, error: err });
@@ -6699,68 +7104,88 @@ var wpDesktop = function(exports) {
         );
       }
     }
-    buildCard(def) {
-      const card = document.createElement("div");
-      card.className = "wp-desktop-widgets__card";
-      card.dataset.widgetId = def.id;
-      const close = document.createElement("button");
-      close.type = "button";
-      close.className = "wp-desktop-widgets__card-close";
-      close.setAttribute("aria-label", sprintf(__("Remove %s"), def.label));
-      close.innerHTML = '<svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
-      close.addEventListener("click", (e) => {
+    buildAddTile() {
+      const tile = document.createElement("button");
+      tile.type = "button";
+      tile.className = "wp-desktop-widgets__add";
+      tile.setAttribute("aria-label", __("Add widget"));
+      const plus = document.createElement("span");
+      plus.className = "wp-desktop-widgets__add-plus";
+      plus.setAttribute("aria-hidden", "true");
+      plus.textContent = "+";
+      const label = document.createElement("span");
+      label.className = "wp-desktop-widgets__add-label";
+      label.textContent = __("Add widget");
+      tile.appendChild(plus);
+      tile.appendChild(label);
+      tile.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        this.remove(def.id);
+        openWidgetPicker({
+          anchor: tile,
+          registry: () => all(),
+          enabledIds: () => [...this.enabledIds],
+          onAdd: (id) => this.add(id)
+        });
       });
-      card.appendChild(close);
-      const body = document.createElement("div");
-      body.className = "wp-desktop-widgets__card-body";
-      card.appendChild(body);
-      return card;
+      return tile;
+    }
+    /**
+     * Drop a card into the right parent based on its floating state.
+     * Docked cards append to the column list above the `+` tile;
+     * floating cards append to the desktop-area-level host so they
+     * sit above the wallpaper and can range across the viewport.
+     */
+    placeCard(card, floating) {
+      if (floating) {
+        this.floatingHost.appendChild(card);
+      } else {
+        this.listEl.appendChild(card);
+      }
+    }
+    /**
+     * Move a widget from the column into the floating host. Called by
+     * the frame on the user's first drag of a movable widget.
+     */
+    liberate(id, geometry) {
+      const record = this.mounted.get(id);
+      if (!record || record.floating) {
+        return;
+      }
+      record.floating = true;
+      this.floatingHost.appendChild(record.frame.card);
+      applyGeometry(record.frame.card, geometry);
+      this.persistGeometry(id, geometry);
+      this.paintEmptyState();
+    }
+    persistGeometry(id, geometry) {
+      this.geometry[id] = geometry;
+      saveGeometry(this.geometry);
     }
     /**
      * Toggle a `--has-widgets` modifier so CSS can hide the column's
      * decorative backdrop when nothing's mounted (keeps the empty
      * state clean — just the `+` tile floating in the corner).
+     *
+     * Floating widgets don't count toward "has widgets" in the column
+     * sense — if every enabled widget is floating, the column itself
+     * shows only the empty state + add tile.
      */
     paintEmptyState() {
+      let docked = 0;
+      for (const record of this.mounted.values()) {
+        if (!record.floating) {
+          docked++;
+        }
+      }
       this.root.classList.toggle(
         "wp-desktop-widgets--has-widgets",
-        this.mounted.size > 0
+        docked > 0
       );
     }
   }
   function isThenable(x) {
     return !!x && (typeof x === "object" || typeof x === "function") && typeof x.then === "function";
-  }
-  function readRawStored() {
-    try {
-      return window.localStorage.getItem(STORAGE_KEY);
-    } catch {
-      return null;
-    }
-  }
-  function loadEnabledIds() {
-    const raw = readRawStored();
-    if (raw === null) {
-      return [];
-    }
-    try {
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) {
-        return [];
-      }
-      return parsed.filter((x) => typeof x === "string");
-    } catch {
-      return [];
-    }
-  }
-  function saveEnabledIds(ids) {
-    try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(ids));
-    } catch {
-    }
   }
   const clock = {
     id: "clock",

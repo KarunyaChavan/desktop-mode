@@ -117,6 +117,7 @@ describe( 'widgets/layer', () => {
 		vi.resetModules();
 		try {
 			window.localStorage.removeItem( 'wp-desktop-widgets' );
+			window.localStorage.removeItem( 'wp-desktop-widgets-geometry' );
 		} catch {
 			/* jsdom */
 		}
@@ -288,6 +289,206 @@ describe( 'widgets/layer', () => {
 		expect( names ).toContain( 'wp-desktop.widget.mount-failed' );
 		expect( names ).not.toContain( 'wp-desktop.widget.mounted' );
 		errSpy.mockRestore();
+	} );
+
+	test( 'movable widget renders a chrome header with drag grip', async () => {
+		const registry = await import( '../../src/widgets/registry' );
+		const { WidgetLayer } = await import( '../../src/widgets/layer' );
+		registry.register( {
+			id: 'mov',
+			label: 'Mov',
+			description: '',
+			icon: 'dashicons-star-filled',
+			movable: true,
+			mount: () => () => undefined,
+		} );
+		window.localStorage.setItem( 'wp-desktop-widgets', '[]' );
+
+		const layer = new WidgetLayer( host, '' );
+		layer.hydrate();
+		layer.add( 'mov' );
+
+		const card = host.querySelector( '.wp-desktop-widgets__card' );
+		expect( card ).not.toBeNull();
+		expect( card!.classList.contains( 'wp-desktop-widgets__card--movable' ) ).toBe( true );
+		expect( card!.querySelector( '.wp-desktop-widgets__chrome' ) ).not.toBeNull();
+		expect( card!.querySelector( '.wp-desktop-widgets__grip' ) ).not.toBeNull();
+	} );
+
+	test( 'non-movable widget has no chrome; close sits in the corner', async () => {
+		const registry = await import( '../../src/widgets/registry' );
+		const { WidgetLayer } = await import( '../../src/widgets/layer' );
+		registry.register( {
+			id: 'static',
+			label: 'Static',
+			description: '',
+			icon: 'dashicons-star-filled',
+			mount: () => () => undefined,
+		} );
+		window.localStorage.setItem( 'wp-desktop-widgets', '[]' );
+
+		const layer = new WidgetLayer( host, '' );
+		layer.hydrate();
+		layer.add( 'static' );
+
+		const card = host.querySelector( '.wp-desktop-widgets__card' )!;
+		expect( card.classList.contains( 'wp-desktop-widgets__card--movable' ) ).toBe( false );
+		expect( card.querySelector( '.wp-desktop-widgets__chrome' ) ).toBeNull();
+		// Corner-close stays in the DOM with the --corner modifier.
+		expect(
+			card.querySelector( '.wp-desktop-widgets__card-close--corner' ),
+		).not.toBeNull();
+	} );
+
+	test( 'resizable widget renders resize handles', async () => {
+		const registry = await import( '../../src/widgets/registry' );
+		const { WidgetLayer } = await import( '../../src/widgets/layer' );
+		registry.register( {
+			id: 'res',
+			label: 'Res',
+			description: '',
+			icon: 'dashicons-star-filled',
+			resizable: true,
+			mount: () => () => undefined,
+		} );
+		window.localStorage.setItem( 'wp-desktop-widgets', '[]' );
+
+		const layer = new WidgetLayer( host, '' );
+		layer.hydrate();
+		layer.add( 'res' );
+
+		const card = host.querySelector( '.wp-desktop-widgets__card' )!;
+		expect( card.classList.contains( 'wp-desktop-widgets__card--resizable' ) ).toBe( true );
+		expect( card.querySelectorAll( '.wp-desktop-widgets__resize' ).length ).toBe( 8 );
+	} );
+
+	test( 'persisted geometry mounts a movable widget floating', async () => {
+		const registry = await import( '../../src/widgets/registry' );
+		const { WidgetLayer } = await import( '../../src/widgets/layer' );
+		registry.register( {
+			id: 'mov',
+			label: 'Mov',
+			description: '',
+			icon: 'dashicons-star-filled',
+			movable: true,
+			mount: () => () => undefined,
+		} );
+		window.localStorage.setItem( 'wp-desktop-widgets', '["mov"]' );
+		window.localStorage.setItem(
+			'wp-desktop-widgets-geometry',
+			JSON.stringify( { mov: { x: 50, y: 70, width: 240, height: 120 } } ),
+		);
+
+		// Parent for floating host — layer defaults to root.parentElement
+		// which is document.body here. That's fine for the test.
+		const layer = new WidgetLayer( host, '' );
+		layer.hydrate();
+
+		const card = document.body.querySelector<HTMLElement>(
+			'.wp-desktop-widgets__card',
+		)!;
+		expect( card.classList.contains( 'wp-desktop-widgets__card--floating' ) ).toBe( true );
+		expect( card.style.left ).toBe( '50px' );
+		expect( card.style.top ).toBe( '70px' );
+		expect( card.style.width ).toBe( '240px' );
+		expect( card.style.height ).toBe( '120px' );
+
+		layer.disposeAll();
+	} );
+
+	test( 'removing a widget drops its persisted geometry', async () => {
+		const registry = await import( '../../src/widgets/registry' );
+		const { WidgetLayer } = await import( '../../src/widgets/layer' );
+		registry.register( {
+			id: 'mov',
+			label: 'Mov',
+			description: '',
+			icon: 'dashicons-star-filled',
+			movable: true,
+			mount: () => () => undefined,
+		} );
+		window.localStorage.setItem( 'wp-desktop-widgets', '["mov"]' );
+		window.localStorage.setItem(
+			'wp-desktop-widgets-geometry',
+			JSON.stringify( { mov: { x: 10, y: 20, width: 200, height: 100 } } ),
+		);
+
+		const layer = new WidgetLayer( host, '' );
+		layer.hydrate();
+		layer.remove( 'mov' );
+
+		const geom = JSON.parse(
+			window.localStorage.getItem( 'wp-desktop-widgets-geometry' ) || '{}',
+		);
+		expect( geom.mov ).toBeUndefined();
+	} );
+
+	test( 'computeResize clamps to parent + respects minima', async () => {
+		const { computeResize } = await import( '../../src/widgets/frame' );
+		const parent = document.createElement( 'div' );
+		Object.defineProperty( parent, 'clientWidth', { value: 1000, configurable: true } );
+		Object.defineProperty( parent, 'clientHeight', { value: 600, configurable: true } );
+
+		const def = {
+			id: 'x',
+			label: 'X',
+			description: '',
+			icon: 'dashicons-star-filled',
+			minWidth: 120,
+			minHeight: 80,
+			mount: () => () => undefined,
+		};
+
+		// South-east corner drag by (+1000, +1000) — both axes clamp to
+		// the parent bounds from the starting (100, 100) + (300, 200).
+		const bigDrag = computeResize(
+			'se',
+			1000,
+			1000,
+			100,
+			100,
+			300,
+			200,
+			def,
+			parent,
+			true,
+		);
+		expect( bigDrag.width ).toBe( 1000 - 100 ); // parentWidth - startLeft
+		expect( bigDrag.height ).toBe( 600 - 100 ); // parentHeight - startTop
+
+		// Shrinking past min clamps at minima, not negative.
+		const tinyDrag = computeResize(
+			'se',
+			-1000,
+			-1000,
+			100,
+			100,
+			300,
+			200,
+			def,
+			parent,
+			true,
+		);
+		expect( tinyDrag.width ).toBe( 120 );
+		expect( tinyDrag.height ).toBe( 80 );
+
+		// Non-floating (docked) widget: width/x axes are locked even
+		// though the handle was a south-east corner.
+		const docked = computeResize(
+			'se',
+			200,
+			200,
+			100,
+			100,
+			300,
+			200,
+			def,
+			parent,
+			false,
+		);
+		expect( docked.width ).toBe( 300 );
+		expect( docked.x ).toBe( 100 );
+		expect( docked.height ).toBe( 400 );
 	} );
 
 	test( 'add-then-remove before async mount resolves discards the stale mount', async () => {

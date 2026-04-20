@@ -277,6 +277,58 @@ add_filter( 'wp_desktop_dock_item_multi', function ( $multi, $slug ) {
 
 ---
 
+### `wp_desktop_arrange_menu_items` — Stable
+
+The list of plugin-contributed items appended to the admin bar's **Arrange** submenu — the dropdown that sits next to the "Switch to…" toggle when desktop mode is active. Built-ins (Cascade, Overview, Snap to grid, Tile all windows) are always present; this filter adds to them. Only invoked when the user is viewing the desktop shell.
+
+```php
+apply_filters( 'wp_desktop_arrange_menu_items', array $items );
+```
+
+Each item is an associative array:
+
+```php
+array(
+    'id'          => string, // unique slug; letters/digits/dashes only
+    'title'       => string, // menu label (already translated)
+    'description' => string, // optional; tooltip + accessible description
+    'position'    => int,    // optional sort key (default 10); lower sorts earlier
+)
+```
+
+Items with missing `id` or `title` are silently dropped — plugins can't accidentally create an unrouteable entry. Ties on `position` preserve registration order.
+
+**Click wiring:** clicking a custom item fires the JS action `wp-desktop.arrange.custom-action` with payload `{ id }`. Subscribe via `wp.hooks.addAction()`:
+
+```php
+add_filter( 'wp_desktop_arrange_menu_items', function ( $items ) {
+    $items[] = array(
+        'id'          => 'diagonal',
+        'title'       => __( 'Diagonal cascade', 'my-ext' ),
+        'description' => __( 'Cascade windows along a 45° line.', 'my-ext' ),
+        'position'    => 15,
+    );
+    return $items;
+} );
+```
+
+```js
+// In your shell-side script (enqueued with `wp-hooks` as a dependency):
+wp.hooks.addAction(
+    'wp-desktop.arrange.custom-action',
+    'my-ext/diagonal',
+    function ( payload ) {
+        if ( payload.id !== 'diagonal' ) {
+            return;
+        }
+        const windows = wp.desktop.windowManager.getAll();
+        windows.forEach( ( w, i ) => w.move( i * 40, i * 40 ) );
+    }
+);
+```
+
+---
+
 ### `wp_desktop_portal_auto_enable` — Stable
 
 When a user lands on `/wp-desktop/` without desktop mode enabled, the portal auto-enables it for them by default. Return `false` to require an explicit toggle instead.

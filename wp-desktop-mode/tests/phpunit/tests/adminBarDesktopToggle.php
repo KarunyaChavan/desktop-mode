@@ -42,6 +42,7 @@ class Tests_DesktopMode_AdminBarDesktopToggle extends WP_UnitTestCase {
 	public function tear_down() {
 		delete_user_meta( self::$admin_id, 'wp_desktop_mode' );
 		remove_all_filters( 'wp_desktop_shell_config' );
+		remove_all_filters( 'wp_desktop_arrange_menu_items' );
 		unset( $_GET['wp_desktop'] );
 		parent::tear_down();
 	}
@@ -287,5 +288,178 @@ class Tests_DesktopMode_AdminBarDesktopToggle extends WP_UnitTestCase {
 	public function test_default_filters_wire_enqueue_callbacks_to_admin_enqueue_scripts() {
 		$this->assertNotFalse( has_action( 'admin_enqueue_scripts', 'wpdm_enqueue_toggle_assets' ) );
 		$this->assertNotFalse( has_action( 'admin_enqueue_scripts', 'wpdm_enqueue_assets' ) );
+	}
+
+	/**
+	 * The four built-in arrange items should be present when desktop
+	 * mode is active. Only validates presence + parenting; each item's
+	 * click wiring lives in the inline JS under the toggle assets.
+	 *
+	 * @covers ::wpdm_admin_bar_toggle
+	 */
+	public function test_arrange_menu_has_builtins_when_active() {
+		wp_set_current_user( self::$admin_id );
+		update_user_meta( self::$admin_id, 'wp_desktop_mode', '1' );
+		$bar = $this->build_admin_bar();
+
+		$this->assertNotNull( $bar->get_node( 'desktop-layout-menu' ) );
+		foreach ( array( 'cascade', 'overview', 'snap', 'tile' ) as $slug ) {
+			$node = $bar->get_node( 'desktop-layout-' . $slug );
+			$this->assertNotNull( $node, "Expected built-in item desktop-layout-$slug" );
+			$this->assertSame( 'desktop-layout-menu', $node->parent );
+		}
+	}
+
+	/**
+	 * Plugins add entries to the Arrange submenu via the
+	 * `wp_desktop_arrange_menu_items` filter. Each entry becomes an
+	 * admin-bar node under `desktop-layout-menu` with id prefixed by
+	 * `desktop-layout-custom-` — the inline JS routes its click to
+	 * `wp-desktop.arrange.custom-action` with the original slug.
+	 *
+	 * @covers ::wpdm_admin_bar_toggle
+	 */
+	public function test_arrange_menu_appends_custom_items_from_filter() {
+		wp_set_current_user( self::$admin_id );
+		update_user_meta( self::$admin_id, 'wp_desktop_mode', '1' );
+
+		add_filter(
+			'wp_desktop_arrange_menu_items',
+			function ( $items ) {
+				$items[] = array(
+					'id'          => 'diagonal',
+					'title'       => 'Diagonal',
+					'description' => 'A perfect 45° cascade.',
+				);
+				return $items;
+			}
+		);
+
+		$bar  = $this->build_admin_bar();
+		$node = $bar->get_node( 'desktop-layout-custom-diagonal' );
+
+		$this->assertNotNull( $node );
+		$this->assertSame( 'desktop-layout-menu', $node->parent );
+		$this->assertStringContainsString( 'wpdm-layout-custom', $node->meta['class'] );
+		$this->assertSame( 'A perfect 45° cascade.', $node->meta['title'] );
+	}
+
+	/**
+	 * Entries missing `id` or `title` are silently dropped — plugins
+	 * can't accidentally create an unrouteable menu item.
+	 *
+	 * @covers ::wpdm_admin_bar_toggle
+	 */
+	public function test_arrange_menu_drops_invalid_custom_items() {
+		wp_set_current_user( self::$admin_id );
+		update_user_meta( self::$admin_id, 'wp_desktop_mode', '1' );
+
+		add_filter(
+			'wp_desktop_arrange_menu_items',
+			function ( $items ) {
+				$items[] = array( 'title' => 'No ID' );
+				$items[] = array( 'id' => 'no-title' );
+				$items[] = 'not-an-array';
+				$items[] = array( 'id' => 'ok', 'title' => 'OK' );
+				return $items;
+			}
+		);
+
+		$bar = $this->build_admin_bar();
+
+		// Only the well-formed entry should have landed.
+		$this->assertNotNull( $bar->get_node( 'desktop-layout-custom-ok' ) );
+		$this->assertNull( $bar->get_node( 'desktop-layout-custom-no-title' ) );
+	}
+
+	/**
+	 * `position` sorts custom items; ties preserve registration order.
+	 *
+	 * @covers ::wpdm_admin_bar_toggle
+	 */
+	public function test_arrange_menu_sorts_custom_items_by_position() {
+		wp_set_current_user( self::$admin_id );
+		update_user_meta( self::$admin_id, 'wp_desktop_mode', '1' );
+
+		add_filter(
+			'wp_desktop_arrange_menu_items',
+			function ( $items ) {
+				$items[] = array( 'id' => 'late',  'title' => 'Late',  'position' => 50 );
+				$items[] = array( 'id' => 'early', 'title' => 'Early', 'position' => 5 );
+				$items[] = array( 'id' => 'mid',   'title' => 'Mid',   'position' => 20 );
+				return $items;
+			}
+		);
+
+		$bar  = $this->build_admin_bar();
+		$menu = $bar->get_node( 'desktop-layout-menu' );
+		$this->assertNotNull( $menu );
+
+		// Read children in registration-plus-sort order from the bar.
+		$ids = array();
+		foreach ( $bar->get_nodes() as $n ) {
+			if ( $n->parent === 'desktop-layout-menu' && strpos( $n->id, 'desktop-layout-custom-' ) === 0 ) {
+				$ids[] = $n->id;
+			}
+		}
+
+		$this->assertSame(
+			array(
+				'desktop-layout-custom-early',
+				'desktop-layout-custom-mid',
+				'desktop-layout-custom-late',
+			),
+			$ids
+		);
+	}
+
+	/**
+	 * The filter only runs when the Arrange menu is actually built —
+	 * i.e., the user is viewing the desktop shell. On classic admin
+	 * the filter is never invoked so plugins don't waste cycles.
+	 *
+	 * @covers ::wpdm_admin_bar_toggle
+	 */
+	public function test_arrange_menu_filter_not_invoked_in_classic_admin() {
+		wp_set_current_user( self::$admin_id );
+		// Default: desktop meta off → classic admin.
+		$invocations = 0;
+		add_filter(
+			'wp_desktop_arrange_menu_items',
+			function ( $items ) use ( &$invocations ) {
+				$invocations++;
+				return $items;
+			}
+		);
+
+		$this->build_admin_bar();
+
+		$this->assertSame( 0, $invocations );
+	}
+
+	/**
+	 * The inline JS click router must know how to recognise a
+	 * plugin-registered item. We assert the `wp-admin-bar-desktop-layout-custom-`
+	 * prefix check + the `wp-desktop.arrange.custom-action` dispatch are
+	 * both baked into the admin-bar script.
+	 *
+	 * @covers ::wpdm_enqueue_toggle_assets
+	 */
+	public function test_toggle_assets_route_custom_arrange_items() {
+		wp_set_current_user( self::$admin_id );
+
+		wpdm_enqueue_toggle_assets();
+
+		$after  = wp_scripts()->get_data( 'admin-bar', 'after' );
+		$inline = is_array( $after ) ? implode( '', $after ) : (string) $after;
+
+		$this->assertStringContainsString(
+			'wp-admin-bar-desktop-layout-custom-',
+			$inline
+		);
+		$this->assertStringContainsString(
+			'wp-desktop.arrange.custom-action',
+			$inline
+		);
 	}
 }

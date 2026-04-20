@@ -128,6 +128,84 @@ function wpdm_admin_bar_toggle( $wp_admin_bar ) {
 				),
 			)
 		);
+
+		/**
+		 * Filter the list of custom arrange-menu items contributed by
+		 * plugins. Each entry becomes an additional node under the
+		 * "Arrange" submenu, rendered with the same styling as the
+		 * built-in Cascade / Overview / Tile items. Clicking a custom
+		 * item dispatches the JS action `wp-desktop.arrange.custom-action`
+		 * with payload `{ id }` — plugins subscribe via
+		 * `wp.hooks.addAction()` and run their own arrangement logic.
+		 *
+		 * Each item is an associative array:
+		 *
+		 *   'id'          string  Unique slug (letters, digits, dashes).
+		 *   'title'       string  Menu label (already translated).
+		 *   'description' string  Optional tooltip / aria description.
+		 *   'position'    int     Optional sort key; lower sorts earlier.
+		 *                         Built-ins are effectively at 0-3; use
+		 *                         10+ to append.
+		 *
+		 * Entries with missing/invalid `id` or `title` are dropped.
+		 *
+		 * @since 0.6.2
+		 *
+		 * @param array $items Existing custom items (default empty).
+		 */
+		$custom = apply_filters( 'wp_desktop_arrange_menu_items', array() );
+		if ( is_array( $custom ) ) {
+			// Stable sort by `position` (default 10 — after built-ins),
+			// preserving registration order within a tie.
+			$sortable = array();
+			foreach ( $custom as $index => $item ) {
+				if ( ! is_array( $item ) ) {
+					continue;
+				}
+				$id    = isset( $item['id'] ) ? sanitize_key( (string) $item['id'] ) : '';
+				$title = isset( $item['title'] ) ? (string) $item['title'] : '';
+				if ( '' === $id || '' === $title ) {
+					continue;
+				}
+				$sortable[] = array(
+					'id'          => $id,
+					'title'       => $title,
+					'description' => isset( $item['description'] ) ? (string) $item['description'] : '',
+					'position'    => isset( $item['position'] ) && is_numeric( $item['position'] )
+						? (int) $item['position']
+						: 10,
+					'index'       => $index,
+				);
+			}
+			usort(
+				$sortable,
+				static function ( $a, $b ) {
+					if ( $a['position'] === $b['position'] ) {
+						return $a['index'] - $b['index'];
+					}
+					return $a['position'] - $b['position'];
+				}
+			);
+			foreach ( $sortable as $item ) {
+				// The custom id is round-tripped through the DOM id
+				// (stripping the `desktop-layout-custom-` prefix in the
+				// click handler). Keeps us inside the documented
+				// WP_Admin_Bar::add_node meta surface — no non-standard
+				// attributes, no custom render callbacks.
+				$wp_admin_bar->add_node(
+					array(
+						'parent' => 'desktop-layout-menu',
+						'id'     => 'desktop-layout-custom-' . $item['id'],
+						'title'  => esc_html( $item['title'] ),
+						'href'   => '#',
+						'meta'   => array(
+							'class' => 'wpdm-layout-action wpdm-layout-custom',
+							'title' => $item['description'],
+						),
+					)
+				);
+			}
+		}
 	}
 }
 add_action( 'admin_bar_menu', 'wpdm_admin_bar_toggle', 190 );
@@ -171,6 +249,68 @@ function wpdm_enqueue_toggle_assets() {
 			#wp-admin-bar-desktop-layout-menu .ab-label {
 				display: none;
 			}
+		}
+
+		/* Arrange submenu — aligned visually with the <wpd-menu> component
+		   (src/ui/components/wpd-menu/wpd-menu.styles.ts). The submenu
+		   flips from the native dark-on-dark admin bar to a light theme
+		   (white bg, dark text) so it matches the rest of our UI AND so
+		   the hover state stays legible (a light tint on a dark bg
+		   would render as invisible overlap with native admin-bar hover
+		   colors). Selectors prefixed with #wpadminbar to win the
+		   admin-bar specificity without !important. */
+		#wpadminbar #wp-admin-bar-desktop-layout-menu .ab-sub-wrapper {
+			background: var( --wp-desktop-window-bg, #fff );
+			padding: 4px;
+			min-width: 220px;
+			border: 1px solid var( --wp-desktop-window-border, #c3c4c7 );
+			border-radius: 8px;
+			box-shadow: 0 8px 24px rgba( 0, 0, 0, 0.18 ),
+				0 2px 6px rgba( 0, 0, 0, 0.08 );
+		}
+		#wpadminbar #wp-admin-bar-desktop-layout-menu .ab-sub-wrapper .ab-submenu {
+			padding: 0;
+			background: transparent;
+		}
+		#wpadminbar #wp-admin-bar-desktop-layout-menu .ab-sub-wrapper .ab-submenu > li {
+			background: transparent;
+		}
+		#wpadminbar #wp-admin-bar-desktop-layout-menu .ab-sub-wrapper .ab-submenu > li > .ab-item {
+			display: flex;
+			align-items: center;
+			gap: 10px;
+			height: auto;
+			min-height: 32px;
+			padding: 6px 10px;
+			font-size: 13px;
+			line-height: 1.3;
+			color: var( --wp-desktop-text, #1d2327 );
+			background: transparent;
+			border-radius: 6px;
+			transition: background-color 0.12s ease, color 0.12s ease;
+		}
+		/* Hover + keyboard focus share the same tinted background. Text
+		   stays dark so it stays legible on the light bg. `focus` wins
+		   here instead of the native `.ab-item:focus { color: #72aee6 }`
+		   thanks to the extra id in our selector chain. */
+		#wpadminbar #wp-admin-bar-desktop-layout-menu .ab-sub-wrapper .ab-submenu > li > .ab-item:hover,
+		#wpadminbar #wp-admin-bar-desktop-layout-menu .ab-sub-wrapper .ab-submenu > li > .ab-item:focus,
+		#wpadminbar.nojq #wp-admin-bar-desktop-layout-menu .ab-sub-wrapper .ab-submenu > li:hover > .ab-item {
+			background: rgba( 0, 0, 0, 0.06 );
+			color: #000;
+		}
+		#wp-admin-bar-desktop-layout-snap .wpdm-layout-checkbox {
+			flex-shrink: 0;
+			display: inline-flex;
+			align-items: center;
+			justify-content: center;
+			width: 16px;
+			height: 16px;
+			font-size: 14px;
+			line-height: 1;
+		}
+		#wp-admin-bar-desktop-layout-snap[aria-checked="true"] .wpdm-layout-checkbox {
+			color: var( --wp-admin-theme-color, #2271b1 );
 		}
 	';
 	wp_add_inline_style( 'admin-bar', $css );
@@ -323,6 +463,16 @@ function wpdm_enqueue_toggle_assets() {
 			manager.enterOverview();
 		} else if ( id.id === 'wp-admin-bar-desktop-layout-tile' && typeof manager.tile === 'function' ) {
 			manager.tile();
+		} else if ( id.id.indexOf( 'wp-admin-bar-desktop-layout-custom-' ) === 0 ) {
+			// Plugin-registered custom item. Strip the shared prefix to
+			// recover the `id` the plugin supplied via the PHP filter,
+			// then dispatch the public JS action. Plugins subscribe
+			// via wp.hooks.addAction( 'wp-desktop.arrange.custom-action', ... ).
+			var customId = id.id.replace( 'wp-admin-bar-desktop-layout-custom-', '' );
+			var hooks = window.wp && window.wp.hooks;
+			if ( hooks && typeof hooks.doAction === 'function' ) {
+				hooks.doAction( 'wp-desktop.arrange.custom-action', { id: customId } );
+			}
 		}
 		// After running an action, dismiss the submenu so the user
 		// lands in the newly arranged desktop instead of the menu

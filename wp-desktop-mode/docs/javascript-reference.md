@@ -318,6 +318,7 @@ Fired by the admin-bar "Arrange" menu's layout algorithms. The overview hooks co
 | `wp-desktop.arrange.tile.dimensions` | filter | Stable | filters `{ cols, rows }`; context `{ windowCount, areaWidth, areaHeight }`. Override the auto-chosen grid (e.g., force a 3-column newsroom layout). Returns must be positive integers and `cols * rows >= windowCount`, otherwise the filter is ignored. |
 | `wp-desktop.arrange.snap.changed` | action | Stable | `{ enabled }` — fires when the user toggles "Snap to grid" |
 | `wp-desktop.arrange.snap.cell-size` | filter | Stable | filters `{ cellWidth, cellHeight }`; context `{ areaWidth, areaHeight }`. Override the auto-computed snap cell size (e.g., enforce a fixed 100×100 grid). Non-positive returns are ignored. |
+| `wp-desktop.arrange.custom-action` | action | Stable | `{ id }` — fires when the user clicks a plugin-registered Arrange-menu item (registered server-side via the `wp_desktop_arrange_menu_items` PHP filter). The `id` matches the `id` field the plugin supplied. |
 
 #### Virtual desktops ("Spaces")
 
@@ -353,6 +354,41 @@ wp.desktop.registerWidget( {
     },
 } );
 ```
+
+**Optional placement / sizing fields** (all default off, fully back-compat with 0.7.x widgets):
+
+| Field | Type | What it does |
+|---|---|---|
+| `movable` | `boolean` | Show a thin chrome header at the top of the card with a drag grip + label + × button. The user can drag the card from the chrome to place the widget anywhere on the desktop (first drag "liberates" it from the right-side column). Text inputs / buttons inside the widget body are unaffected — drag only initiates from the chrome. |
+| `resizable` | `boolean` | Add resize handles. With `movable: true`, 8 handles (corners + edges). Without it, only the bottom edge is draggable so width stays locked to the column. |
+| `minWidth`, `minHeight` | `number` | Lower bounds enforced during user resize (px). |
+| `maxWidth`, `maxHeight` | `number` | Upper bounds enforced during user resize (px). |
+| `defaultWidth`, `defaultHeight` | `number` | Initial floating size — used the first time the widget is liberated. |
+
+```js
+wp.desktop.registerWidget( {
+    id: 'my/notes',
+    label: 'Sticky notes',
+    description: 'A quick scratchpad you can drop anywhere.',
+    icon: 'dashicons-welcome-write-blog',
+    movable: true,
+    resizable: true,
+    minWidth: 200,
+    minHeight: 120,
+    defaultWidth: 280,
+    defaultHeight: 220,
+    mount: ( container ) => {
+        const ta = document.createElement( 'textarea' );
+        ta.value = window.localStorage.getItem( 'my-notes' ) || '';
+        ta.oninput = () =>
+            window.localStorage.setItem( 'my-notes', ta.value );
+        container.appendChild( ta );
+        return () => ta.remove();
+    },
+} );
+```
+
+User-placed geometry (position + size of liberated widgets) persists per-user in `localStorage` under `wp-desktop-widgets-geometry`. Removing a widget clears its stored geometry so a re-add starts docked in the column again.
 
 | Hook | Kind | Status | Payload |
 |---|---|---|---|

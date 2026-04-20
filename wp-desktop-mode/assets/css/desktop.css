@@ -313,6 +313,180 @@ body.wp-desktop-has-fullscreen-window .wp-desktop-shell {
 }
 
 /*
+ * Movable widgets — a thin chrome header at the top of the card holds
+ * the drag grip, the widget's own label, and the × button. The whole
+ * header is the drag handle (except for interactive children — those
+ * remain clickable as normal). Non-movable widgets keep today's
+ * corner-× layout unchanged.
+ */
+.wp-desktop-widgets__chrome {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 8px;
+	border-bottom: 1px solid rgba( 255, 255, 255, 0.06 );
+	cursor: grab;
+	user-select: none;
+	-webkit-user-select: none;
+	touch-action: none;
+}
+
+.wp-desktop-widgets__card--dragging .wp-desktop-widgets__chrome {
+	cursor: grabbing;
+}
+
+.wp-desktop-widgets__grip {
+	flex-shrink: 0;
+	width: 10px;
+	height: 16px;
+	background-image: radial-gradient(
+		circle,
+		rgba( 255, 255, 255, 0.55 ) 1.2px,
+		transparent 1.5px
+	);
+	background-size: 5px 5px;
+	background-position: 0 1px;
+	background-repeat: space;
+	opacity: 0.45;
+	transition: opacity 0.12s ease;
+}
+
+.wp-desktop-widgets__card:hover .wp-desktop-widgets__grip {
+	opacity: 0.85;
+}
+
+.wp-desktop-widgets__title {
+	flex: 1;
+	font-size: 12px;
+	font-weight: 500;
+	letter-spacing: 0.01em;
+	color: rgba( 255, 255, 255, 0.85 );
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* When the close button sits inside the chrome it's inline, not
+   corner-absolute — reset position + always-visible opacity. */
+.wp-desktop-widgets__chrome .wp-desktop-widgets__card-close {
+	position: static;
+	opacity: 0.7;
+	width: 20px;
+	height: 20px;
+}
+
+.wp-desktop-widgets__chrome .wp-desktop-widgets__card-close:hover,
+.wp-desktop-widgets__chrome .wp-desktop-widgets__card-close:focus-visible {
+	opacity: 1;
+}
+
+/*
+ * Floating widgets — absolute-positioned, inline top/left/width/height
+ * written by the frame. The hover translate-X effect would fight the
+ * user's chosen position, so disable it.
+ */
+.wp-desktop-widgets__card--floating {
+	position: absolute;
+	margin: 0;
+}
+
+.wp-desktop-widgets__card--floating:hover {
+	transform: none;
+}
+
+.wp-desktop-widgets__card--dragging,
+.wp-desktop-widgets__card--resizing {
+	transition: none;
+	z-index: 2;
+}
+
+/*
+ * Resize handles — 8 in all, with the 4 edges as hair-line strips and
+ * the 4 corners as small squares. Invisible by default; cursor change
+ * telegraphs them on hover. The frame attaches pointer listeners to
+ * every handle; a non-movable widget ignores everything except the
+ * `s` (bottom-edge, height-only) handle at the pointer layer, so we
+ * visually hide the mismatched handles via the modifier class.
+ */
+.wp-desktop-widgets__resize {
+	position: absolute;
+	z-index: 1;
+}
+
+.wp-desktop-widgets__resize--n {
+	top: -3px;
+	left: 8px;
+	right: 8px;
+	height: 6px;
+	cursor: ns-resize;
+}
+
+.wp-desktop-widgets__resize--s {
+	bottom: -3px;
+	left: 8px;
+	right: 8px;
+	height: 6px;
+	cursor: ns-resize;
+}
+
+.wp-desktop-widgets__resize--e {
+	top: 8px;
+	bottom: 8px;
+	right: -3px;
+	width: 6px;
+	cursor: ew-resize;
+}
+
+.wp-desktop-widgets__resize--w {
+	top: 8px;
+	bottom: 8px;
+	left: -3px;
+	width: 6px;
+	cursor: ew-resize;
+}
+
+.wp-desktop-widgets__resize--ne {
+	top: -4px;
+	right: -4px;
+	width: 12px;
+	height: 12px;
+	cursor: nesw-resize;
+}
+
+.wp-desktop-widgets__resize--nw {
+	top: -4px;
+	left: -4px;
+	width: 12px;
+	height: 12px;
+	cursor: nwse-resize;
+}
+
+.wp-desktop-widgets__resize--se {
+	bottom: -4px;
+	right: -4px;
+	width: 12px;
+	height: 12px;
+	cursor: nwse-resize;
+}
+
+.wp-desktop-widgets__resize--sw {
+	bottom: -4px;
+	left: -4px;
+	width: 12px;
+	height: 12px;
+	cursor: nesw-resize;
+}
+
+/*
+ * Non-movable resizable widgets only expose the bottom-edge handle —
+ * width stays locked to the column width. Hide the other seven so the
+ * cursor doesn't lie about what's interactive.
+ */
+.wp-desktop-widgets__card--resizable:not( .wp-desktop-widgets__card--movable ) .wp-desktop-widgets__resize:not( .wp-desktop-widgets__resize--s ) {
+	display: none;
+}
+
+/*
  * Add-widget tile — matches the "+" tile in the overview top bar.
  * Always visible at the bottom of the column; promoted to center
  * when the column is otherwise empty so first-run users see a

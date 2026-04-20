@@ -13,7 +13,7 @@ import { Component, defineComponent, html } from '../../core';
 import { styles } from './wpd-color-field.styles';
 
 export class WpdColorField extends Component {
-	static props = [ 'label', 'value' ] as const;
+	static props = [ 'label', 'value', 'variant' ] as const;
 	static styles = [ styles ];
 
 	protected render() {

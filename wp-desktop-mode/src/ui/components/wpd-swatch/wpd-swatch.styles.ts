@@ -28,6 +28,23 @@ export const styles = css`
 		aspect-ratio: 1 / 1;
 		flex: 0 0 auto;
 	}
+	/*
+	 * Wallpaper variant: 16:9 aspect (matches most desktop
+	 * displays), and positions slotted overlay content (e.g. a
+	 * label chip) at the bottom-left so it reads like a
+	 * photo-corner caption. Caller owns the label's own visual
+	 * treatment — we just place it.
+	 */
+	:host( [ variant='wallpaper' ] ) {
+		aspect-ratio: 16 / 9;
+	}
+	:host( [ variant='wallpaper' ] ) button {
+		display: flex;
+		align-items: flex-end;
+		justify-content: flex-start;
+		padding: 6px 8px;
+		overflow: hidden;
+	}
 	button {
 		appearance: none;
 		width: 100%;
@@ -51,5 +68,13 @@ export const styles = css`
 	button[ aria-pressed='true' ] {
 		border-color: var( --wp-admin-theme-color, #2271b1 );
 		box-shadow: 0 0 0 2px var( --wp-admin-theme-color, #2271b1 );
+	}
+	/*
+	 * Wallpaper variant uses a softer lift to pair with the
+	 * larger visible surface — hover scale on a 200 px tile can
+	 * feel cartoonish.
+	 */
+	:host( [ variant='wallpaper' ] ) button:hover {
+		transform: translateY( -1px );
 	}
 `;

@@ -11,7 +11,7 @@ import { Component, defineComponent, html } from '../../core';
 import { styles } from './wpd-swatch.styles';
 
 export class WpdSwatch extends Component {
-	static props = [ 'value', 'label', 'selected', 'preview', 'size' ] as const;
+	static props = [ 'value', 'label', 'selected', 'preview', 'size', 'variant' ] as const;
 	static styles = [ styles ];
 
 	protected render() {
@@ -28,7 +28,9 @@ export class WpdSwatch extends Component {
 				title=${ label }
 				style="background: ${ preview }"
 				@click=${ () => this._onPick() }
-			></button>
+			>
+				<slot></slot>
+			</button>
 		`;
 	}
 

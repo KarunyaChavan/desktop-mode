@@ -282,9 +282,8 @@ export class OsSettings {
 		const footer = document.createElement( 'div' );
 		footer.className = 'wp-desktop-os-settings__footer';
 
-		const reset = document.createElement( 'button' );
-		reset.type = 'button';
-		reset.className = 'wp-desktop-os-settings__reset';
+		const reset = document.createElement( 'wpd-button' );
+		reset.setAttribute( 'variant', 'ghost' );
 		reset.textContent = __( 'Reset to defaults' );
 		reset.addEventListener( 'click', () => {
 			// Preserve the uploaded image so the user doesn't lose their
@@ -409,21 +408,30 @@ export class OsSettings {
 		def: WallpaperDef,
 		onClick: () => void,
 	): HTMLElement {
-		const btn = document.createElement( 'button' );
-		btn.type = 'button';
-		btn.className = 'wp-desktop-os-settings__swatch wp-desktop-os-settings__swatch--wallpaper';
-		btn.setAttribute( 'aria-label', def.label );
-		btn.setAttribute( 'aria-pressed', this.state.wallpaper === def.id ? 'true' : 'false' );
-		btn.dataset.wallpaperId = def.id;
-		btn.style.background = def.preview;
+		const swatch = document.createElement( 'wpd-swatch' );
+		swatch.setAttribute( 'value', def.id );
+		swatch.setAttribute( 'label', def.label );
+		swatch.setAttribute( 'preview', def.preview );
+		swatch.setAttribute( 'variant', 'wallpaper' );
+		// `data-wallpaper-id` kept so `syncGradientPreviewSwatch()`
+		// can locate the custom-gradient tile when the editor's
+		// colors change.
+		swatch.dataset.wallpaperId = def.id;
+		if ( this.state.wallpaper === def.id ) {
+			swatch.setAttribute( 'selected', '' );
+		}
 
+		// Overlay label with the frosted-chip background — slotted so
+		// it renders on top of the preview. The outer `.swatch-label`
+		// CSS rule still targets this span since slot children stay
+		// in light DOM.
 		const labelEl = document.createElement( 'span' );
 		labelEl.className = 'wp-desktop-os-settings__swatch-label';
 		labelEl.textContent = def.label;
-		btn.appendChild( labelEl );
+		swatch.appendChild( labelEl );
 
-		btn.addEventListener( 'click', onClick );
-		return btn;
+		swatch.addEventListener( 'wpd-pick', onClick );
+		return swatch;
 	}
 
 	/**
@@ -439,10 +447,18 @@ export class OsSettings {
 
 	private refreshWallpaperPressedState( body: HTMLElement ): void {
 		body.querySelectorAll<HTMLElement>( '[data-wallpaper-id]' ).forEach( ( el ) => {
-			el.setAttribute(
-				'aria-pressed',
-				el.dataset.wallpaperId === this.state.wallpaper ? 'true' : 'false',
-			);
+			const selected = el.dataset.wallpaperId === this.state.wallpaper;
+			// `<wpd-swatch>` drives its inner aria-pressed from the
+			// `selected` host attribute; upload-tile (still hand-
+			// rolled for the drag/drop surface) uses aria-pressed
+			// directly, so we set both — whichever the element
+			// cares about applies.
+			if ( selected ) {
+				el.setAttribute( 'selected', '' );
+			} else {
+				el.removeAttribute( 'selected' );
+			}
+			el.setAttribute( 'aria-pressed', selected ? 'true' : 'false' );
 		} );
 	}
 
@@ -520,84 +536,51 @@ export class OsSettings {
 		container.classList.add( 'wp-desktop-os-settings__gradient-editor-inner' );
 		container.innerHTML = '';
 
-		const row = document.createElement( 'div' );
-		row.className = 'wp-desktop-os-settings__gradient-row';
-
-		const buildColorField = (
-			label: string,
-			initialValue: string,
-			onInput: ( value: string ) => void,
-		): HTMLElement => {
-			const field = document.createElement( 'label' );
-			field.className = 'wp-desktop-os-settings__gradient-field';
-
-			const text = document.createElement( 'span' );
-			text.className = 'wp-desktop-os-settings__gradient-label';
-			text.textContent = label;
-			field.appendChild( text );
-
-			const input = document.createElement( 'input' );
-			input.type = 'color';
-			input.className = 'wp-desktop-os-settings__color-input';
-			input.value = initialValue;
-			input.addEventListener( 'input', () => onInput( input.value ) );
-			field.appendChild( input );
-
-			return field;
-		};
-
 		const onGradientChange = (): void => {
 			this.save();
 			this.apply();
 			this.syncGradientPreviewSwatch( container );
 		};
 
-		row.appendChild(
-			buildColorField( __( 'From' ), this.state.customGradient.from, ( value ) => {
-				this.state.customGradient.from = value;
-				onGradientChange();
-			} ),
-		);
-		row.appendChild(
-			buildColorField( __( 'To' ), this.state.customGradient.to, ( value ) => {
-				this.state.customGradient.to = value;
-				onGradientChange();
-			} ),
-		);
+		const row = document.createElement( 'div' );
+		row.className = 'wp-desktop-os-settings__gradient-row';
+
+		const fromField = document.createElement( 'wpd-color-field' );
+		fromField.setAttribute( 'variant', 'block' );
+		fromField.setAttribute( 'label', __( 'From' ) );
+		fromField.setAttribute( 'value', this.state.customGradient.from );
+		fromField.addEventListener( 'wpd-color-change', ( e ) => {
+			this.state.customGradient.from = ( e as CustomEvent ).detail.value;
+			onGradientChange();
+		} );
+		row.appendChild( fromField );
+
+		const toField = document.createElement( 'wpd-color-field' );
+		toField.setAttribute( 'variant', 'block' );
+		toField.setAttribute( 'label', __( 'To' ) );
+		toField.setAttribute( 'value', this.state.customGradient.to );
+		toField.addEventListener( 'wpd-color-change', ( e ) => {
+			this.state.customGradient.to = ( e as CustomEvent ).detail.value;
+			onGradientChange();
+		} );
+		row.appendChild( toField );
 
 		container.appendChild( row );
 
-		const angleField = document.createElement( 'label' );
-		angleField.className = 'wp-desktop-os-settings__gradient-angle';
-
-		const angleLabel = document.createElement( 'span' );
-		angleLabel.className = 'wp-desktop-os-settings__gradient-label';
-		angleLabel.textContent = __( 'Angle' );
-		angleField.appendChild( angleLabel );
-
-		const angleInput = document.createElement( 'input' );
-		angleInput.type = 'range';
-		angleInput.min = '0';
-		angleInput.max = '360';
-		angleInput.step = '1';
-		angleInput.value = String( this.state.customGradient.angle );
-		angleField.appendChild( angleInput );
-
-		const angleValue = document.createElement( 'span' );
-		angleValue.className = 'wp-desktop-os-settings__gradient-angle-value';
-		angleValue.textContent = `${ this.state.customGradient.angle }°`;
-		angleField.appendChild( angleValue );
-
-		angleInput.addEventListener( 'input', () => {
-			const n = parseInt( angleInput.value, 10 );
-			if ( ! Number.isFinite( n ) ) {
-				return;
-			}
-			this.state.customGradient.angle = n;
-			angleValue.textContent = `${ n }°`;
+		const angleField = document.createElement( 'wpd-range-field' );
+		angleField.setAttribute( 'label', __( 'Angle' ) );
+		angleField.setAttribute( 'min', '0' );
+		angleField.setAttribute( 'max', '360' );
+		angleField.setAttribute( 'step', '1' );
+		angleField.setAttribute( 'suffix', '°' );
+		angleField.setAttribute(
+			'value',
+			String( this.state.customGradient.angle ),
+		);
+		angleField.addEventListener( 'wpd-range-change', ( e ) => {
+			this.state.customGradient.angle = ( e as CustomEvent ).detail.value;
 			onGradientChange();
 		} );
-
 		container.appendChild( angleField );
 
 		// Empty teardown — the editor holds no long-lived resources
@@ -730,21 +713,20 @@ export class OsSettings {
 		search.setAttribute( 'aria-label', __( 'Search media' ) );
 		toolbar.appendChild( search );
 
-		const hdWrap = document.createElement( 'label' );
-		hdWrap.className = 'wp-desktop-os-settings__library-hd';
-		const hdInput = document.createElement( 'input' );
-		hdInput.type = 'checkbox';
-		hdInput.checked = this.state.libraryHdOnly;
-		hdWrap.appendChild( hdInput );
-		const hdLabel = document.createElement( 'span' );
-		hdLabel.textContent = sprintf(
-			// translators: %1$d is the HD minimum width in px, %2$d is the minimum height.
-			__( 'Only HD (≥%1$d×%2$d)' ),
-			HD_MIN_WIDTH,
-			HD_MIN_HEIGHT,
+		const hdToggle = document.createElement( 'wpd-checkbox-label' );
+		hdToggle.setAttribute(
+			'label',
+			sprintf(
+				// translators: %1$d is the HD minimum width in px, %2$d is the minimum height.
+				__( 'Only HD (≥%1$d×%2$d)' ),
+				HD_MIN_WIDTH,
+				HD_MIN_HEIGHT,
+			),
 		);
-		hdWrap.appendChild( hdLabel );
-		toolbar.appendChild( hdWrap );
+		if ( this.state.libraryHdOnly ) {
+			hdToggle.setAttribute( 'checked', '' );
+		}
+		toolbar.appendChild( hdToggle );
 
 		library.appendChild( toolbar );
 
@@ -757,9 +739,8 @@ export class OsSettings {
 		const meta = document.createElement( 'span' );
 		meta.className = 'wp-desktop-os-settings__library-meta';
 		footer.appendChild( meta );
-		const loadMore = document.createElement( 'button' );
-		loadMore.type = 'button';
-		loadMore.className = 'wp-desktop-os-settings__library-load-more';
+		const loadMore = document.createElement( 'wpd-button' );
+		loadMore.setAttribute( 'variant', 'ghost' );
 		loadMore.textContent = __( 'Load more' );
 		footer.appendChild( loadMore );
 		library.appendChild( footer );
@@ -786,8 +767,15 @@ export class OsSettings {
 				);
 			}
 			meta.textContent = parts.join( ' · ' );
+			// hidden applies to any HTMLElement; `disabled` is a
+			// wpd-button prop that maps to the inner <button>'s
+			// disabled attribute via the component's render.
 			loadMore.hidden = page >= totalPages;
-			loadMore.disabled = loading;
+			if ( loading ) {
+				loadMore.setAttribute( 'disabled', '' );
+			} else {
+				loadMore.removeAttribute( 'disabled' );
+			}
 		};
 
 		const renderGrid = (): void => {
@@ -876,8 +864,8 @@ export class OsSettings {
 			}, SEARCH_DEBOUNCE_MS ) as unknown as number;
 		} );
 
-		hdInput.addEventListener( 'change', () => {
-			this.state.libraryHdOnly = hdInput.checked;
+		hdToggle.addEventListener( 'wpd-checkbox-change', ( e ) => {
+			this.state.libraryHdOnly = ( e as CustomEvent ).detail.checked;
 			this.save();
 			resetAndReload();
 		} );
@@ -1020,9 +1008,9 @@ export class OsSettings {
 			tile.setAttribute( 'aria-label', __( 'Custom image wallpaper' ) );
 			tile.style.backgroundImage = `url("${ encodeURI( this.state.customImage.url ) }")`;
 
-			const remove = document.createElement( 'button' );
-			remove.type = 'button';
-			remove.className = 'wp-desktop-os-settings__upload-remove';
+			const remove = document.createElement( 'wpd-button' );
+			remove.setAttribute( 'variant', 'danger' );
+			remove.classList.add( 'wp-desktop-os-settings__upload-remove' );
 			remove.setAttribute( 'aria-label', __( 'Remove custom image' ) );
 			remove.textContent = __( 'Remove' );
 			remove.addEventListener( 'click', ( e ) => {

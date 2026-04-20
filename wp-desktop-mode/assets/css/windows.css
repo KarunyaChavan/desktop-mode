@@ -477,42 +477,26 @@ wpd-tab-chip + wpd-tab-chip {
 	border-radius: 8px;
 }
 
+/*
+ * Generic grid. Auto-fill + minmax gives us a truly responsive
+ * layout — the panel reflows columns as OS Settings is resized,
+ * rather than locking to a fixed 3-across.
+ */
 .wp-desktop-os-settings__grid {
-	display: flex;
-	flex-wrap: wrap;
+	display: grid;
+	grid-template-columns: repeat( auto-fill, minmax( 140px, 1fr ) );
 	gap: 10px;
 }
 
-.wp-desktop-os-settings__grid--wallpapers .wp-desktop-os-settings__swatch {
-	width: calc((100% - 20px) / 3);
-	aspect-ratio: 16 / 9;
-}
-
-.wp-desktop-os-settings__swatch {
-	position: relative;
-	display: flex;
-	align-items: flex-end;
-	justify-content: flex-start;
-	padding: 6px 8px;
-	border: 2px solid transparent;
-	border-radius: 8px;
-	cursor: pointer;
-	overflow: hidden;
-	transition: border-color 0.15s ease, transform 0.15s ease;
-}
-
-.wp-desktop-os-settings__swatch:hover {
-	transform: translateY(-1px);
-}
-
-.wp-desktop-os-settings__swatch:focus-visible {
-	outline: 2px solid var(--wp-admin-theme-color, #2271b1);
-	outline-offset: 2px;
-}
-
-.wp-desktop-os-settings__swatch[aria-pressed="true"] {
-	border-color: var(--wp-admin-theme-color, #2271b1);
-	box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.9) inset;
+/*
+ * Wallpaper swatches — each is a `<wpd-swatch variant="wallpaper">`
+ * with its own shadow-DOM button + aspect ratio + selected state.
+ * The only outer knobs we need are: wider minmax for wallpapers
+ * (so each tile shows meaningful preview area), and the 16:9
+ * aspect ratio override. Everything else lives in the component.
+ */
+.wp-desktop-os-settings__grid--wallpapers {
+	grid-template-columns: repeat( auto-fill, minmax( 160px, 1fr ) );
 }
 
 /*
@@ -553,22 +537,7 @@ wpd-tab-chip + wpd-tab-chip {
 	margin-top: 12px;
 }
 
-.wp-desktop-os-settings__reset {
-	padding: 6px 12px;
-	border: 1px solid #dcdcde;
-	border-radius: 4px;
-	background: #fff;
-	color: #50575e;
-	font: inherit;
-	font-size: 12px;
-	cursor: pointer;
-	transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
-}
-
-.wp-desktop-os-settings__reset:hover {
-	border-color: var(--wp-admin-theme-color, #2271b1);
-	color: var(--wp-admin-theme-color, #2271b1);
-}
+/* `__reset` now renders as `<wpd-button variant="ghost">`. */
 
 /* ---------------------------------------------------------------
  * Custom gradient editor — color inputs + angle slider.
@@ -627,65 +596,22 @@ wpd-tab-chip + wpd-tab-chip {
 	gap: 12px;
 }
 
+/*
+ * Gradient editor row — laid out as a flex of `<wpd-color-field>` +
+ * `<wpd-range-field>`. Each field owns its own label / control /
+ * readout styling internally; only spacing between fields lives here.
+ */
 .wp-desktop-os-settings__gradient-row {
 	display: flex;
 	gap: 16px;
 }
 
-.wp-desktop-os-settings__gradient-field,
-.wp-desktop-os-settings__gradient-angle {
-	display: flex;
-	align-items: center;
-	gap: 8px;
+.wp-desktop-os-settings__gradient-row wpd-color-field {
 	flex: 1;
-	font-size: 12px;
-	color: #50575e;
 }
 
-.wp-desktop-os-settings__gradient-angle {
+.wp-desktop-os-settings__gradient-editor-inner wpd-range-field {
 	margin-top: 12px;
-}
-
-.wp-desktop-os-settings__gradient-label {
-	min-width: 44px;
-	font-weight: 500;
-}
-
-.wp-desktop-os-settings__gradient-angle input[type="range"] {
-	flex: 1;
-	accent-color: var(--wp-admin-theme-color, #2271b1);
-}
-
-.wp-desktop-os-settings__gradient-angle-value {
-	min-width: 36px;
-	text-align: end;
-	font-variant-numeric: tabular-nums;
-	color: #1d2327;
-	font-weight: 500;
-}
-
-/*
- * Native color input — strip the default chrome border so it reads as
- * a flat swatch matching the rest of the panel. WebKit still adds an
- * inner border; browsers differ, but none look actively broken.
- */
-.wp-desktop-os-settings__color-input {
-	flex: 1;
-	width: 100%;
-	height: 32px;
-	padding: 0;
-	border: 1px solid #dcdcde;
-	border-radius: 4px;
-	background: #fff;
-	cursor: pointer;
-}
-
-.wp-desktop-os-settings__color-input::-webkit-color-swatch-wrapper {
-	padding: 2px;
-}
-.wp-desktop-os-settings__color-input::-webkit-color-swatch {
-	border: none;
-	border-radius: 2px;
 }
 
 /* ---------------------------------------------------------------
@@ -827,28 +753,15 @@ wpd-tab-chip + wpd-tab-chip {
 	box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
 }
 
+/*
+ * `__upload-remove` renders as `<wpd-button variant="danger">`
+ * with component-owned styling. Only the positioning on the
+ * filled tile is caller-specific — stays here.
+ */
 .wp-desktop-os-settings__upload-remove {
 	position: absolute;
 	top: 8px;
 	inset-inline-end: 8px;
-	padding: 4px 10px;
-	border: none;
-	border-radius: 4px;
-	background: rgba(0, 0, 0, 0.65);
-	color: #fff;
-	font-size: 11px;
-	font-weight: 500;
-	cursor: pointer;
-	transition: background-color 0.15s ease;
-}
-
-.wp-desktop-os-settings__upload-remove:hover {
-	background: #d63638;
-}
-
-.wp-desktop-os-settings__upload-remove:focus-visible {
-	outline: 2px solid rgba(255, 255, 255, 0.7);
-	outline-offset: 2px;
 }
 
 /* Tab strip moved into `<wpd-tabs>` + `<wpd-tab>`
@@ -891,21 +804,7 @@ wpd-tab-chip + wpd-tab-chip {
 	outline: none;
 }
 
-.wp-desktop-os-settings__library-hd {
-	display: inline-flex;
-	align-items: center;
-	gap: 6px;
-	font-size: 12px;
-	color: #50575e;
-	white-space: nowrap;
-	cursor: pointer;
-	user-select: none;
-}
-
-.wp-desktop-os-settings__library-hd input[type="checkbox"] {
-	accent-color: var(--wp-admin-theme-color, #2271b1);
-	margin: 0;
-}
+/* `__library-hd` now renders as `<wpd-checkbox-label>`. */
 
 .wp-desktop-os-settings__library-grid {
 	display: grid;
@@ -1018,31 +917,7 @@ wpd-tab-chip + wpd-tab-chip {
 	font-size: 11px;
 }
 
-.wp-desktop-os-settings__library-load-more {
-	padding: 6px 12px;
-	border: 1px solid #dcdcde;
-	border-radius: 4px;
-	background: #fff;
-	color: #50575e;
-	font: inherit;
-	font-size: 12px;
-	cursor: pointer;
-	transition: border-color 0.15s ease, color 0.15s ease;
-}
-
-.wp-desktop-os-settings__library-load-more:hover:not(:disabled) {
-	border-color: var(--wp-admin-theme-color, #2271b1);
-	color: var(--wp-admin-theme-color, #2271b1);
-}
-
-.wp-desktop-os-settings__library-load-more:disabled {
-	opacity: 0.6;
-	cursor: progress;
-}
-
-.wp-desktop-os-settings__library-load-more[hidden] {
-	display: none;
-}
+/* `__library-load-more` now renders as `<wpd-button variant="ghost">`. */
 
 /* ---------------------------------------------------------------
  * Reduced-motion: collapse every OS-Settings animation/transition to
@@ -1053,12 +928,9 @@ wpd-tab-chip + wpd-tab-chip {
  * --------------------------------------------------------------- */
 @media (prefers-reduced-motion: reduce) {
 	.wp-desktop-os-settings__editor-slot,
-	.wp-desktop-os-settings__swatch,
 	.wp-desktop-os-settings__upload-tile,
-	.wp-desktop-os-settings__upload-remove,
 	.wp-desktop-os-settings__library-tile,
-	.wp-desktop-os-settings__library-load-more,
-	.wp-desktop-os-settings__reset {
+	wpd-swatch {
 		transition-duration: 0.01ms !important;
 	}
 

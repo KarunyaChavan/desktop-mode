@@ -4398,6 +4398,23 @@ var wpDesktop = function(exports) {
 		aspect-ratio: 1 / 1;
 		flex: 0 0 auto;
 	}
+	/*
+	 * Wallpaper variant: 16:9 aspect (matches most desktop
+	 * displays), and positions slotted overlay content (e.g. a
+	 * label chip) at the bottom-left so it reads like a
+	 * photo-corner caption. Caller owns the label's own visual
+	 * treatment — we just place it.
+	 */
+	:host( [ variant='wallpaper' ] ) {
+		aspect-ratio: 16 / 9;
+	}
+	:host( [ variant='wallpaper' ] ) button {
+		display: flex;
+		align-items: flex-end;
+		justify-content: flex-start;
+		padding: 6px 8px;
+		overflow: hidden;
+	}
 	button {
 		appearance: none;
 		width: 100%;
@@ -4422,6 +4439,14 @@ var wpDesktop = function(exports) {
 		border-color: var( --wp-admin-theme-color, #2271b1 );
 		box-shadow: 0 0 0 2px var( --wp-admin-theme-color, #2271b1 );
 	}
+	/*
+	 * Wallpaper variant uses a softer lift to pair with the
+	 * larger visible surface — hover scale on a 200 px tile can
+	 * feel cartoonish.
+	 */
+	:host( [ variant='wallpaper' ] ) button:hover {
+		transform: translateY( -1px );
+	}
 `;
   const _WpdSwatch = class _WpdSwatch extends Component {
     render() {
@@ -4436,7 +4461,9 @@ var wpDesktop = function(exports) {
 				title=${label}
 				style="background: ${preview}"
 				@click=${() => this._onPick()}
-			></button>
+			>
+				<slot></slot>
+			</button>
 		`;
     }
     _onPick() {
@@ -4445,7 +4472,7 @@ var wpDesktop = function(exports) {
       });
     }
   };
-  _WpdSwatch.props = ["value", "label", "selected", "preview", "size"];
+  _WpdSwatch.props = ["value", "label", "selected", "preview", "size", "variant"];
   _WpdSwatch.styles = [styles$4];
   let WpdSwatch = _WpdSwatch;
   defineComponent("wpd-swatch", WpdSwatch);
@@ -4592,6 +4619,37 @@ var wpDesktop = function(exports) {
 		background: transparent;
 		cursor: pointer;
 	}
+	/*
+	 * Block variant: the host fills its parent, the input stretches
+	 * to take the remaining row after the label. Used by the
+	 * gradient editor where each field lives in a 1fr flex column.
+	 */
+	:host( [ variant='block' ] ) {
+		display: flex;
+		width: 100%;
+	}
+	:host( [ variant='block' ] ) label {
+		display: flex;
+		flex: 1;
+		align-items: center;
+	}
+	:host( [ variant='block' ] ) input[ type='color' ] {
+		flex: 1;
+		width: auto;
+		height: 32px;
+	}
+	/*
+	 * WebKit paints the color swatch inside an extra wrapper with
+	 * a default 4 px border — strip it so the input reads as a
+	 * flat colored panel matching the rest of OS Settings.
+	 */
+	:host( [ variant='block' ] ) input[ type='color' ]::-webkit-color-swatch-wrapper {
+		padding: 2px;
+	}
+	:host( [ variant='block' ] ) input[ type='color' ]::-webkit-color-swatch {
+		border: none;
+		border-radius: 2px;
+	}
 `;
   const _WpdColorField = class _WpdColorField extends Component {
     render() {
@@ -4614,7 +4672,7 @@ var wpDesktop = function(exports) {
       this.emit("wpd-color-change", { value: input.value });
     }
   };
-  _WpdColorField.props = ["label", "value"];
+  _WpdColorField.props = ["label", "value", "variant"];
   _WpdColorField.styles = [styles$2];
   let WpdColorField = _WpdColorField;
   defineComponent("wpd-color-field", WpdColorField);
@@ -4930,9 +4988,8 @@ var wpDesktop = function(exports) {
       body.appendChild(this.buildDockSizeSection());
       const footer = document.createElement("div");
       footer.className = "wp-desktop-os-settings__footer";
-      const reset = document.createElement("button");
-      reset.type = "button";
-      reset.className = "wp-desktop-os-settings__reset";
+      const reset = document.createElement("wpd-button");
+      reset.setAttribute("variant", "ghost");
       reset.textContent = __("Reset to defaults");
       reset.addEventListener("click", () => {
         const preservedImage = this.state.customImage;
@@ -5023,19 +5080,21 @@ var wpDesktop = function(exports) {
       return section;
     }
     buildWallpaperSwatch(def, onClick) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "wp-desktop-os-settings__swatch wp-desktop-os-settings__swatch--wallpaper";
-      btn.setAttribute("aria-label", def.label);
-      btn.setAttribute("aria-pressed", this.state.wallpaper === def.id ? "true" : "false");
-      btn.dataset.wallpaperId = def.id;
-      btn.style.background = def.preview;
+      const swatch = document.createElement("wpd-swatch");
+      swatch.setAttribute("value", def.id);
+      swatch.setAttribute("label", def.label);
+      swatch.setAttribute("preview", def.preview);
+      swatch.setAttribute("variant", "wallpaper");
+      swatch.dataset.wallpaperId = def.id;
+      if (this.state.wallpaper === def.id) {
+        swatch.setAttribute("selected", "");
+      }
       const labelEl = document.createElement("span");
       labelEl.className = "wp-desktop-os-settings__swatch-label";
       labelEl.textContent = def.label;
-      btn.appendChild(labelEl);
-      btn.addEventListener("click", onClick);
-      return btn;
+      swatch.appendChild(labelEl);
+      swatch.addEventListener("wpd-pick", onClick);
+      return swatch;
     }
     /**
      * Select a wallpaper by id. Updates state, persists, applies to the
@@ -5049,10 +5108,13 @@ var wpDesktop = function(exports) {
     }
     refreshWallpaperPressedState(body) {
       body.querySelectorAll("[data-wallpaper-id]").forEach((el) => {
-        el.setAttribute(
-          "aria-pressed",
-          el.dataset.wallpaperId === this.state.wallpaper ? "true" : "false"
-        );
+        const selected = el.dataset.wallpaperId === this.state.wallpaper;
+        if (selected) {
+          el.setAttribute("selected", "");
+        } else {
+          el.removeAttribute("selected");
+        }
+        el.setAttribute("aria-pressed", selected ? "true" : "false");
       });
     }
     /**
@@ -5115,65 +5177,44 @@ var wpDesktop = function(exports) {
     renderCustomGradientEditor(container) {
       container.classList.add("wp-desktop-os-settings__gradient-editor-inner");
       container.innerHTML = "";
-      const row = document.createElement("div");
-      row.className = "wp-desktop-os-settings__gradient-row";
-      const buildColorField = (label, initialValue, onInput) => {
-        const field = document.createElement("label");
-        field.className = "wp-desktop-os-settings__gradient-field";
-        const text = document.createElement("span");
-        text.className = "wp-desktop-os-settings__gradient-label";
-        text.textContent = label;
-        field.appendChild(text);
-        const input = document.createElement("input");
-        input.type = "color";
-        input.className = "wp-desktop-os-settings__color-input";
-        input.value = initialValue;
-        input.addEventListener("input", () => onInput(input.value));
-        field.appendChild(input);
-        return field;
-      };
       const onGradientChange = () => {
         this.save();
         this.apply();
         this.syncGradientPreviewSwatch(container);
       };
-      row.appendChild(
-        buildColorField(__("From"), this.state.customGradient.from, (value) => {
-          this.state.customGradient.from = value;
-          onGradientChange();
-        })
-      );
-      row.appendChild(
-        buildColorField(__("To"), this.state.customGradient.to, (value) => {
-          this.state.customGradient.to = value;
-          onGradientChange();
-        })
-      );
+      const row = document.createElement("div");
+      row.className = "wp-desktop-os-settings__gradient-row";
+      const fromField = document.createElement("wpd-color-field");
+      fromField.setAttribute("variant", "block");
+      fromField.setAttribute("label", __("From"));
+      fromField.setAttribute("value", this.state.customGradient.from);
+      fromField.addEventListener("wpd-color-change", (e) => {
+        this.state.customGradient.from = e.detail.value;
+        onGradientChange();
+      });
+      row.appendChild(fromField);
+      const toField = document.createElement("wpd-color-field");
+      toField.setAttribute("variant", "block");
+      toField.setAttribute("label", __("To"));
+      toField.setAttribute("value", this.state.customGradient.to);
+      toField.addEventListener("wpd-color-change", (e) => {
+        this.state.customGradient.to = e.detail.value;
+        onGradientChange();
+      });
+      row.appendChild(toField);
       container.appendChild(row);
-      const angleField = document.createElement("label");
-      angleField.className = "wp-desktop-os-settings__gradient-angle";
-      const angleLabel = document.createElement("span");
-      angleLabel.className = "wp-desktop-os-settings__gradient-label";
-      angleLabel.textContent = __("Angle");
-      angleField.appendChild(angleLabel);
-      const angleInput = document.createElement("input");
-      angleInput.type = "range";
-      angleInput.min = "0";
-      angleInput.max = "360";
-      angleInput.step = "1";
-      angleInput.value = String(this.state.customGradient.angle);
-      angleField.appendChild(angleInput);
-      const angleValue = document.createElement("span");
-      angleValue.className = "wp-desktop-os-settings__gradient-angle-value";
-      angleValue.textContent = `${this.state.customGradient.angle}°`;
-      angleField.appendChild(angleValue);
-      angleInput.addEventListener("input", () => {
-        const n = parseInt(angleInput.value, 10);
-        if (!Number.isFinite(n)) {
-          return;
-        }
-        this.state.customGradient.angle = n;
-        angleValue.textContent = `${n}°`;
+      const angleField = document.createElement("wpd-range-field");
+      angleField.setAttribute("label", __("Angle"));
+      angleField.setAttribute("min", "0");
+      angleField.setAttribute("max", "360");
+      angleField.setAttribute("step", "1");
+      angleField.setAttribute("suffix", "°");
+      angleField.setAttribute(
+        "value",
+        String(this.state.customGradient.angle)
+      );
+      angleField.addEventListener("wpd-range-change", (e) => {
+        this.state.customGradient.angle = e.detail.value;
         onGradientChange();
       });
       container.appendChild(angleField);
@@ -5275,21 +5316,20 @@ var wpDesktop = function(exports) {
       search.className = "wp-desktop-os-settings__library-search";
       search.setAttribute("aria-label", __("Search media"));
       toolbar.appendChild(search);
-      const hdWrap = document.createElement("label");
-      hdWrap.className = "wp-desktop-os-settings__library-hd";
-      const hdInput = document.createElement("input");
-      hdInput.type = "checkbox";
-      hdInput.checked = this.state.libraryHdOnly;
-      hdWrap.appendChild(hdInput);
-      const hdLabel = document.createElement("span");
-      hdLabel.textContent = sprintf(
-        // translators: %1$d is the HD minimum width in px, %2$d is the minimum height.
-        __("Only HD (≥%1$d×%2$d)"),
-        HD_MIN_WIDTH,
-        HD_MIN_HEIGHT
+      const hdToggle = document.createElement("wpd-checkbox-label");
+      hdToggle.setAttribute(
+        "label",
+        sprintf(
+          // translators: %1$d is the HD minimum width in px, %2$d is the minimum height.
+          __("Only HD (≥%1$d×%2$d)"),
+          HD_MIN_WIDTH,
+          HD_MIN_HEIGHT
+        )
       );
-      hdWrap.appendChild(hdLabel);
-      toolbar.appendChild(hdWrap);
+      if (this.state.libraryHdOnly) {
+        hdToggle.setAttribute("checked", "");
+      }
+      toolbar.appendChild(hdToggle);
       library.appendChild(toolbar);
       const grid = document.createElement("div");
       grid.className = "wp-desktop-os-settings__library-grid";
@@ -5299,9 +5339,8 @@ var wpDesktop = function(exports) {
       const meta = document.createElement("span");
       meta.className = "wp-desktop-os-settings__library-meta";
       footer.appendChild(meta);
-      const loadMore = document.createElement("button");
-      loadMore.type = "button";
-      loadMore.className = "wp-desktop-os-settings__library-load-more";
+      const loadMore = document.createElement("wpd-button");
+      loadMore.setAttribute("variant", "ghost");
       loadMore.textContent = __("Load more");
       footer.appendChild(loadMore);
       library.appendChild(footer);
@@ -5326,7 +5365,11 @@ var wpDesktop = function(exports) {
         }
         meta.textContent = parts.join(" · ");
         loadMore.hidden = page >= totalPages;
-        loadMore.disabled = loading;
+        if (loading) {
+          loadMore.setAttribute("disabled", "");
+        } else {
+          loadMore.removeAttribute("disabled");
+        }
       };
       const renderGrid = () => {
         grid.innerHTML = "";
@@ -5407,8 +5450,8 @@ var wpDesktop = function(exports) {
           resetAndReload();
         }, SEARCH_DEBOUNCE_MS);
       });
-      hdInput.addEventListener("change", () => {
-        this.state.libraryHdOnly = hdInput.checked;
+      hdToggle.addEventListener("wpd-checkbox-change", (e) => {
+        this.state.libraryHdOnly = e.detail.checked;
         this.save();
         resetAndReload();
       });
@@ -5514,9 +5557,9 @@ var wpDesktop = function(exports) {
         tile.classList.add("wp-desktop-os-settings__upload-tile--filled");
         tile.setAttribute("aria-label", __("Custom image wallpaper"));
         tile.style.backgroundImage = `url("${encodeURI(this.state.customImage.url)}")`;
-        const remove = document.createElement("button");
-        remove.type = "button";
-        remove.className = "wp-desktop-os-settings__upload-remove";
+        const remove = document.createElement("wpd-button");
+        remove.setAttribute("variant", "danger");
+        remove.classList.add("wp-desktop-os-settings__upload-remove");
         remove.setAttribute("aria-label", __("Remove custom image"));
         remove.textContent = __("Remove");
         remove.addEventListener("click", (e) => {

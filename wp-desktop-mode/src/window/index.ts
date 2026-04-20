@@ -1,0 +1,880 @@
+/**
+ * Desktop Mode — Window.
+ *
+ * A single desktop window: title bar, iframe content, drag, resize,
+ * state management. The class orchestrates — pointer math, tab
+ * lifecycle, menu open/close, and postMessage routing live in sibling
+ * modules under `src/window/*.ts`, keyed off a shared `Window`
+ * instance threaded in as the first argument of each helper.
+ *
+ * Fields prefixed with `_` are package-internal: helpers in this
+ * folder may touch them, but nothing outside `src/window/` should.
+ * Kept `public` at the TypeScript level only because `private`
+ * prevents the sibling modules from seeing them.
+ *
+ * @since 6.9.0
+ */
+
+import type { WindowConfig, WindowState } from './../types';
+import { HOOKS, doAction } from './../hooks';
+import { __ } from './../i18n';
+// Register the window-chrome atoms — no named import needed, the
+// side-effect `defineComponent(...)` calls wire them up.
+import './../ui/components/wpd-window-button/wpd-window-button';
+import './../ui/components/wpd-menu/wpd-menu';
+import './../ui/components/wpd-tab-chip/wpd-tab-chip';
+
+import { createWindowElement, updateFullscreenBodyClass } from './dom';
+import { handleWindowMessage } from './iframe-bridge';
+import {
+	addExternalTab,
+	externalTabCount,
+	externalTabsSnapshot,
+	handleTabStripClick,
+	syncActiveTab,
+} from './tabs';
+import {
+	closeActionsMenu,
+	flipStartupCheckOptimistically,
+	openActionsMenu,
+	refreshStartupCheckState,
+	toggleActionsMenu,
+} from './menus';
+import { handleDragStart, handleResizeStart } from './pointer';
+
+/**
+ * Desktop Window class.
+ *
+ * Manages a single window: its DOM element, iframe, drag/resize
+ * behavior, and state.
+ */
+export class Window {
+	public readonly id: string;
+	public readonly config: WindowConfig;
+	public readonly element: HTMLElement;
+	/**
+	 * Iframe for iframe-backed windows. Null for native windows, which
+	 * render into the body directly via {@link WindowConfig.render}.
+	 */
+	public readonly iframe: HTMLIFrameElement | null;
+	public state: WindowState = 'normal';
+
+	/** @internal */
+	public _titleBar: HTMLElement;
+	/** @internal */
+	public _titleEl: HTMLElement;
+	/** @internal */
+	public _isDragging = false;
+	/** @internal */
+	public _isResizing = false;
+	/** @internal */
+	public _isDestroyed = false;
+	/** @internal */
+	public _boundOnMessage: ( e: MessageEvent ) => void;
+	/** @internal */
+	public _dragOffsetX = 0;
+	/** @internal */
+	public _dragOffsetY = 0;
+	/** @internal */
+	public _resizeStartX = 0;
+	/** @internal */
+	public _resizeStartY = 0;
+	/** @internal */
+	public _resizeStartW = 0;
+	/** @internal */
+	public _resizeStartH = 0;
+
+	/**
+	 * Stored geometry before maximize/snap, for restore.
+	 * @internal
+	 */
+	public _savedGeometry: { x: number; y: number; width: number; height: number } | null = null;
+
+	/**
+	 * Snapshot taken before entering fullscreen so we can restore the
+	 * caller's previous state (normal or maximized) on exit.
+	 * @internal
+	 */
+	public _savedFullscreenState: {
+		state: WindowState;
+		x: number;
+		y: number;
+		width: number;
+		height: number;
+	} | null = null;
+
+	/**
+	 * External-link sub-tabs keyed by a generated tab id. Each carries
+	 * its own iframe, its label, and a cleanup hook for the readiness
+	 * probe. Exists only for iframe windows — native windows skip the
+	 * whole code path.
+	 * @internal
+	 */
+	public _externalTabs: Map<
+		string,
+		{
+			tabEl: HTMLElement;
+			iframe: HTMLIFrameElement;
+			url: string;
+			label: string;
+			cancelProbe: () => void;
+		}
+	> = new Map();
+
+	/**
+	 * Monotonic id generator for external tabs.
+	 * @internal
+	 */
+	public _externalTabSeq = 0;
+
+	/**
+	 * Which tab is currently foregrounded: 'primary' or a tab id.
+	 * @internal
+	 */
+	public _activeTabId: 'primary' | string = 'primary';
+
+	/** Callbacks for external events. */
+	public onFocusRequest: ( ( win: Window ) => void ) | null = null;
+	public onClose: ( ( win: Window ) => void ) | null = null;
+	public onMinimize: ( ( win: Window ) => void ) | null = null;
+	/**
+	 * Invoked when the title-bar menu's "Open another" item is clicked.
+	 * The window manager wires this to `openNew()`.
+	 */
+	public onOpenAnother: ( ( win: Window ) => void ) | null = null;
+
+	/**
+	 * Invoked when the title-bar menu's "Open on startup" item is
+	 * toggled. The shell wires this to the public
+	 * `wp.desktop.setDefaultWindow()` call, which writes the user's
+	 * preference and fires the `default-window-changed` event.
+	 */
+	public onToggleStartup: ( ( win: Window ) => void ) | null = null;
+
+	/**
+	 * Resolver for the active snap-to-grid config. Wired by the
+	 * window-manager on construction. Returns `enabled: false` when
+	 * snap is off, otherwise the cell dimensions to round drag /
+	 * resize values to.
+	 */
+	public snapConfigProvider:
+		| ( () => { enabled: boolean; cellWidth: number; cellHeight: number } )
+		| null = null;
+
+	/**
+	 * Bound handler used to close the actions menu on outside clicks.
+	 * @internal
+	 */
+	public _boundOnDocumentPointerDown: ( ( e: PointerEvent ) => void ) | null = null;
+
+	constructor( config: WindowConfig ) {
+		this.id = config.id;
+		this.config = config;
+		this.element = createWindowElement( config );
+		this.iframe = config.native
+			? null
+			: ( this.element.querySelector( '.wp-desktop-window__iframe' ) as HTMLIFrameElement );
+		this._titleBar = this.element.querySelector( '.wp-desktop-window__titlebar' ) as HTMLElement;
+		this._titleEl = this.element.querySelector( '.wp-desktop-window__title' ) as HTMLElement;
+		this._boundOnMessage = ( e: MessageEvent ) => handleWindowMessage( this, e );
+
+		this.bindEvents();
+
+		// Native windows: let the module fill the body. We call
+		// render() before the opening animation so the first frame
+		// shows the rendered UI rather than an empty flash.
+		if ( config.native && config.render ) {
+			const body = this.element.querySelector(
+				'.wp-desktop-window__body',
+			) as HTMLElement | null;
+			if ( body ) {
+				config.render( body );
+			}
+		}
+
+		// Session-restored minimized windows must paint already-minimized
+		// on the first frame — otherwise the user sees the opening fade-in
+		// followed by the minimize transition (a visible flicker on every
+		// page refresh). Apply the minimized class before the element is
+		// in the DOM so no transition runs, skip the opening animation,
+		// hide the iframe immediately, and bypass the emitChange save the
+		// regular minimize() path would fire for state the server already
+		// has.
+		if ( config.initialState === 'minimized' ) {
+			this.state = 'minimized';
+			this.element.classList.add( 'wp-desktop-window--minimized' );
+			if ( this.iframe ) {
+				this.iframe.style.visibility = 'hidden';
+			}
+			return;
+		}
+
+		// Fresh open (or restored to a visible state). Play the opening
+		// animation, then remove the class.
+		this.element.classList.add( 'wp-desktop-window--opening' );
+		this.element.addEventListener( 'animationend', () => {
+			this.element.classList.remove( 'wp-desktop-window--opening' );
+		}, { once: true } );
+
+		// Maximized/fullscreen restores go through the class-driven path
+		// after the geometry renders, so the state transition animates.
+		// 'normal' is the default — applying it would echo a redundant
+		// save.
+		if ( config.initialState && config.initialState !== 'normal' ) {
+			requestAnimationFrame( () => this.applyInitialState( config.initialState! ) );
+		}
+	}
+
+	/**
+	 * Apply a state restored from the session. Called once, after
+	 * construction.
+	 */
+	private applyInitialState( state: WindowState ): void {
+		if ( state === 'minimized' ) {
+			this.minimize();
+		} else if ( state === 'maximized' ) {
+			this.toggleMaximize();
+		} else if ( state === 'fullscreen' ) {
+			this.toggleFullscreen();
+		}
+	}
+
+	/**
+	 * Dispatch a `wp-desktop-window-changed` event so the session-save
+	 * path can schedule a debounced write.
+	 *
+	 * Called after any state change that should end up persisted: drag
+	 * end, resize end, minimize, restore, maximize toggle, fullscreen
+	 * toggle. Exposed as `_emitChange` so sibling modules (tabs,
+	 * pointer) can fire the same event.
+	 *
+	 * @internal
+	 */
+	public _emitChange( reason: 'moved' | 'resized' | 'state' ): void {
+		document.dispatchEvent(
+			new CustomEvent( 'wp-desktop-window-changed', {
+				detail: { windowId: this.id, reason, state: this.state },
+			} ),
+		);
+	}
+
+	/**
+	 * Round an `{ x, y, width, height }` rect onto the live snap grid
+	 * when snap-to-grid is enabled, otherwise return it unchanged.
+	 *
+	 * Used by both the un-maximize restore (so geometry saved while
+	 * snap was off doesn't leave the window off-grid when snap is on)
+	 * and any other code path that wants "the current geometry, but
+	 * grid-aligned." Width/height are floored to whole cells to avoid
+	 * crossing the EDGE_MARGIN constraint after rounding up.
+	 */
+	private snapGeometry( g: { x: number; y: number; width: number; height: number } ): {
+		x: number;
+		y: number;
+		width: number;
+		height: number;
+	} {
+		const snap = this.snapConfigProvider?.();
+		if ( ! snap || ! snap.enabled ) {
+			return g;
+		}
+		const width = Math.max(
+			this.config.minWidth,
+			Math.round( g.width / snap.cellWidth ) * snap.cellWidth,
+		);
+		const height = Math.max(
+			this.config.minHeight,
+			Math.round( g.height / snap.cellHeight ) * snap.cellHeight,
+		);
+		return {
+			x: Math.round( g.x / snap.cellWidth ) * snap.cellWidth,
+			y: Math.round( g.y / snap.cellHeight ) * snap.cellHeight,
+			width,
+			height,
+		};
+	}
+
+	/**
+	 * Returns the current resolved URL of the iframe — preferring the
+	 * content window's location (reflects in-window navigation) and
+	 * falling back to the iframe's src attribute for cases where the
+	 * content document isn't yet reachable (cross-origin edge, early
+	 * load).
+	 */
+	public getCurrentUrl(): string {
+		if ( ! this.iframe ) {
+			return this.config.url;
+		}
+		try {
+			const href = this.iframe.contentWindow?.location.href;
+			if ( href && href !== 'about:blank' ) {
+				return href;
+			}
+		} catch {
+			/* Cross-origin read rejected — fall through. */
+		}
+		return this.iframe.src;
+	}
+
+	/** Bind all DOM event handlers. */
+	private bindEvents(): void {
+		// Focus on click anywhere in the window. Skipped while in
+		// overview mode — there, the window-manager's own capture-phase
+		// listener owns the click surface, and touching focus here
+		// would reorder z-index mid-grid and fire a spurious
+		// `window.focused` action for a press the user may never
+		// intend to commit (they might release on a different
+		// thumbnail or the backdrop).
+		this.element.addEventListener( 'pointerdown', () => {
+			if ( this.element.classList.contains( 'wp-desktop-window--overview' ) ) {
+				return;
+			}
+			this.onFocusRequest?.( this );
+		} );
+
+		// Keyboard / tab-into-iframe path: `focusin` bubbles when the
+		// iframe ELEMENT itself receives focus in the parent's DOM
+		// (Tab key from outside, or the first keyboard focus of the
+		// session). Does NOT cover mouse clicks inside the iframe —
+		// those are handled by the shell-level window.blur listener
+		// that inspects document.activeElement.
+		this.element.addEventListener( 'focusin', () => {
+			if ( this.element.classList.contains( 'wp-desktop-window--overview' ) ) {
+				return;
+			}
+			this.onFocusRequest?.( this );
+		} );
+
+		// Title bar drag.
+		this._titleBar.addEventListener( 'pointerdown', ( e: PointerEvent ) =>
+			handleDragStart( this, e ),
+		);
+
+		// Resize handle.
+		const resizeHandle = this.element.querySelector( '.wp-desktop-window__resize-handle' ) as HTMLElement;
+		resizeHandle.addEventListener( 'pointerdown', ( e: PointerEvent ) =>
+			handleResizeStart( this, e ),
+		);
+
+		// Window control buttons.
+		const btnMin = this.element.querySelector( '.wp-desktop-window__btn--minimize' ) as HTMLElement;
+		const btnMax = this.element.querySelector( '.wp-desktop-window__btn--maximize' ) as HTMLElement;
+		const btnFocus = this.element.querySelector( '.wp-desktop-window__btn--focus' ) as HTMLElement;
+		// Native windows skip the detach button entirely.
+		const btnDetach = this.element.querySelector(
+			'.wp-desktop-window__btn--detach',
+		) as HTMLElement | null;
+		const btnClose = this.element.querySelector( '.wp-desktop-window__btn--close' ) as HTMLElement;
+
+		// Title-bar actions menu (iframe windows only).
+		const menuBtn = this.element.querySelector<HTMLElement>(
+			'.wp-desktop-window__menu-btn',
+		);
+		const menuPanel = this.element.querySelector<HTMLElement>(
+			'.wp-desktop-window__menu-panel',
+		);
+		if ( menuBtn && menuPanel ) {
+			menuBtn.addEventListener( 'click', ( e: Event ) => {
+				e.stopPropagation();
+				toggleActionsMenu( this );
+			} );
+			const openAnother = menuPanel.querySelector(
+				'.wp-desktop-window__menu-item--open-another',
+			);
+			if ( openAnother ) {
+				// `<wpd-menu-item>` emits `wpd-menu-item-click` on
+				// selection — listen for that rather than raw click
+				// so other click-based inner DOM (focus rings, etc.)
+				// don't double-fire.
+				openAnother.addEventListener( 'wpd-menu-item-click', ( e: Event ) => {
+					e.stopPropagation();
+					closeActionsMenu( this );
+					this.onOpenAnother?.( this );
+				} );
+			}
+			// "Open on startup" — checkable menu item. Hydrate its
+			// checked state from the shared public API, and wire the
+			// click handler to toggle via `setDefaultWindow`. The
+			// callback is injected by the window manager so we don't
+			// couple the Window class to wp.desktop directly.
+			const startup = menuPanel.querySelector<HTMLElement>(
+				'.wp-desktop-window__menu-item--startup',
+			);
+			if ( startup ) {
+				refreshStartupCheckState( this, startup );
+				// `<wpd-menu-item>` emits `wpd-menu-item-click` on its
+				// button click; listen there (not on the plain `click`)
+				// so we catch the check toggle without racing the item's
+				// own internal state update.
+				startup.addEventListener( 'wpd-menu-item-click', ( e: Event ) => {
+					// Keep the menu open — a checkbox item is a toggle,
+					// not a one-shot action. Users commonly want to
+					// verify the new state without reopening the menu,
+					// and the REST round-trip is fast enough that the
+					// optimistic flip + the server-confirmation refresh
+					// feels instant.
+					e.stopPropagation();
+					flipStartupCheckOptimistically( startup );
+					this.onToggleStartup?.( this );
+				} );
+				// Refresh the check state whenever the public
+				// default-window preference changes — this is the
+				// authoritative signal (fired after the REST save
+				// succeeds). If the REST failed, this event doesn't
+				// fire and the optimistic flip stays until the next
+				// menu open, where the canonical state from config
+				// takes over.
+				document.addEventListener(
+					'wp-desktop-default-window-changed',
+					() => {
+						refreshStartupCheckState( this, startup );
+					},
+				);
+			}
+			// Escape closes the menu, returning focus to the trigger so
+			// keyboard users don't lose their place.
+			menuPanel.addEventListener( 'keydown', ( e: Event ) => {
+				const kev = e as KeyboardEvent;
+				if ( kev.key === 'Escape' ) {
+					e.stopPropagation();
+					closeActionsMenu( this );
+					menuBtn.focus();
+				}
+			} );
+		}
+
+		btnMin.addEventListener( 'click', ( e: Event ) => {
+			e.stopPropagation();
+			this.minimize();
+		} );
+		btnMax.addEventListener( 'click', ( e: Event ) => {
+			e.stopPropagation();
+			this.toggleMaximize();
+		} );
+		btnFocus.addEventListener( 'click', ( e: Event ) => {
+			e.stopPropagation();
+			this.toggleFullscreen();
+		} );
+		btnDetach?.addEventListener( 'click', ( e: Event ) => {
+			e.stopPropagation();
+			this.detach();
+		} );
+		btnClose.addEventListener( 'click', ( e: Event ) => {
+			e.stopPropagation();
+			this.close();
+		} );
+
+		// Double-click title bar to toggle maximize.
+		this._titleBar.addEventListener( 'dblclick', () => {
+			this.toggleMaximize();
+		} );
+
+		// Iframe-only wiring: tab strip, load listener, and
+		// postMessage bridge all presuppose an iframe. Native windows
+		// have none of those affordances, so skip this whole block.
+		if ( this.iframe ) {
+			const iframe = this.iframe;
+
+			const tabs = this.element.querySelector( '.wp-desktop-window__tabs' );
+			if ( tabs ) {
+				tabs.addEventListener( 'click', ( e: Event ) =>
+					handleTabStripClick( this, e ),
+				);
+			}
+
+			// Sync the active tab whenever the iframe finishes a
+			// navigation. Reading iframe.contentWindow.location is safe
+			// because we only allow same-origin URLs; cross-origin
+			// would have thrown earlier.
+			iframe.addEventListener( 'load', () => {
+				try {
+					const href = iframe.contentWindow?.location.href;
+					if ( href ) {
+						syncActiveTab( this, href );
+					}
+				} catch {
+					/* Cross-origin or detached frame — ignore. */
+				}
+			} );
+
+			// Listen for postMessage from iframe.
+			window.addEventListener( 'message', this._boundOnMessage );
+		}
+	}
+
+	/** Add a closeable+detachable sub-tab hosting an external URL. */
+	public addExternalTab( url: string, label: string ): void {
+		addExternalTab( this, url, label );
+	}
+
+	/** Set the z-index of this window. */
+	public setZIndex( z: number ): void {
+		this.element.style.zIndex = String( z );
+	}
+
+	/** Mark this window as focused or unfocused. */
+	public setFocused( focused: boolean ): void {
+		this.element.classList.toggle( 'wp-desktop-window--focused', focused );
+	}
+
+	/** Update the window title. */
+	public setTitle( title: string ): void {
+		this._titleEl.textContent = title;
+		doAction( HOOKS.WINDOW_TITLE_CHANGED, { windowId: this.id, title } );
+	}
+
+	/** Minimize the window. */
+	public minimize(): void {
+		this.state = 'minimized';
+		this.element.classList.add( 'wp-desktop-window--minimized' );
+
+		// After the transition completes, hide the iframe to save
+		// resources. Native windows don't have an iframe to hide —
+		// opacity: 0 on the window element already stops paint work.
+		if ( this.iframe ) {
+			const iframe = this.iframe;
+			this.element.addEventListener( 'transitionend', ( e: TransitionEvent ) => {
+				if ( e.propertyName === 'opacity' && this.state === 'minimized' ) {
+					iframe.style.visibility = 'hidden';
+				}
+			}, { once: true } );
+		}
+
+		this.onMinimize?.( this );
+		this._emitChange( 'state' );
+		doAction( HOOKS.WINDOW_MINIMIZED, { windowId: this.id } );
+	}
+
+	/** Restore the window from minimized state. */
+	public restore(): void {
+		// Restore iframe visibility before the animation starts.
+		if ( this.iframe ) {
+			this.iframe.style.visibility = '';
+		}
+
+		const wasMinimized = this.state === 'minimized';
+		this.element.classList.remove( 'wp-desktop-window--minimized' );
+		if ( wasMinimized ) {
+			this.state = 'normal';
+		}
+		this.onFocusRequest?.( this );
+		this._emitChange( 'state' );
+		if ( wasMinimized ) {
+			doAction( HOOKS.WINDOW_RESTORED, { windowId: this.id } );
+		}
+	}
+
+	/**
+	 * Enter maximized state idempotently.
+	 *
+	 * Different from `toggleMaximize` in that it's a one-way: a caller
+	 * that wants the window maximized can call this without worrying
+	 * about the current state. No-op if already maximized.
+	 *
+	 * Used by the Overview-exit path so clicking a thumbnail can
+	 * animate directly from the grid position to maximized in one
+	 * co-animation, rather than the two chained animations a
+	 * `toggleMaximize` call would produce (first back-to-normal, then
+	 * normal-to-maximized).
+	 */
+	public maximize(): void {
+		if ( this.state === 'maximized' ) {
+			return;
+		}
+		const parent = this.element.parentElement;
+		if ( ! parent ) {
+			return;
+		}
+		// `offsetLeft` / `offsetWidth` etc. ignore CSS transforms, so
+		// even if the caller has applied an overview transform, the
+		// saved geometry captures the pre-transform inline position
+		// that un-maximize will later restore to.
+		this._savedGeometry = {
+			x: this.element.offsetLeft,
+			y: this.element.offsetTop,
+			width: this.element.offsetWidth,
+			height: this.element.offsetHeight,
+		};
+		this.element.classList.add( 'wp-desktop-window--maximized' );
+		this.element.style.left = '0px';
+		this.element.style.top = '0px';
+		this.element.style.width = `${ parent.clientWidth }px`;
+		this.element.style.height = `${ parent.clientHeight }px`;
+		this.state = 'maximized';
+		this._emitChange( 'state' );
+		doAction( HOOKS.WINDOW_MAXIMIZED, { windowId: this.id } );
+	}
+
+	/** Toggle between maximized and normal states. */
+	public toggleMaximize(): void {
+		const parent = this.element.parentElement;
+		if ( ! parent ) {
+			return;
+		}
+
+		if ( this.state === 'maximized' ) {
+			// Restore to saved geometry. The maximized class is removed
+			// *after* the next frame so the class-driven border-radius
+			// animates in sync.
+			this.element.classList.remove( 'wp-desktop-window--maximized' );
+			if ( this._savedGeometry ) {
+				const restored = this.snapGeometry( this._savedGeometry );
+				this.element.style.left = `${ restored.x }px`;
+				this.element.style.top = `${ restored.y }px`;
+				this.element.style.width = `${ restored.width }px`;
+				this.element.style.height = `${ restored.height }px`;
+				// Update the savedGeometry IN PLACE to the snapped
+				// values so a subsequent maximize → un-maximize round
+				// trip stays on the grid (otherwise the geometry would
+				// re-snap by a few pixels every other cycle, drifting
+				// until the user notices).
+				this._savedGeometry = restored;
+			}
+			this.state = 'normal';
+			this._emitChange( 'state' );
+			doAction( HOOKS.WINDOW_UNMAXIMIZED, { windowId: this.id } );
+		} else {
+			// Save current geometry, then animate to the desktop
+			// area's bounds.
+			this._savedGeometry = {
+				x: this.element.offsetLeft,
+				y: this.element.offsetTop,
+				width: this.element.offsetWidth,
+				height: this.element.offsetHeight,
+			};
+			this.element.classList.add( 'wp-desktop-window--maximized' );
+			this.element.style.left = '0px';
+			this.element.style.top = '0px';
+			this.element.style.width = `${ parent.clientWidth }px`;
+			this.element.style.height = `${ parent.clientHeight }px`;
+			this.state = 'maximized';
+			this._emitChange( 'state' );
+			doAction( HOOKS.WINDOW_MAXIMIZED, { windowId: this.id } );
+		}
+	}
+
+	/**
+	 * Toggle fullscreen ("focus") mode — the window covers the entire
+	 * viewport, hiding the admin bar, dock, and taskbar behind it.
+	 *
+	 * This is the equivalent of macOS's green zoom-to-fullscreen: an
+	 * immersive mode distinct from maximize (which only fills the
+	 * desktop area between dock and taskbar).
+	 */
+	public toggleFullscreen(): void {
+		if ( this.state === 'fullscreen' ) {
+			// Restore whichever state the window was in before
+			// fullscreen.
+			this.element.classList.remove( 'wp-desktop-window--fullscreen' );
+			if ( this._savedFullscreenState ) {
+				const s = this._savedFullscreenState;
+				this.element.style.left = `${ s.x }px`;
+				this.element.style.top = `${ s.y }px`;
+				this.element.style.width = `${ s.width }px`;
+				this.element.style.height = `${ s.height }px`;
+				this.element.classList.toggle(
+					'wp-desktop-window--maximized',
+					s.state === 'maximized',
+				);
+				this.state = s.state;
+				this._savedFullscreenState = null;
+			} else {
+				this.state = 'normal';
+			}
+		} else {
+			this._savedFullscreenState = {
+				state: this.state,
+				x: this.element.offsetLeft,
+				y: this.element.offsetTop,
+				width: this.element.offsetWidth,
+				height: this.element.offsetHeight,
+			};
+			this.element.classList.add( 'wp-desktop-window--fullscreen' );
+			this.state = 'fullscreen';
+		}
+		updateFullscreenBodyClass();
+		this.updateFocusButtonState();
+		this._emitChange( 'state' );
+		doAction(
+			this.state === 'fullscreen'
+				? HOOKS.WINDOW_FULLSCREEN_ENTERED
+				: HOOKS.WINDOW_FULLSCREEN_EXITED,
+			{ windowId: this.id },
+		);
+	}
+
+	/**
+	 * Reflect fullscreen state on the focus-mode button (active class,
+	 * aria-pressed, and label).
+	 */
+	private updateFocusButtonState(): void {
+		const btn = this.element.querySelector<HTMLButtonElement>(
+			'.wp-desktop-window__btn--focus',
+		);
+		if ( ! btn ) {
+			return;
+		}
+		const isFullscreen = this.state === 'fullscreen';
+		btn.classList.toggle( 'wp-desktop-window__btn--active', isFullscreen );
+		btn.setAttribute( 'aria-pressed', isFullscreen ? 'true' : 'false' );
+		btn.setAttribute(
+			'aria-label',
+			isFullscreen ? __( 'Exit fullscreen' ) : __( 'Enter fullscreen' ),
+		);
+	}
+
+	/**
+	 * Open the window's current URL in a new browser tab as classic
+	 * wp-admin.
+	 *
+	 * Strips the chromeless `wp_desktop` flag and the transient
+	 * `wp_desktop_portal` flag, and tags the URL with
+	 * `wp_desktop_classic=1` so the server-side admin_init redirect
+	 * (which otherwise forwards plain admin URLs to `/wp-desktop/`)
+	 * lets the request through. The tag only has to survive the first
+	 * request; once the browser renders the page, the user's in-tab
+	 * navigation returns to normal admin flow.
+	 *
+	 * The desktop window itself stays open — detach is a branch, not
+	 * a move. If the user wants to close it afterwards, they can.
+	 */
+	public detach(): void {
+		const current = this.getCurrentUrl();
+		let url: URL;
+		try {
+			url = new URL( current, window.location.origin );
+		} catch {
+			return;
+		}
+		if ( url.origin !== window.location.origin ) {
+			return;
+		}
+		url.searchParams.delete( 'wp_desktop' );
+		url.searchParams.delete( 'wp_desktop_portal' );
+		url.searchParams.set( 'wp_desktop_classic', '1' );
+
+		// `noopener` is required for security (tabs should not be able
+		// to reach back into window.opener), and it also lets the
+		// browser move the new tab to its own process.
+		window.open( url.toString(), '_blank', 'noopener' );
+		doAction( HOOKS.WINDOW_DETACHED, { windowId: this.id, url: url.toString() } );
+	}
+
+	/**
+	 * Close and destroy the window.
+	 *
+	 * Plays a subtle closing animation before removing the element.
+	 */
+	public close(): void {
+		if ( this._isDestroyed ) {
+			return;
+		}
+		this._isDestroyed = true;
+
+		// Fire the callback immediately so the window manager updates
+		// its stack.
+		this.onClose?.( this );
+
+		this.element.classList.add( 'wp-desktop-window--closing' );
+
+		let removed = false;
+		const onDone = (): void => {
+			if ( removed ) {
+				return;
+			}
+			removed = true;
+			window.removeEventListener( 'message', this._boundOnMessage );
+			if ( this._boundOnDocumentPointerDown ) {
+				document.removeEventListener(
+					'pointerdown',
+					this._boundOnDocumentPointerDown,
+					true,
+				);
+			}
+			this.element.remove();
+			// If this was the last fullscreen window, drop the body
+			// class so the admin bar and shell top-offset come back
+			// cleanly.
+			updateFullscreenBodyClass();
+		};
+
+		const onTransitionEnd = ( e: TransitionEvent ): void => {
+			if ( e.propertyName === 'opacity' ) {
+				this.element.removeEventListener( 'transitionend', onTransitionEnd );
+				onDone();
+			}
+		};
+		this.element.addEventListener( 'transitionend', onTransitionEnd );
+
+		// Safety net: if transitionend never fires (reduced-motion or
+		// no transition), remove after a generous timeout so the
+		// element doesn't linger.
+		setTimeout( onDone, 300 );
+	}
+
+	/** Get a snapshot of the window state for persistence. */
+	public getSnapshot(): { id: string; x: number; y: number; width: number; height: number; state: WindowState } {
+		// `offsetLeft / offsetTop / offsetWidth / offsetHeight` all
+		// return 0 when the element (or any ancestor) is
+		// `display: none` — which is exactly the state every window
+		// on a non-active virtual desktop sits in. Without this
+		// fallback, snapshot() would serialise those windows as
+		// (0, 0, 0, 0) and the next hard reload would restore them
+		// at defaults. `offsetParent` is null under the same
+		// conditions, so we use it as the "am I hidden?" signal and
+		// fall back to parsing the inline style strings, which survive
+		// `display: none` unchanged.
+		const isHidden = this.element.offsetParent === null;
+		if ( isHidden ) {
+			const parse = ( raw: string ): number => {
+				const n = parseFloat( raw );
+				return Number.isFinite( n ) ? Math.round( n ) : 0;
+			};
+			return {
+				id: this.id,
+				x: parse( this.element.style.left ),
+				y: parse( this.element.style.top ),
+				width: parse( this.element.style.width ),
+				height: parse( this.element.style.height ),
+				state: this.state,
+			};
+		}
+		return {
+			id: this.id,
+			x: this.element.offsetLeft,
+			y: this.element.offsetTop,
+			width: this.element.offsetWidth,
+			height: this.element.offsetHeight,
+			state: this.state,
+		};
+	}
+
+	/** Number of external sub-tabs currently open on this window. */
+	public getExternalTabCount(): number {
+		return externalTabCount( this );
+	}
+
+	/** Serializable snapshot of this window's external sub-tabs. */
+	public getExternalTabsSnapshot(): { url: string; label: string }[] {
+		return externalTabsSnapshot( this );
+	}
+
+	/**
+	 * Toggle the actions menu from an external caller (e.g., keyboard
+	 * shortcut). Kept here so the panel-focus + outside-click wiring
+	 * lives in a single place.
+	 */
+	public toggleActionsMenu(): void {
+		toggleActionsMenu( this );
+	}
+
+	/** Close the actions menu from an external caller. */
+	public closeActionsMenu(): void {
+		closeActionsMenu( this );
+	}
+
+	/** Open the actions menu from an external caller. */
+	public openActionsMenu(): void {
+		openActionsMenu( this );
+	}
+}

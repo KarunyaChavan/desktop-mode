@@ -1,48 +1,5 @@
 var wpDesktop = function(exports) {
   "use strict";
-  const IDENTITY_PARAMS = ["post_type", "page", "taxonomy"];
-  function slugify(path) {
-    return path.replace(/\.php/g, "-php").replace(/[?&=]/g, "-").replace(/[^a-zA-Z0-9_-]/g, "").replace(/-+/g, "-").replace(/^-|-$/g, "") || "index";
-  }
-  function deriveWindowId(url, adminUrl) {
-    let parsed = null;
-    try {
-      parsed = new URL(url, adminUrl);
-    } catch (err) {
-      parsed = null;
-    }
-    if (parsed) {
-      const basePath = new URL(adminUrl).pathname;
-      const filename = parsed.pathname.replace(basePath, "").replace(/^\/+/, "");
-      const significant = new URLSearchParams();
-      for (const key of IDENTITY_PARAMS) {
-        const value = parsed.searchParams.get(key);
-        if (value) {
-          significant.set(key, value);
-        }
-      }
-      const query = significant.toString();
-      return slugify(query ? `${filename}?${query}` : filename);
-    }
-    let path = url.replace(adminUrl, "");
-    if (path.startsWith("/")) {
-      path = path.substring(1);
-    }
-    return slugify(path);
-  }
-  function sanitizeClassName(value) {
-    return value.replace(/[^a-zA-Z0-9_-]/g, "");
-  }
-  function urlMatchKey(url) {
-    try {
-      const parsed = new URL(url, window.location.origin);
-      parsed.searchParams.delete("wp_desktop");
-      parsed.searchParams.delete("wp_desktop_portal");
-      return parsed.pathname.replace(/\/+$/, "") + "?" + parsed.searchParams.toString();
-    } catch {
-      return url;
-    }
-  }
   function getWpHooks() {
     const hooks = window.wp?.hooks;
     if (!hooks) {
@@ -843,167 +800,6 @@ var wpDesktop = function(exports) {
     }
     return { __wpdCss: true, sheet: null, cssText: text };
   }
-  const containerStyles = css`
-	:host {
-		position: fixed;
-		top: calc( var( --wp-admin--admin-bar--height, 32px ) + 16px );
-		inset-inline-end: 16px;
-		display: flex;
-		flex-direction: column;
-		gap: 8px;
-		z-index: calc( var( --wp-desktop-z-fullscreen, 99999 ) + 10 );
-		pointer-events: none;
-	}
-`;
-  const toastStyles = css`
-	:host {
-		display: flex;
-		align-items: center;
-		gap: 12px;
-		min-width: 280px;
-		max-width: 420px;
-		padding: 10px 14px;
-		background: #1d2327;
-		color: #fff;
-		border-radius: 8px;
-		box-shadow: 0 8px 24px rgba( 0, 0, 0, 0.2 ),
-			0 2px 6px rgba( 0, 0, 0, 0.1 );
-		font-size: 13px;
-		line-height: 1.4;
-		opacity: 0;
-		transform: translateY( -8px );
-		transition: opacity 0.18s ease, transform 0.18s ease;
-		pointer-events: auto;
-	}
-	:host( [ state='in' ] ) {
-		opacity: 1;
-		transform: translateY( 0 );
-	}
-	:host( [ state='out' ] ) {
-		opacity: 0;
-		transform: translateY( -8px );
-	}
-	.wpd-toast__label {
-		flex: 1;
-	}
-	button {
-		flex-shrink: 0;
-		padding: 4px 10px;
-		border: none;
-		border-radius: 4px;
-		background: rgba( 255, 255, 255, 0.12 );
-		color: #fff;
-		font: inherit;
-		font-size: 12px;
-		font-weight: 500;
-		cursor: pointer;
-		transition: background-color 0.12s ease;
-	}
-	button:hover {
-		background: rgba( 255, 255, 255, 0.22 );
-	}
-	button:focus-visible {
-		outline: 2px solid rgba( 255, 255, 255, 0.6 );
-		outline-offset: 2px;
-	}
-	@media ( prefers-reduced-motion: reduce ) {
-		:host {
-			transition-duration: 0.01ms;
-		}
-	}
-`;
-  const _WpdToastContainer = class _WpdToastContainer extends Component {
-    connectedCallback() {
-      super.connectedCallback();
-      this.setAttribute("aria-live", "polite");
-    }
-    render() {
-      return html`<slot></slot>`;
-    }
-  };
-  _WpdToastContainer.styles = [containerStyles];
-  let WpdToastContainer = _WpdToastContainer;
-  defineComponent("wpd-toast-container", WpdToastContainer);
-  const _WpdToast = class _WpdToast extends Component {
-    connectedCallback() {
-      super.connectedCallback();
-      if (!this.hasAttribute("role")) {
-        this.setAttribute("role", "status");
-      }
-    }
-    render() {
-      const action = this.action || "";
-      return html`
-			<span class="wpd-toast__label"><slot></slot></span>
-			<button
-				type="button"
-				?hidden=${!action}
-				@click=${(e) => this._onAction(e)}
-			>
-				${action}
-			</button>
-		`;
-    }
-    _onAction(e) {
-      e.preventDefault();
-      e.stopPropagation();
-      this.emit("wpd-toast-action", {});
-    }
-  };
-  _WpdToast.props = ["action", "state"];
-  _WpdToast.styles = [toastStyles];
-  let WpdToast = _WpdToast;
-  defineComponent("wpd-toast", WpdToast);
-  const DEFAULT_DURATION_MS = 4e3;
-  const FADE_OUT_MS = 200;
-  function showToast(options) {
-    const container = ensureContainer();
-    const toast = document.createElement("wpd-toast");
-    toast.textContent = options.message;
-    if (options.action) {
-      toast.setAttribute("action", options.action.label);
-      toast.addEventListener("wpd-toast-action", () => {
-        options.action?.onClick();
-        dismiss();
-      });
-    }
-    container.appendChild(toast);
-    let dismissed = false;
-    let dismissTimer = null;
-    const dismiss = () => {
-      if (dismissed) {
-        return;
-      }
-      dismissed = true;
-      if (dismissTimer !== null) {
-        window.clearTimeout(dismissTimer);
-        dismissTimer = null;
-      }
-      toast.setAttribute("state", "out");
-      window.setTimeout(() => {
-        toast.remove();
-      }, FADE_OUT_MS);
-    };
-    requestAnimationFrame(() => {
-      toast.setAttribute("state", "in");
-    });
-    dismissTimer = window.setTimeout(
-      dismiss,
-      options.duration ?? DEFAULT_DURATION_MS
-    );
-    return dismiss;
-  }
-  function ensureContainer() {
-    const existing = document.querySelector(
-      "wpd-toast-container"
-    );
-    if (existing) {
-      return existing;
-    }
-    const el = document.createElement("wpd-toast-container");
-    document.body.appendChild(el);
-    return el;
-  }
   const styles$8 = css`
 	:host {
 		display: inline-flex;
@@ -1361,8 +1157,49 @@ var wpDesktop = function(exports) {
   _WpdTabChip.styles = [styles$7];
   let WpdTabChip = _WpdTabChip;
   defineComponent("wpd-tab-chip", WpdTabChip);
-  const EDGE_MARGIN = 8;
-  const EXTERNAL_IFRAME_READY_TIMEOUT_MS = 3e3;
+  const IDENTITY_PARAMS = ["post_type", "page", "taxonomy"];
+  function slugify(path) {
+    return path.replace(/\.php/g, "-php").replace(/[?&=]/g, "-").replace(/[^a-zA-Z0-9_-]/g, "").replace(/-+/g, "-").replace(/^-|-$/g, "") || "index";
+  }
+  function deriveWindowId(url, adminUrl) {
+    let parsed = null;
+    try {
+      parsed = new URL(url, adminUrl);
+    } catch (err) {
+      parsed = null;
+    }
+    if (parsed) {
+      const basePath = new URL(adminUrl).pathname;
+      const filename = parsed.pathname.replace(basePath, "").replace(/^\/+/, "");
+      const significant = new URLSearchParams();
+      for (const key of IDENTITY_PARAMS) {
+        const value = parsed.searchParams.get(key);
+        if (value) {
+          significant.set(key, value);
+        }
+      }
+      const query = significant.toString();
+      return slugify(query ? `${filename}?${query}` : filename);
+    }
+    let path = url.replace(adminUrl, "");
+    if (path.startsWith("/")) {
+      path = path.substring(1);
+    }
+    return slugify(path);
+  }
+  function sanitizeClassName(value) {
+    return value.replace(/[^a-zA-Z0-9_-]/g, "");
+  }
+  function urlMatchKey(url) {
+    try {
+      const parsed = new URL(url, window.location.origin);
+      parsed.searchParams.delete("wp_desktop");
+      parsed.searchParams.delete("wp_desktop_portal");
+      return parsed.pathname.replace(/\/+$/, "") + "?" + parsed.searchParams.toString();
+    } catch {
+      return url;
+    }
+  }
   function withChromelessParam(url) {
     const parsed = new URL(url, window.location.origin);
     if (parsed.origin !== window.location.origin) {
@@ -1514,37 +1351,774 @@ var wpDesktop = function(exports) {
     el.appendChild(resizeHandle);
     return el;
   }
+  const containerStyles = css`
+	:host {
+		position: fixed;
+		top: calc( var( --wp-admin--admin-bar--height, 32px ) + 16px );
+		inset-inline-end: 16px;
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		z-index: calc( var( --wp-desktop-z-fullscreen, 99999 ) + 10 );
+		pointer-events: none;
+	}
+`;
+  const toastStyles = css`
+	:host {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		min-width: 280px;
+		max-width: 420px;
+		padding: 10px 14px;
+		background: #1d2327;
+		color: #fff;
+		border-radius: 8px;
+		box-shadow: 0 8px 24px rgba( 0, 0, 0, 0.2 ),
+			0 2px 6px rgba( 0, 0, 0, 0.1 );
+		font-size: 13px;
+		line-height: 1.4;
+		opacity: 0;
+		transform: translateY( -8px );
+		transition: opacity 0.18s ease, transform 0.18s ease;
+		pointer-events: auto;
+	}
+	:host( [ state='in' ] ) {
+		opacity: 1;
+		transform: translateY( 0 );
+	}
+	:host( [ state='out' ] ) {
+		opacity: 0;
+		transform: translateY( -8px );
+	}
+	.wpd-toast__label {
+		flex: 1;
+	}
+	button {
+		flex-shrink: 0;
+		padding: 4px 10px;
+		border: none;
+		border-radius: 4px;
+		background: rgba( 255, 255, 255, 0.12 );
+		color: #fff;
+		font: inherit;
+		font-size: 12px;
+		font-weight: 500;
+		cursor: pointer;
+		transition: background-color 0.12s ease;
+	}
+	button:hover {
+		background: rgba( 255, 255, 255, 0.22 );
+	}
+	button:focus-visible {
+		outline: 2px solid rgba( 255, 255, 255, 0.6 );
+		outline-offset: 2px;
+	}
+	@media ( prefers-reduced-motion: reduce ) {
+		:host {
+			transition-duration: 0.01ms;
+		}
+	}
+`;
+  const _WpdToastContainer = class _WpdToastContainer extends Component {
+    connectedCallback() {
+      super.connectedCallback();
+      this.setAttribute("aria-live", "polite");
+    }
+    render() {
+      return html`<slot></slot>`;
+    }
+  };
+  _WpdToastContainer.styles = [containerStyles];
+  let WpdToastContainer = _WpdToastContainer;
+  defineComponent("wpd-toast-container", WpdToastContainer);
+  const _WpdToast = class _WpdToast extends Component {
+    connectedCallback() {
+      super.connectedCallback();
+      if (!this.hasAttribute("role")) {
+        this.setAttribute("role", "status");
+      }
+    }
+    render() {
+      const action = this.action || "";
+      return html`
+			<span class="wpd-toast__label"><slot></slot></span>
+			<button
+				type="button"
+				?hidden=${!action}
+				@click=${(e) => this._onAction(e)}
+			>
+				${action}
+			</button>
+		`;
+    }
+    _onAction(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      this.emit("wpd-toast-action", {});
+    }
+  };
+  _WpdToast.props = ["action", "state"];
+  _WpdToast.styles = [toastStyles];
+  let WpdToast = _WpdToast;
+  defineComponent("wpd-toast", WpdToast);
+  const DEFAULT_DURATION_MS = 4e3;
+  const FADE_OUT_MS = 200;
+  function showToast(options) {
+    const container = ensureContainer();
+    const toast = document.createElement("wpd-toast");
+    toast.textContent = options.message;
+    if (options.action) {
+      toast.setAttribute("action", options.action.label);
+      toast.addEventListener("wpd-toast-action", () => {
+        options.action?.onClick();
+        dismiss();
+      });
+    }
+    container.appendChild(toast);
+    let dismissed = false;
+    let dismissTimer = null;
+    const dismiss = () => {
+      if (dismissed) {
+        return;
+      }
+      dismissed = true;
+      if (dismissTimer !== null) {
+        window.clearTimeout(dismissTimer);
+        dismissTimer = null;
+      }
+      toast.setAttribute("state", "out");
+      window.setTimeout(() => {
+        toast.remove();
+      }, FADE_OUT_MS);
+    };
+    requestAnimationFrame(() => {
+      toast.setAttribute("state", "in");
+    });
+    dismissTimer = window.setTimeout(
+      dismiss,
+      options.duration ?? DEFAULT_DURATION_MS
+    );
+    return dismiss;
+  }
+  function ensureContainer() {
+    const existing = document.querySelector(
+      "wpd-toast-container"
+    );
+    if (existing) {
+      return existing;
+    }
+    const el = document.createElement("wpd-toast-container");
+    document.body.appendChild(el);
+    return el;
+  }
+  const EDGE_MARGIN = 8;
+  const EXTERNAL_IFRAME_READY_TIMEOUT_MS = 3e3;
+  function syncActiveTab(win, currentUrl) {
+    const submenuTabs = win.element.querySelectorAll(
+      '.wp-desktop-window__tab[data-kind="submenu"]'
+    );
+    if (!submenuTabs.length) {
+      return;
+    }
+    if (win._activeTabId !== "primary") {
+      for (const tab of submenuTabs) {
+        tab.classList.remove("wp-desktop-window__tab--active");
+        tab.setAttribute("aria-selected", "false");
+      }
+      return;
+    }
+    const activeKey = urlMatchKey(currentUrl);
+    for (const tab of submenuTabs) {
+      const tabUrl = tab.dataset.url;
+      const isActive = !!tabUrl && urlMatchKey(tabUrl) === activeKey;
+      tab.classList.toggle("wp-desktop-window__tab--active", isActive);
+      tab.setAttribute("aria-selected", isActive ? "true" : "false");
+    }
+  }
+  function addExternalTab(win, url, label) {
+    if (!win.iframe) {
+      return;
+    }
+    const tabStrip = win.element.querySelector(
+      ".wp-desktop-window__tabs"
+    );
+    const body = win.element.querySelector(
+      ".wp-desktop-window__body"
+    );
+    if (!tabStrip || !body) {
+      return;
+    }
+    ensureMainTab(win, tabStrip);
+    const tabId = `ext-${++win._externalTabSeq}`;
+    const tabEl = document.createElement("button");
+    tabEl.className = "wp-desktop-window__tab wp-desktop-window__tab--external";
+    tabEl.dataset.kind = "external";
+    tabEl.dataset.tabId = tabId;
+    tabEl.setAttribute("type", "button");
+    tabEl.setAttribute("role", "tab");
+    tabEl.setAttribute("aria-selected", "false");
+    tabEl.title = url;
+    const labelEl = document.createElement("span");
+    labelEl.className = "wp-desktop-window__tab-label";
+    labelEl.textContent = label;
+    tabEl.appendChild(labelEl);
+    const detachBtn = document.createElement("wpd-tab-chip");
+    detachBtn.setAttribute("variant", "detach");
+    detachBtn.dataset.tabAction = "detach";
+    detachBtn.dataset.tabId = tabId;
+    detachBtn.setAttribute("aria-label", __("Open in a new browser tab"));
+    detachBtn.title = __("Open in a new browser tab");
+    tabEl.appendChild(detachBtn);
+    const closeBtn = document.createElement("wpd-tab-chip");
+    closeBtn.setAttribute("variant", "close");
+    closeBtn.dataset.tabAction = "close";
+    closeBtn.dataset.tabId = tabId;
+    closeBtn.setAttribute("aria-label", __("Close tab"));
+    closeBtn.title = __("Close tab");
+    tabEl.appendChild(closeBtn);
+    tabStrip.appendChild(tabEl);
+    const iframe = document.createElement("iframe");
+    iframe.className = "wp-desktop-window__iframe wp-desktop-window__iframe--external";
+    iframe.dataset.tabId = tabId;
+    iframe.style.display = "none";
+    iframe.src = url;
+    body.appendChild(iframe);
+    let loaded = false;
+    const onLoad = () => {
+      loaded = true;
+    };
+    iframe.addEventListener("load", onLoad, { once: true });
+    const probeTimer = window.setTimeout(() => {
+      if (loaded) {
+        return;
+      }
+      iframe.removeEventListener("load", onLoad);
+      fallbackToBrowserTab(win, tabId);
+    }, EXTERNAL_IFRAME_READY_TIMEOUT_MS);
+    const cancelProbe = () => {
+      iframe.removeEventListener("load", onLoad);
+      window.clearTimeout(probeTimer);
+    };
+    win._externalTabs.set(tabId, {
+      tabEl,
+      iframe,
+      url,
+      label,
+      cancelProbe
+    });
+    switchToTab(win, tabId);
+    tabEl.scrollIntoView({ behavior: "smooth", inline: "end", block: "nearest" });
+    win._emitChange("state");
+  }
+  function ensureMainTab(win, tabStrip) {
+    if (tabStrip.querySelector('[data-kind="main"]')) {
+      return;
+    }
+    if (tabStrip.querySelector('[data-kind="submenu"]')) {
+      return;
+    }
+    const main = document.createElement("button");
+    main.className = "wp-desktop-window__tab wp-desktop-window__tab--main wp-desktop-window__tab--active";
+    main.dataset.kind = "main";
+    main.setAttribute("type", "button");
+    main.setAttribute("role", "tab");
+    main.setAttribute("aria-selected", "true");
+    main.textContent = win.config.title || "Main";
+    tabStrip.prepend(main);
+  }
+  function switchToTab(win, tabId) {
+    if (win._activeTabId === tabId) {
+      return;
+    }
+    win._activeTabId = tabId;
+    if (win.iframe) {
+      win.iframe.style.display = tabId === "primary" ? "" : "none";
+    }
+    for (const [id, entry] of win._externalTabs) {
+      entry.iframe.style.display = tabId === id ? "" : "none";
+    }
+    const tabEls = win.element.querySelectorAll(
+      ".wp-desktop-window__tab"
+    );
+    tabEls.forEach((t) => {
+      let isActive;
+      if (t.dataset.kind === "main") {
+        isActive = tabId === "primary";
+      } else if (t.dataset.kind === "external") {
+        isActive = t.dataset.tabId === tabId;
+      } else {
+        isActive = tabId === "primary" && t.classList.contains("wp-desktop-window__tab--active");
+      }
+      t.classList.toggle("wp-desktop-window__tab--active", isActive);
+      t.setAttribute("aria-selected", isActive ? "true" : "false");
+    });
+  }
+  function closeExternalTab(win, tabId) {
+    const entry = win._externalTabs.get(tabId);
+    if (!entry) {
+      return;
+    }
+    entry.cancelProbe();
+    entry.tabEl.remove();
+    entry.iframe.remove();
+    win._externalTabs.delete(tabId);
+    if (win._activeTabId === tabId) {
+      switchToTab(win, "primary");
+    }
+    if (win._externalTabs.size === 0) {
+      const main = win.element.querySelector(
+        ".wp-desktop-window__tab--main"
+      );
+      main?.remove();
+    }
+    win._emitChange("state");
+  }
+  function detachExternalTab(win, tabId) {
+    const entry = win._externalTabs.get(tabId);
+    if (!entry) {
+      return;
+    }
+    let url = entry.url;
+    try {
+      const href = entry.iframe.contentWindow?.location.href;
+      if (href && href !== "about:blank") {
+        url = href;
+      }
+    } catch {
+    }
+    window.open(url, "_blank", "noopener");
+    closeExternalTab(win, tabId);
+  }
+  function fallbackToBrowserTab(win, tabId) {
+    const entry = win._externalTabs.get(tabId);
+    if (!entry) {
+      return;
+    }
+    const { url, label } = entry;
+    closeExternalTab(win, tabId);
+    showToast({
+      message: sprintf(
+        // translators: %s is the external site's title or URL.
+        __(
+          `Opened "%s" in a new browser tab — this site doesn't allow embedding.`
+        ),
+        label
+      ),
+      action: {
+        label: __("Open"),
+        onClick: () => {
+          window.open(url, "_blank", "noopener");
+        }
+      }
+    });
+    window.open(url, "_blank", "noopener");
+  }
+  function externalTabCount(win) {
+    return win._externalTabs.size;
+  }
+  function externalTabsSnapshot(win) {
+    const out = [];
+    for (const entry of win._externalTabs.values()) {
+      let url = entry.url;
+      try {
+        const href = entry.iframe.contentWindow?.location.href;
+        if (href && href !== "about:blank") {
+          url = href;
+        }
+      } catch {
+      }
+      out.push({ url, label: entry.label });
+    }
+    return out;
+  }
+  function handleTabStripClick(win, e) {
+    const target = e.target;
+    const chip = target.closest("[data-tab-action]");
+    if (chip) {
+      e.stopPropagation();
+      const action = chip.dataset.tabAction;
+      const tabId2 = chip.dataset.tabId;
+      if (!tabId2) {
+        return;
+      }
+      if (action === "close") {
+        closeExternalTab(win, tabId2);
+      } else if (action === "detach") {
+        detachExternalTab(win, tabId2);
+      }
+      return;
+    }
+    const tab = target.closest(".wp-desktop-window__tab");
+    if (!tab) {
+      return;
+    }
+    e.stopPropagation();
+    const kind = tab.dataset.kind;
+    const tabId = tab.dataset.tabId;
+    if (kind === "external" && tabId) {
+      switchToTab(win, tabId);
+      return;
+    }
+    if (kind === "main") {
+      switchToTab(win, "primary");
+      return;
+    }
+    if (tab.dataset.url) {
+      const next = withChromelessParam(tab.dataset.url);
+      if (next && win.iframe) {
+        win.iframe.src = next;
+      }
+      switchToTab(win, "primary");
+    }
+  }
+  function handleWindowMessage(win, event) {
+    if (event.origin !== window.location.origin) {
+      return;
+    }
+    if (!win.iframe || event.source !== win.iframe.contentWindow) {
+      return;
+    }
+    const data = event.data;
+    if (!data || typeof data.type !== "string") {
+      return;
+    }
+    if (data.type === "wp-desktop-title-change" && typeof data.title === "string") {
+      win.setTitle(data.title);
+    }
+    if (data.type === "wp-desktop-focus-request") {
+      if (!win.element.classList.contains("wp-desktop-window--overview")) {
+        win.onFocusRequest?.(win);
+      }
+    }
+    if (data.type === "wp-desktop-screen-meta" && Array.isArray(data.panels)) {
+      addScreenMetaButtons(win, data.panels);
+    }
+    if (data.type === "wp-desktop-screen-meta-state") {
+      setActiveScreenMetaPanel(
+        win,
+        typeof data.open === "string" ? data.open : null
+      );
+    }
+    if (data.type === "wp-desktop-external-link" && typeof data.url === "string" && data.url !== "") {
+      const label = typeof data.label === "string" && data.label !== "" ? data.label : data.url;
+      addExternalTab(win, data.url, label);
+    }
+  }
+  function addScreenMetaButtons(win, panels) {
+    const container = win.element.querySelector(".wp-desktop-window__screen-meta");
+    if (!container) {
+      return;
+    }
+    container.innerHTML = "";
+    const panelConfig = {
+      "screen-options": { icon: "dashicons-admin-generic", label: "Screen Options" },
+      help: { icon: "dashicons-editor-help", label: "Help" }
+    };
+    for (const panel of panels) {
+      const cfg = panelConfig[panel];
+      if (!cfg) {
+        continue;
+      }
+      const btn = document.createElement("button");
+      btn.className = "wp-desktop-window__meta-btn";
+      btn.setAttribute("type", "button");
+      btn.setAttribute("aria-label", cfg.label);
+      btn.setAttribute("aria-pressed", "false");
+      btn.dataset.panel = panel;
+      btn.innerHTML = `<span class="dashicons ${cfg.icon}" aria-hidden="true"></span>`;
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        win.iframe?.contentWindow?.postMessage(
+          { type: "wp-desktop-toggle-panel", panel },
+          window.location.origin
+        );
+      });
+      container.appendChild(btn);
+    }
+  }
+  function setActiveScreenMetaPanel(win, panel) {
+    const container = win.element.querySelector(".wp-desktop-window__screen-meta");
+    if (!container) {
+      return;
+    }
+    container.querySelectorAll(".wp-desktop-window__meta-btn").forEach((btn) => {
+      const isActive = btn.dataset.panel === panel;
+      btn.classList.toggle("wp-desktop-window__meta-btn--active", isActive);
+      btn.setAttribute("aria-pressed", isActive ? "true" : "false");
+    });
+  }
+  function toggleActionsMenu(win) {
+    const panel = win.element.querySelector(
+      ".wp-desktop-window__menu-panel"
+    );
+    if (!panel) {
+      return;
+    }
+    if (panel.hidden) {
+      openActionsMenu(win);
+    } else {
+      closeActionsMenu(win);
+    }
+  }
+  function openActionsMenu(win) {
+    const panel = win.element.querySelector(
+      ".wp-desktop-window__menu-panel"
+    );
+    const btn = win.element.querySelector(
+      ".wp-desktop-window__menu-btn"
+    );
+    if (!panel || !btn) {
+      return;
+    }
+    panel.hidden = false;
+    btn.setAttribute("aria-expanded", "true");
+    const startup = panel.querySelector(
+      ".wp-desktop-window__menu-item--startup"
+    );
+    if (startup) {
+      refreshStartupCheckState(win, startup);
+    }
+    if (!win._boundOnDocumentPointerDown) {
+      win._boundOnDocumentPointerDown = (e) => {
+        const target = e.target;
+        if (!target) {
+          return;
+        }
+        if (panel.contains(target) || btn.contains(target)) {
+          return;
+        }
+        closeActionsMenu(win);
+      };
+    }
+    setTimeout(() => {
+      if (win._boundOnDocumentPointerDown) {
+        document.addEventListener(
+          "pointerdown",
+          win._boundOnDocumentPointerDown,
+          true
+        );
+      }
+    }, 0);
+    const firstItem = panel.querySelector('[role="menuitem"]');
+    firstItem?.focus();
+  }
+  function closeActionsMenu(win) {
+    const panel = win.element.querySelector(
+      ".wp-desktop-window__menu-panel"
+    );
+    const btn = win.element.querySelector(
+      ".wp-desktop-window__menu-btn"
+    );
+    if (panel) {
+      panel.hidden = true;
+    }
+    if (btn) {
+      btn.setAttribute("aria-expanded", "false");
+    }
+    if (win._boundOnDocumentPointerDown) {
+      document.removeEventListener(
+        "pointerdown",
+        win._boundOnDocumentPointerDown,
+        true
+      );
+    }
+  }
+  function flipStartupCheckOptimistically(item) {
+    const isChecked = item.hasAttribute("checked");
+    if (isChecked) {
+      item.removeAttribute("checked");
+    } else {
+      item.setAttribute("checked", "");
+    }
+  }
+  function refreshStartupCheckState(win, item) {
+    const pref = window.wp?.desktop?.config?.defaultWindow;
+    let isDefault = false;
+    if (pref && pref.enabled && typeof pref.url === "string") {
+      try {
+        const currentKey = urlMatchKey(win.getCurrentUrl());
+        const prefKey = urlMatchKey(pref.url);
+        isDefault = currentKey === prefKey;
+      } catch {
+        isDefault = false;
+      }
+    }
+    if (isDefault) {
+      item.setAttribute("checked", "");
+    } else {
+      item.removeAttribute("checked");
+    }
+  }
+  function handleDragStart(win, e) {
+    const target = e.target;
+    if (target.closest(".wp-desktop-window__controls") || target.closest(".wp-desktop-window__screen-meta") || target.closest(".wp-desktop-window__menu-btn") || target.closest(".wp-desktop-window__menu-panel")) {
+      return;
+    }
+    if (win.state === "maximized") {
+      const titleRect = win._titleBar.getBoundingClientRect();
+      const cursorRatioX = titleRect.width > 0 ? (e.clientX - titleRect.left) / titleRect.width : 0.5;
+      win.element.classList.remove("wp-desktop-window--maximized");
+      const w = win._savedGeometry?.width ?? win.element.offsetWidth;
+      const h = win._savedGeometry?.height ?? win.element.offsetHeight;
+      win.element.style.width = `${w}px`;
+      win.element.style.height = `${h}px`;
+      const left = Math.round(e.clientX - w * cursorRatioX);
+      const top = Math.round(e.clientY - titleRect.height / 2);
+      win.element.style.left = `${left}px`;
+      win.element.style.top = `${top}px`;
+      win.state = "normal";
+      win._emitChange("state");
+      doAction(HOOKS.WINDOW_UNMAXIMIZED, { windowId: win.id });
+    }
+    win._isDragging = true;
+    win._dragOffsetX = e.clientX - win.element.offsetLeft;
+    win._dragOffsetY = e.clientY - win.element.offsetTop;
+    win._titleBar.setPointerCapture(e.pointerId);
+    win.element.classList.add("wp-desktop-window--dragging");
+    doAction(HOOKS.WINDOW_DRAG_START, { windowId: win.id });
+    const snap = win.snapConfigProvider?.() ?? { enabled: false, cellWidth: 0, cellHeight: 0 };
+    if (snap.enabled) {
+      win.element.classList.add("wp-desktop-window--snap-drag");
+    }
+    const onDragMove = (ev) => {
+      if (!win._isDragging) {
+        return;
+      }
+      let x = ev.clientX - win._dragOffsetX;
+      let y = ev.clientY - win._dragOffsetY;
+      const desktop = win.element.parentElement;
+      if (desktop) {
+        x = Math.max(EDGE_MARGIN, Math.min(x, desktop.clientWidth - EDGE_MARGIN));
+        y = Math.max(EDGE_MARGIN, Math.min(y, desktop.clientHeight - EDGE_MARGIN));
+      }
+      if (snap.enabled) {
+        x = Math.round(x / snap.cellWidth) * snap.cellWidth;
+        y = Math.round(y / snap.cellHeight) * snap.cellHeight;
+      }
+      win.element.style.left = `${x}px`;
+      win.element.style.top = `${y}px`;
+    };
+    const onDragEnd = () => {
+      if (!win._isDragging) {
+        return;
+      }
+      win._isDragging = false;
+      win.element.classList.remove("wp-desktop-window--dragging");
+      win.element.classList.remove("wp-desktop-window--snap-drag");
+      win._titleBar.removeEventListener("pointermove", onDragMove);
+      win._titleBar.removeEventListener("pointerup", onDragEnd);
+      win._titleBar.removeEventListener("pointercancel", onDragEnd);
+      win._titleBar.removeEventListener("lostpointercapture", onDragEnd);
+      win._emitChange("moved");
+      const payload = {
+        windowId: win.id,
+        x: win.element.offsetLeft,
+        y: win.element.offsetTop
+      };
+      doAction(HOOKS.WINDOW_DRAG_END, payload);
+      doAction(HOOKS.WINDOW_MOVED, payload);
+    };
+    win._titleBar.addEventListener("pointermove", onDragMove);
+    win._titleBar.addEventListener("pointerup", onDragEnd);
+    win._titleBar.addEventListener("pointercancel", onDragEnd);
+    win._titleBar.addEventListener("lostpointercapture", onDragEnd);
+  }
+  function handleResizeStart(win, e) {
+    if (win.state === "maximized") {
+      return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    win._isResizing = true;
+    win._resizeStartX = e.clientX;
+    win._resizeStartY = e.clientY;
+    win._resizeStartW = win.element.offsetWidth;
+    win._resizeStartH = win.element.offsetHeight;
+    e.target.setPointerCapture(e.pointerId);
+    win.element.classList.add("wp-desktop-window--resizing");
+    doAction(HOOKS.WINDOW_RESIZE_START, { windowId: win.id });
+    const snap = win.snapConfigProvider?.() ?? { enabled: false, cellWidth: 0, cellHeight: 0 };
+    if (snap.enabled) {
+      win.element.classList.add("wp-desktop-window--snap-drag");
+    }
+    const onResizeMove = (ev) => {
+      if (!win._isResizing) {
+        return;
+      }
+      let newW = Math.max(win.config.minWidth, win._resizeStartW + (ev.clientX - win._resizeStartX));
+      let newH = Math.max(win.config.minHeight, win._resizeStartH + (ev.clientY - win._resizeStartY));
+      if (snap.enabled) {
+        newW = Math.max(
+          win.config.minWidth,
+          Math.round(newW / snap.cellWidth) * snap.cellWidth
+        );
+        newH = Math.max(
+          win.config.minHeight,
+          Math.round(newH / snap.cellHeight) * snap.cellHeight
+        );
+      }
+      win.element.style.width = `${newW}px`;
+      win.element.style.height = `${newH}px`;
+    };
+    const onResizeEnd = () => {
+      if (!win._isResizing) {
+        return;
+      }
+      win._isResizing = false;
+      win.element.classList.remove("wp-desktop-window--resizing");
+      win.element.classList.remove("wp-desktop-window--snap-drag");
+      const handle2 = win.element.querySelector(".wp-desktop-window__resize-handle");
+      handle2.removeEventListener("pointermove", onResizeMove);
+      handle2.removeEventListener("pointerup", onResizeEnd);
+      handle2.removeEventListener("pointercancel", onResizeEnd);
+      handle2.removeEventListener("lostpointercapture", onResizeEnd);
+      win._emitChange("resized");
+      const payload = {
+        windowId: win.id,
+        width: win.element.offsetWidth,
+        height: win.element.offsetHeight
+      };
+      doAction(HOOKS.WINDOW_RESIZE_END, payload);
+      doAction(HOOKS.WINDOW_RESIZED, payload);
+    };
+    const handle = e.target;
+    handle.addEventListener("pointermove", onResizeMove);
+    handle.addEventListener("pointerup", onResizeEnd);
+    handle.addEventListener("pointercancel", onResizeEnd);
+    handle.addEventListener("lostpointercapture", onResizeEnd);
+  }
   class Window {
     constructor(config) {
       this.state = "normal";
-      this.isDragging = false;
-      this.isResizing = false;
-      this.isDestroyed = false;
-      this.dragOffsetX = 0;
-      this.dragOffsetY = 0;
-      this.resizeStartX = 0;
-      this.resizeStartY = 0;
-      this.resizeStartW = 0;
-      this.resizeStartH = 0;
-      this.savedGeometry = null;
-      this.savedFullscreenState = null;
-      this.externalTabs = /* @__PURE__ */ new Map();
-      this.externalTabSeq = 0;
-      this.activeTabId = "primary";
+      this._isDragging = false;
+      this._isResizing = false;
+      this._isDestroyed = false;
+      this._dragOffsetX = 0;
+      this._dragOffsetY = 0;
+      this._resizeStartX = 0;
+      this._resizeStartY = 0;
+      this._resizeStartW = 0;
+      this._resizeStartH = 0;
+      this._savedGeometry = null;
+      this._savedFullscreenState = null;
+      this._externalTabs = /* @__PURE__ */ new Map();
+      this._externalTabSeq = 0;
+      this._activeTabId = "primary";
       this.onFocusRequest = null;
       this.onClose = null;
       this.onMinimize = null;
       this.onOpenAnother = null;
       this.onToggleStartup = null;
       this.snapConfigProvider = null;
-      this.boundOnDocumentPointerDown = null;
+      this._boundOnDocumentPointerDown = null;
       this.id = config.id;
       this.config = config;
       this.element = createWindowElement(config);
       this.iframe = config.native ? null : this.element.querySelector(".wp-desktop-window__iframe");
-      this.titleBar = this.element.querySelector(".wp-desktop-window__titlebar");
-      this.titleEl = this.element.querySelector(".wp-desktop-window__title");
-      this.boundOnMessage = this.onMessage.bind(this);
+      this._titleBar = this.element.querySelector(".wp-desktop-window__titlebar");
+      this._titleEl = this.element.querySelector(".wp-desktop-window__title");
+      this._boundOnMessage = (e) => handleWindowMessage(this, e);
       this.bindEvents();
       if (config.native && config.render) {
         const body = this.element.querySelector(
@@ -1571,7 +2145,8 @@ var wpDesktop = function(exports) {
       }
     }
     /**
-     * Apply a state restored from the session. Called once, after construction.
+     * Apply a state restored from the session. Called once, after
+     * construction.
      */
     applyInitialState(state) {
       if (state === "minimized") {
@@ -1584,11 +2159,16 @@ var wpDesktop = function(exports) {
     }
     /**
      * Dispatch a `wp-desktop-window-changed` event so the session-save
-     * path can schedule a debounced write. Called after any state change
-     * that should end up persisted: drag end, resize end, minimize,
-     * restore, maximize toggle, fullscreen toggle.
+     * path can schedule a debounced write.
+     *
+     * Called after any state change that should end up persisted: drag
+     * end, resize end, minimize, restore, maximize toggle, fullscreen
+     * toggle. Exposed as `_emitChange` so sibling modules (tabs,
+     * pointer) can fire the same event.
+     *
+     * @internal
      */
-    emitChange(reason) {
+    _emitChange(reason) {
       document.dispatchEvent(
         new CustomEvent("wp-desktop-window-changed", {
           detail: { windowId: this.id, reason, state: this.state }
@@ -1645,9 +2225,7 @@ var wpDesktop = function(exports) {
       }
       return this.iframe.src;
     }
-    /**
-     * Bind all DOM event handlers.
-     */
+    /** Bind all DOM event handlers. */
     bindEvents() {
       this.element.addEventListener("pointerdown", () => {
         if (this.element.classList.contains("wp-desktop-window--overview")) {
@@ -1661,9 +2239,15 @@ var wpDesktop = function(exports) {
         }
         this.onFocusRequest?.(this);
       });
-      this.titleBar.addEventListener("pointerdown", this.onDragStart.bind(this));
+      this._titleBar.addEventListener(
+        "pointerdown",
+        (e) => handleDragStart(this, e)
+      );
       const resizeHandle = this.element.querySelector(".wp-desktop-window__resize-handle");
-      resizeHandle.addEventListener("pointerdown", this.onResizeStart.bind(this));
+      resizeHandle.addEventListener(
+        "pointerdown",
+        (e) => handleResizeStart(this, e)
+      );
       const btnMin = this.element.querySelector(".wp-desktop-window__btn--minimize");
       const btnMax = this.element.querySelector(".wp-desktop-window__btn--maximize");
       const btnFocus = this.element.querySelector(".wp-desktop-window__btn--focus");
@@ -1680,7 +2264,7 @@ var wpDesktop = function(exports) {
       if (menuBtn && menuPanel) {
         menuBtn.addEventListener("click", (e) => {
           e.stopPropagation();
-          this.toggleActionsMenu();
+          toggleActionsMenu(this);
         });
         const openAnother = menuPanel.querySelector(
           ".wp-desktop-window__menu-item--open-another"
@@ -1688,7 +2272,7 @@ var wpDesktop = function(exports) {
         if (openAnother) {
           openAnother.addEventListener("wpd-menu-item-click", (e) => {
             e.stopPropagation();
-            this.closeActionsMenu();
+            closeActionsMenu(this);
             this.onOpenAnother?.(this);
           });
         }
@@ -1696,16 +2280,16 @@ var wpDesktop = function(exports) {
           ".wp-desktop-window__menu-item--startup"
         );
         if (startup) {
-          this.refreshStartupCheckState(startup);
+          refreshStartupCheckState(this, startup);
           startup.addEventListener("wpd-menu-item-click", (e) => {
             e.stopPropagation();
-            this.flipStartupCheckOptimistically(startup);
+            flipStartupCheckOptimistically(startup);
             this.onToggleStartup?.(this);
           });
           document.addEventListener(
             "wp-desktop-default-window-changed",
             () => {
-              this.refreshStartupCheckState(startup);
+              refreshStartupCheckState(this, startup);
             }
           );
         }
@@ -1713,7 +2297,7 @@ var wpDesktop = function(exports) {
           const kev = e;
           if (kev.key === "Escape") {
             e.stopPropagation();
-            this.closeActionsMenu();
+            closeActionsMenu(this);
             menuBtn.focus();
           }
         });
@@ -1738,574 +2322,48 @@ var wpDesktop = function(exports) {
         e.stopPropagation();
         this.close();
       });
-      this.titleBar.addEventListener("dblclick", () => {
+      this._titleBar.addEventListener("dblclick", () => {
         this.toggleMaximize();
       });
       if (this.iframe) {
         const iframe = this.iframe;
         const tabs = this.element.querySelector(".wp-desktop-window__tabs");
         if (tabs) {
-          tabs.addEventListener("click", (e) => {
-            const target = e.target;
-            const chip = target.closest("[data-tab-action]");
-            if (chip) {
-              e.stopPropagation();
-              const action = chip.dataset.tabAction;
-              const tabId2 = chip.dataset.tabId;
-              if (!tabId2) {
-                return;
-              }
-              if (action === "close") {
-                this.closeExternalTab(tabId2);
-              } else if (action === "detach") {
-                this.detachExternalTab(tabId2);
-              }
-              return;
-            }
-            const tab = target.closest(".wp-desktop-window__tab");
-            if (!tab) {
-              return;
-            }
-            e.stopPropagation();
-            const kind = tab.dataset.kind;
-            const tabId = tab.dataset.tabId;
-            if (kind === "external" && tabId) {
-              this.switchToTab(tabId);
-              return;
-            }
-            if (kind === "main") {
-              this.switchToTab("primary");
-              return;
-            }
-            if (tab.dataset.url) {
-              const next = withChromelessParam(tab.dataset.url);
-              if (next) {
-                iframe.src = next;
-              }
-              this.switchToTab("primary");
-            }
-          });
+          tabs.addEventListener(
+            "click",
+            (e) => handleTabStripClick(this, e)
+          );
         }
         iframe.addEventListener("load", () => {
           try {
             const href = iframe.contentWindow?.location.href;
             if (href) {
-              this.syncActiveTab(href);
+              syncActiveTab(this, href);
             }
           } catch {
           }
         });
-        window.addEventListener("message", this.boundOnMessage);
+        window.addEventListener("message", this._boundOnMessage);
       }
     }
-    /**
-     * Update the active tab to whichever submenu URL matches the iframe's
-     * current location. Called after every iframe navigation.
-     *
-     * Only submenu tabs participate in URL-based matching. External
-     * sub-tabs and the injected "main" tab manage their own active
-     * state through `switchToTab`, since their notion of "active"
-     * isn't a URL comparison — it's which iframe is foregrounded.
-     */
-    syncActiveTab(currentUrl) {
-      const submenuTabs = this.element.querySelectorAll(
-        '.wp-desktop-window__tab[data-kind="submenu"]'
-      );
-      if (!submenuTabs.length) {
-        return;
-      }
-      if (this.activeTabId !== "primary") {
-        for (const tab of submenuTabs) {
-          tab.classList.remove("wp-desktop-window__tab--active");
-          tab.setAttribute("aria-selected", "false");
-        }
-        return;
-      }
-      const activeKey = urlMatchKey(currentUrl);
-      for (const tab of submenuTabs) {
-        const tabUrl = tab.dataset.url;
-        const isActive = !!tabUrl && urlMatchKey(tabUrl) === activeKey;
-        tab.classList.toggle("wp-desktop-window__tab--active", isActive);
-        tab.setAttribute("aria-selected", isActive ? "true" : "false");
-      }
-    }
-    /**
-     * Add a closeable+detachable sub-tab hosting an external URL.
-     *
-     * Flow:
-     *   1. Lazily create a "Main" tab if this is the first external
-     *      tab on a window that has no submenu (otherwise the user
-     *      would have no way to get back to the admin page).
-     *   2. Create an iframe for the external URL, hidden by default.
-     *   3. Append a tab to the strip with label + detach + close chips.
-     *   4. Switch to the new tab.
-     *   5. Start a 2s readiness probe — if the iframe's `load` event
-     *      doesn't fire in that window (network failure, hard block),
-     *      auto-dismiss the tab and open the URL in a real browser
-     *      tab with an explanatory toast. For subtler blocks
-     *      (X-Frame-Options showing the browser's error page *inside*
-     *      the iframe, which does fire `load`), the user sees the
-     *      error and can hit the detach button themselves.
-     */
+    /** Add a closeable+detachable sub-tab hosting an external URL. */
     addExternalTab(url, label) {
-      if (!this.iframe) {
-        return;
-      }
-      const tabStrip = this.element.querySelector(
-        ".wp-desktop-window__tabs"
-      );
-      const body = this.element.querySelector(
-        ".wp-desktop-window__body"
-      );
-      if (!tabStrip || !body) {
-        return;
-      }
-      this.ensureMainTab(tabStrip);
-      const tabId = `ext-${++this.externalTabSeq}`;
-      const tabEl = document.createElement("button");
-      tabEl.className = "wp-desktop-window__tab wp-desktop-window__tab--external";
-      tabEl.dataset.kind = "external";
-      tabEl.dataset.tabId = tabId;
-      tabEl.setAttribute("type", "button");
-      tabEl.setAttribute("role", "tab");
-      tabEl.setAttribute("aria-selected", "false");
-      tabEl.title = url;
-      const labelEl = document.createElement("span");
-      labelEl.className = "wp-desktop-window__tab-label";
-      labelEl.textContent = label;
-      tabEl.appendChild(labelEl);
-      const detachBtn = document.createElement("wpd-tab-chip");
-      detachBtn.setAttribute("variant", "detach");
-      detachBtn.dataset.tabAction = "detach";
-      detachBtn.dataset.tabId = tabId;
-      detachBtn.setAttribute("aria-label", __("Open in a new browser tab"));
-      detachBtn.title = __("Open in a new browser tab");
-      tabEl.appendChild(detachBtn);
-      const closeBtn = document.createElement("wpd-tab-chip");
-      closeBtn.setAttribute("variant", "close");
-      closeBtn.dataset.tabAction = "close";
-      closeBtn.dataset.tabId = tabId;
-      closeBtn.setAttribute("aria-label", __("Close tab"));
-      closeBtn.title = __("Close tab");
-      tabEl.appendChild(closeBtn);
-      tabStrip.appendChild(tabEl);
-      const iframe = document.createElement("iframe");
-      iframe.className = "wp-desktop-window__iframe wp-desktop-window__iframe--external";
-      iframe.dataset.tabId = tabId;
-      iframe.style.display = "none";
-      iframe.src = url;
-      body.appendChild(iframe);
-      let loaded = false;
-      const onLoad = () => {
-        loaded = true;
-      };
-      iframe.addEventListener("load", onLoad, { once: true });
-      const probeTimer = window.setTimeout(() => {
-        if (loaded) {
-          return;
-        }
-        iframe.removeEventListener("load", onLoad);
-        this.fallbackToBrowserTab(tabId);
-      }, EXTERNAL_IFRAME_READY_TIMEOUT_MS);
-      const cancelProbe = () => {
-        iframe.removeEventListener("load", onLoad);
-        window.clearTimeout(probeTimer);
-      };
-      this.externalTabs.set(tabId, {
-        tabEl,
-        iframe,
-        url,
-        label,
-        cancelProbe
-      });
-      this.switchToTab(tabId);
-      tabEl.scrollIntoView({ behavior: "smooth", inline: "end", block: "nearest" });
-      this.emitChange("state");
+      addExternalTab(this, url, label);
     }
-    /**
-     * Injects a "Main" tab at the start of the strip once external
-     * tabs exist. For windows that already have a submenu, no main
-     * tab is injected — submenu tabs already act as the return path
-     * to primary content. Idempotent.
-     */
-    ensureMainTab(tabStrip) {
-      if (tabStrip.querySelector('[data-kind="main"]')) {
-        return;
-      }
-      if (tabStrip.querySelector('[data-kind="submenu"]')) {
-        return;
-      }
-      const main = document.createElement("button");
-      main.className = "wp-desktop-window__tab wp-desktop-window__tab--main wp-desktop-window__tab--active";
-      main.dataset.kind = "main";
-      main.setAttribute("type", "button");
-      main.setAttribute("role", "tab");
-      main.setAttribute("aria-selected", "true");
-      main.textContent = this.config.title || "Main";
-      tabStrip.prepend(main);
-    }
-    /**
-     * Foreground a tab — either the primary iframe (tabId='primary')
-     * or one of the external sub-tabs. Updates visibility across all
-     * iframes and active state across all tabs.
-     */
-    switchToTab(tabId) {
-      if (this.activeTabId === tabId) {
-        return;
-      }
-      this.activeTabId = tabId;
-      if (this.iframe) {
-        this.iframe.style.display = tabId === "primary" ? "" : "none";
-      }
-      for (const [id, entry] of this.externalTabs) {
-        entry.iframe.style.display = tabId === id ? "" : "none";
-      }
-      const tabEls = this.element.querySelectorAll(
-        ".wp-desktop-window__tab"
-      );
-      tabEls.forEach((t) => {
-        let isActive;
-        if (t.dataset.kind === "main") {
-          isActive = tabId === "primary";
-        } else if (t.dataset.kind === "external") {
-          isActive = t.dataset.tabId === tabId;
-        } else {
-          isActive = tabId === "primary" && t.classList.contains(
-            "wp-desktop-window__tab--active"
-          );
-        }
-        t.classList.toggle("wp-desktop-window__tab--active", isActive);
-        t.setAttribute("aria-selected", isActive ? "true" : "false");
-      });
-    }
-    /** Remove an external sub-tab + its iframe. */
-    closeExternalTab(tabId) {
-      const entry = this.externalTabs.get(tabId);
-      if (!entry) {
-        return;
-      }
-      entry.cancelProbe();
-      entry.tabEl.remove();
-      entry.iframe.remove();
-      this.externalTabs.delete(tabId);
-      if (this.activeTabId === tabId) {
-        this.switchToTab("primary");
-      }
-      if (this.externalTabs.size === 0) {
-        const main = this.element.querySelector(
-          ".wp-desktop-window__tab--main"
-        );
-        main?.remove();
-      }
-      this.emitChange("state");
-    }
-    /**
-     * Open an external sub-tab's current URL in a real browser tab and
-     * close the sub-tab. The iframe's `contentWindow.location` may have
-     * navigated beyond the original URL; we prefer that live URL so a
-     * user who drilled 3 pages deep into an external site gets taken
-     * to the right spot.
-     */
-    detachExternalTab(tabId) {
-      const entry = this.externalTabs.get(tabId);
-      if (!entry) {
-        return;
-      }
-      let url = entry.url;
-      try {
-        const href = entry.iframe.contentWindow?.location.href;
-        if (href && href !== "about:blank") {
-          url = href;
-        }
-      } catch {
-      }
-      window.open(url, "_blank", "noopener");
-      this.closeExternalTab(tabId);
-    }
-    /**
-     * Fallback for sub-tabs that fail to load within the probe window.
-     * Dismisses the sub-tab, opens the URL as a real browser tab, and
-     * flashes a toast explaining why the shell gave up on embedding.
-     */
-    fallbackToBrowserTab(tabId) {
-      const entry = this.externalTabs.get(tabId);
-      if (!entry) {
-        return;
-      }
-      const { url, label } = entry;
-      this.closeExternalTab(tabId);
-      showToast({
-        message: sprintf(
-          // translators: %s is the external site's title or URL.
-          __(
-            `Opened "%s" in a new browser tab — this site doesn't allow embedding.`
-          ),
-          label
-        ),
-        action: {
-          label: __("Open"),
-          onClick: () => {
-            window.open(url, "_blank", "noopener");
-          }
-        }
-      });
-      window.open(url, "_blank", "noopener");
-    }
-    /**
-     * Handle postMessage events from the iframe.
-     */
-    onMessage(event) {
-      if (event.origin !== window.location.origin) {
-        return;
-      }
-      if (!this.iframe || event.source !== this.iframe.contentWindow) {
-        return;
-      }
-      const data = event.data;
-      if (!data || typeof data.type !== "string") {
-        return;
-      }
-      if (data.type === "wp-desktop-title-change" && typeof data.title === "string") {
-        this.setTitle(data.title);
-      }
-      if (data.type === "wp-desktop-focus-request") {
-        if (!this.element.classList.contains("wp-desktop-window--overview")) {
-          this.onFocusRequest?.(this);
-        }
-      }
-      if (data.type === "wp-desktop-screen-meta" && Array.isArray(data.panels)) {
-        this.addScreenMetaButtons(data.panels);
-      }
-      if (data.type === "wp-desktop-screen-meta-state") {
-        this.setActiveScreenMetaPanel(
-          typeof data.open === "string" ? data.open : null
-        );
-      }
-      if (data.type === "wp-desktop-external-link" && typeof data.url === "string" && data.url !== "") {
-        const label = typeof data.label === "string" && data.label !== "" ? data.label : data.url;
-        this.addExternalTab(data.url, label);
-      }
-    }
-    /**
-     * Add Screen Options / Help buttons to the title bar.
-     *
-     * Called when the iframe reports which screen-meta panels are available.
-     * Repopulates on every call — the iframe re-announces on each navigation,
-     * and different pages expose different panels.
-     */
-    addScreenMetaButtons(panels) {
-      const container = this.element.querySelector(".wp-desktop-window__screen-meta");
-      if (!container) {
-        return;
-      }
-      container.innerHTML = "";
-      const panelConfig = {
-        "screen-options": { icon: "dashicons-admin-generic", label: "Screen Options" },
-        help: { icon: "dashicons-editor-help", label: "Help" }
-      };
-      for (const panel of panels) {
-        const cfg = panelConfig[panel];
-        if (!cfg) {
-          continue;
-        }
-        const btn = document.createElement("button");
-        btn.className = "wp-desktop-window__meta-btn";
-        btn.setAttribute("type", "button");
-        btn.setAttribute("aria-label", cfg.label);
-        btn.setAttribute("aria-pressed", "false");
-        btn.dataset.panel = panel;
-        btn.innerHTML = `<span class="dashicons ${cfg.icon}" aria-hidden="true"></span>`;
-        btn.addEventListener("click", (e) => {
-          e.stopPropagation();
-          this.iframe?.contentWindow?.postMessage(
-            { type: "wp-desktop-toggle-panel", panel },
-            window.location.origin
-          );
-        });
-        container.appendChild(btn);
-      }
-    }
-    /**
-     * Reflect the iframe's authoritative screen-meta state on the
-     * title-bar buttons. At most one button is active at a time.
-     */
-    setActiveScreenMetaPanel(panel) {
-      const container = this.element.querySelector(".wp-desktop-window__screen-meta");
-      if (!container) {
-        return;
-      }
-      container.querySelectorAll(".wp-desktop-window__meta-btn").forEach((btn) => {
-        const isActive = btn.dataset.panel === panel;
-        btn.classList.toggle("wp-desktop-window__meta-btn--active", isActive);
-        btn.setAttribute("aria-pressed", isActive ? "true" : "false");
-      });
-    }
-    /**
-     * Start dragging the window.
-     */
-    onDragStart(e) {
-      const target = e.target;
-      if (target.closest(".wp-desktop-window__controls") || target.closest(".wp-desktop-window__screen-meta") || target.closest(".wp-desktop-window__menu-btn") || target.closest(".wp-desktop-window__menu-panel")) {
-        return;
-      }
-      if (this.state === "maximized") {
-        const titleRect = this.titleBar.getBoundingClientRect();
-        const cursorRatioX = titleRect.width > 0 ? (e.clientX - titleRect.left) / titleRect.width : 0.5;
-        this.element.classList.remove("wp-desktop-window--maximized");
-        const w = this.savedGeometry?.width ?? this.element.offsetWidth;
-        const h = this.savedGeometry?.height ?? this.element.offsetHeight;
-        this.element.style.width = `${w}px`;
-        this.element.style.height = `${h}px`;
-        const left = Math.round(e.clientX - w * cursorRatioX);
-        const top = Math.round(e.clientY - titleRect.height / 2);
-        this.element.style.left = `${left}px`;
-        this.element.style.top = `${top}px`;
-        this.state = "normal";
-        this.emitChange("state");
-        doAction(HOOKS.WINDOW_UNMAXIMIZED, { windowId: this.id });
-      }
-      this.isDragging = true;
-      this.dragOffsetX = e.clientX - this.element.offsetLeft;
-      this.dragOffsetY = e.clientY - this.element.offsetTop;
-      this.titleBar.setPointerCapture(e.pointerId);
-      this.element.classList.add("wp-desktop-window--dragging");
-      doAction(HOOKS.WINDOW_DRAG_START, { windowId: this.id });
-      const snap = this.snapConfigProvider?.() ?? { enabled: false, cellWidth: 0, cellHeight: 0 };
-      if (snap.enabled) {
-        this.element.classList.add("wp-desktop-window--snap-drag");
-      }
-      const onDragMove = (ev) => {
-        if (!this.isDragging) {
-          return;
-        }
-        let x = ev.clientX - this.dragOffsetX;
-        let y = ev.clientY - this.dragOffsetY;
-        const desktop = this.element.parentElement;
-        if (desktop) {
-          x = Math.max(EDGE_MARGIN, Math.min(x, desktop.clientWidth - EDGE_MARGIN));
-          y = Math.max(EDGE_MARGIN, Math.min(y, desktop.clientHeight - EDGE_MARGIN));
-        }
-        if (snap.enabled) {
-          x = Math.round(x / snap.cellWidth) * snap.cellWidth;
-          y = Math.round(y / snap.cellHeight) * snap.cellHeight;
-        }
-        this.element.style.left = `${x}px`;
-        this.element.style.top = `${y}px`;
-      };
-      const onDragEnd = () => {
-        if (!this.isDragging) {
-          return;
-        }
-        this.isDragging = false;
-        this.element.classList.remove("wp-desktop-window--dragging");
-        this.element.classList.remove("wp-desktop-window--snap-drag");
-        this.titleBar.removeEventListener("pointermove", onDragMove);
-        this.titleBar.removeEventListener("pointerup", onDragEnd);
-        this.titleBar.removeEventListener("pointercancel", onDragEnd);
-        this.titleBar.removeEventListener("lostpointercapture", onDragEnd);
-        this.emitChange("moved");
-        const payload = {
-          windowId: this.id,
-          x: this.element.offsetLeft,
-          y: this.element.offsetTop
-        };
-        doAction(HOOKS.WINDOW_DRAG_END, payload);
-        doAction(HOOKS.WINDOW_MOVED, payload);
-      };
-      this.titleBar.addEventListener("pointermove", onDragMove);
-      this.titleBar.addEventListener("pointerup", onDragEnd);
-      this.titleBar.addEventListener("pointercancel", onDragEnd);
-      this.titleBar.addEventListener("lostpointercapture", onDragEnd);
-    }
-    /**
-     * Start resizing the window.
-     */
-    onResizeStart(e) {
-      if (this.state === "maximized") {
-        return;
-      }
-      e.preventDefault();
-      e.stopPropagation();
-      this.isResizing = true;
-      this.resizeStartX = e.clientX;
-      this.resizeStartY = e.clientY;
-      this.resizeStartW = this.element.offsetWidth;
-      this.resizeStartH = this.element.offsetHeight;
-      e.target.setPointerCapture(e.pointerId);
-      this.element.classList.add("wp-desktop-window--resizing");
-      doAction(HOOKS.WINDOW_RESIZE_START, { windowId: this.id });
-      const snap = this.snapConfigProvider?.() ?? { enabled: false, cellWidth: 0, cellHeight: 0 };
-      if (snap.enabled) {
-        this.element.classList.add("wp-desktop-window--snap-drag");
-      }
-      const onResizeMove = (ev) => {
-        if (!this.isResizing) {
-          return;
-        }
-        let newW = Math.max(this.config.minWidth, this.resizeStartW + (ev.clientX - this.resizeStartX));
-        let newH = Math.max(this.config.minHeight, this.resizeStartH + (ev.clientY - this.resizeStartY));
-        if (snap.enabled) {
-          newW = Math.max(
-            this.config.minWidth,
-            Math.round(newW / snap.cellWidth) * snap.cellWidth
-          );
-          newH = Math.max(
-            this.config.minHeight,
-            Math.round(newH / snap.cellHeight) * snap.cellHeight
-          );
-        }
-        this.element.style.width = `${newW}px`;
-        this.element.style.height = `${newH}px`;
-      };
-      const onResizeEnd = () => {
-        if (!this.isResizing) {
-          return;
-        }
-        this.isResizing = false;
-        this.element.classList.remove("wp-desktop-window--resizing");
-        this.element.classList.remove("wp-desktop-window--snap-drag");
-        const handle2 = this.element.querySelector(".wp-desktop-window__resize-handle");
-        handle2.removeEventListener("pointermove", onResizeMove);
-        handle2.removeEventListener("pointerup", onResizeEnd);
-        handle2.removeEventListener("pointercancel", onResizeEnd);
-        handle2.removeEventListener("lostpointercapture", onResizeEnd);
-        this.emitChange("resized");
-        const payload = {
-          windowId: this.id,
-          width: this.element.offsetWidth,
-          height: this.element.offsetHeight
-        };
-        doAction(HOOKS.WINDOW_RESIZE_END, payload);
-        doAction(HOOKS.WINDOW_RESIZED, payload);
-      };
-      const handle = e.target;
-      handle.addEventListener("pointermove", onResizeMove);
-      handle.addEventListener("pointerup", onResizeEnd);
-      handle.addEventListener("pointercancel", onResizeEnd);
-      handle.addEventListener("lostpointercapture", onResizeEnd);
-    }
-    /**
-     * Set the z-index of this window.
-     */
+    /** Set the z-index of this window. */
     setZIndex(z) {
       this.element.style.zIndex = String(z);
     }
-    /**
-     * Mark this window as focused or unfocused.
-     */
+    /** Mark this window as focused or unfocused. */
     setFocused(focused) {
       this.element.classList.toggle("wp-desktop-window--focused", focused);
     }
-    /**
-     * Update the window title.
-     */
+    /** Update the window title. */
     setTitle(title) {
-      this.titleEl.textContent = title;
+      this._titleEl.textContent = title;
       doAction(HOOKS.WINDOW_TITLE_CHANGED, { windowId: this.id, title });
     }
-    /**
-     * Minimize the window.
-     */
+    /** Minimize the window. */
     minimize() {
       this.state = "minimized";
       this.element.classList.add("wp-desktop-window--minimized");
@@ -2318,12 +2376,10 @@ var wpDesktop = function(exports) {
         }, { once: true });
       }
       this.onMinimize?.(this);
-      this.emitChange("state");
+      this._emitChange("state");
       doAction(HOOKS.WINDOW_MINIMIZED, { windowId: this.id });
     }
-    /**
-     * Restore the window from minimized state.
-     */
+    /** Restore the window from minimized state. */
     restore() {
       if (this.iframe) {
         this.iframe.style.visibility = "";
@@ -2334,7 +2390,7 @@ var wpDesktop = function(exports) {
         this.state = "normal";
       }
       this.onFocusRequest?.(this);
-      this.emitChange("state");
+      this._emitChange("state");
       if (wasMinimized) {
         doAction(HOOKS.WINDOW_RESTORED, { windowId: this.id });
       }
@@ -2342,15 +2398,15 @@ var wpDesktop = function(exports) {
     /**
      * Enter maximized state idempotently.
      *
-     * Different from `toggleMaximize` in that it's a one-way: a
-     * caller that wants the window maximized can call this without
-     * worrying about the current state. No-op if already maximized.
+     * Different from `toggleMaximize` in that it's a one-way: a caller
+     * that wants the window maximized can call this without worrying
+     * about the current state. No-op if already maximized.
      *
      * Used by the Overview-exit path so clicking a thumbnail can
      * animate directly from the grid position to maximized in one
      * co-animation, rather than the two chained animations a
-     * `toggleMaximize` call would produce (first back-to-normal,
-     * then normal-to-maximized).
+     * `toggleMaximize` call would produce (first back-to-normal, then
+     * normal-to-maximized).
      */
     maximize() {
       if (this.state === "maximized") {
@@ -2360,7 +2416,7 @@ var wpDesktop = function(exports) {
       if (!parent) {
         return;
       }
-      this.savedGeometry = {
+      this._savedGeometry = {
         x: this.element.offsetLeft,
         y: this.element.offsetTop,
         width: this.element.offsetWidth,
@@ -2372,12 +2428,10 @@ var wpDesktop = function(exports) {
       this.element.style.width = `${parent.clientWidth}px`;
       this.element.style.height = `${parent.clientHeight}px`;
       this.state = "maximized";
-      this.emitChange("state");
+      this._emitChange("state");
       doAction(HOOKS.WINDOW_MAXIMIZED, { windowId: this.id });
     }
-    /**
-     * Toggle between maximized and normal states.
-     */
+    /** Toggle between maximized and normal states. */
     toggleMaximize() {
       const parent = this.element.parentElement;
       if (!parent) {
@@ -2385,19 +2439,19 @@ var wpDesktop = function(exports) {
       }
       if (this.state === "maximized") {
         this.element.classList.remove("wp-desktop-window--maximized");
-        if (this.savedGeometry) {
-          const restored = this.snapGeometry(this.savedGeometry);
+        if (this._savedGeometry) {
+          const restored = this.snapGeometry(this._savedGeometry);
           this.element.style.left = `${restored.x}px`;
           this.element.style.top = `${restored.y}px`;
           this.element.style.width = `${restored.width}px`;
           this.element.style.height = `${restored.height}px`;
-          this.savedGeometry = restored;
+          this._savedGeometry = restored;
         }
         this.state = "normal";
-        this.emitChange("state");
+        this._emitChange("state");
         doAction(HOOKS.WINDOW_UNMAXIMIZED, { windowId: this.id });
       } else {
-        this.savedGeometry = {
+        this._savedGeometry = {
           x: this.element.offsetLeft,
           y: this.element.offsetTop,
           width: this.element.offsetWidth,
@@ -2409,7 +2463,7 @@ var wpDesktop = function(exports) {
         this.element.style.width = `${parent.clientWidth}px`;
         this.element.style.height = `${parent.clientHeight}px`;
         this.state = "maximized";
-        this.emitChange("state");
+        this._emitChange("state");
         doAction(HOOKS.WINDOW_MAXIMIZED, { windowId: this.id });
       }
     }
@@ -2424,8 +2478,8 @@ var wpDesktop = function(exports) {
     toggleFullscreen() {
       if (this.state === "fullscreen") {
         this.element.classList.remove("wp-desktop-window--fullscreen");
-        if (this.savedFullscreenState) {
-          const s = this.savedFullscreenState;
+        if (this._savedFullscreenState) {
+          const s = this._savedFullscreenState;
           this.element.style.left = `${s.x}px`;
           this.element.style.top = `${s.y}px`;
           this.element.style.width = `${s.width}px`;
@@ -2435,12 +2489,12 @@ var wpDesktop = function(exports) {
             s.state === "maximized"
           );
           this.state = s.state;
-          this.savedFullscreenState = null;
+          this._savedFullscreenState = null;
         } else {
           this.state = "normal";
         }
       } else {
-        this.savedFullscreenState = {
+        this._savedFullscreenState = {
           state: this.state,
           x: this.element.offsetLeft,
           y: this.element.offsetTop,
@@ -2452,7 +2506,7 @@ var wpDesktop = function(exports) {
       }
       updateFullscreenBodyClass();
       this.updateFocusButtonState();
-      this.emitChange("state");
+      this._emitChange("state");
       doAction(
         this.state === "fullscreen" ? HOOKS.WINDOW_FULLSCREEN_ENTERED : HOOKS.WINDOW_FULLSCREEN_EXITED,
         { windowId: this.id }
@@ -2510,146 +2564,15 @@ var wpDesktop = function(exports) {
       doAction(HOOKS.WINDOW_DETACHED, { windowId: this.id, url: url.toString() });
     }
     /**
-     * Toggle the title-bar actions menu.
-     */
-    /**
-     * Flip the "Open on startup" check state immediately on click so
-     * the user sees instant feedback — the REST round-trip confirms
-     * shortly after via the `wp-desktop-default-window-changed` event,
-     * which calls `refreshStartupCheckState` with the canonical state.
-     * If the REST fails the optimistic flip stays (wrong) until the
-     * next menu open, where the canonical check takes over.
-     */
-    flipStartupCheckOptimistically(item) {
-      const isChecked = item.hasAttribute("checked");
-      if (isChecked) {
-        item.removeAttribute("checked");
-      } else {
-        item.setAttribute("checked", "");
-      }
-    }
-    /**
-     * Compare this window's current URL against the user's saved
-     * default-window preference and paint the "Open on startup" menu
-     * item's checked state accordingly. Called when the menu is built
-     * and every time the public preference changes.
-     */
-    refreshStartupCheckState(item) {
-      const pref = window.wp?.desktop?.config?.defaultWindow;
-      let isDefault = false;
-      if (pref && pref.enabled && typeof pref.url === "string") {
-        try {
-          const currentKey = urlMatchKey(this.getCurrentUrl());
-          const prefKey = urlMatchKey(pref.url);
-          isDefault = currentKey === prefKey;
-        } catch {
-          isDefault = false;
-        }
-      }
-      if (isDefault) {
-        item.setAttribute("checked", "");
-      } else {
-        item.removeAttribute("checked");
-      }
-    }
-    toggleActionsMenu() {
-      const panel = this.element.querySelector(
-        ".wp-desktop-window__menu-panel"
-      );
-      if (!panel) {
-        return;
-      }
-      if (panel.hidden) {
-        this.openActionsMenu();
-      } else {
-        this.closeActionsMenu();
-      }
-    }
-    /**
-     * Open the title-bar actions menu and wire an outside-click listener
-     * that dismisses it. The listener uses pointerdown (capture phase) so
-     * it fires before any click handler on the clicked target, which keeps
-     * dock/icon clicks outside the menu from opening-then-immediately-
-     * closing anything.
-     */
-    openActionsMenu() {
-      const panel = this.element.querySelector(
-        ".wp-desktop-window__menu-panel"
-      );
-      const btn = this.element.querySelector(
-        ".wp-desktop-window__menu-btn"
-      );
-      if (!panel || !btn) {
-        return;
-      }
-      panel.hidden = false;
-      btn.setAttribute("aria-expanded", "true");
-      const startup = panel.querySelector(
-        ".wp-desktop-window__menu-item--startup"
-      );
-      if (startup) {
-        this.refreshStartupCheckState(startup);
-      }
-      if (!this.boundOnDocumentPointerDown) {
-        this.boundOnDocumentPointerDown = (e) => {
-          const target = e.target;
-          if (!target) {
-            return;
-          }
-          if (panel.contains(target) || btn.contains(target)) {
-            return;
-          }
-          this.closeActionsMenu();
-        };
-      }
-      setTimeout(() => {
-        if (this.boundOnDocumentPointerDown) {
-          document.addEventListener(
-            "pointerdown",
-            this.boundOnDocumentPointerDown,
-            true
-          );
-        }
-      }, 0);
-      const firstItem = panel.querySelector(
-        '[role="menuitem"]'
-      );
-      firstItem?.focus();
-    }
-    /**
-     * Close the title-bar actions menu.
-     */
-    closeActionsMenu() {
-      const panel = this.element.querySelector(
-        ".wp-desktop-window__menu-panel"
-      );
-      const btn = this.element.querySelector(
-        ".wp-desktop-window__menu-btn"
-      );
-      if (panel) {
-        panel.hidden = true;
-      }
-      if (btn) {
-        btn.setAttribute("aria-expanded", "false");
-      }
-      if (this.boundOnDocumentPointerDown) {
-        document.removeEventListener(
-          "pointerdown",
-          this.boundOnDocumentPointerDown,
-          true
-        );
-      }
-    }
-    /**
      * Close and destroy the window.
      *
      * Plays a subtle closing animation before removing the element.
      */
     close() {
-      if (this.isDestroyed) {
+      if (this._isDestroyed) {
         return;
       }
-      this.isDestroyed = true;
+      this._isDestroyed = true;
       this.onClose?.(this);
       this.element.classList.add("wp-desktop-window--closing");
       let removed = false;
@@ -2658,11 +2581,11 @@ var wpDesktop = function(exports) {
           return;
         }
         removed = true;
-        window.removeEventListener("message", this.boundOnMessage);
-        if (this.boundOnDocumentPointerDown) {
+        window.removeEventListener("message", this._boundOnMessage);
+        if (this._boundOnDocumentPointerDown) {
           document.removeEventListener(
             "pointerdown",
-            this.boundOnDocumentPointerDown,
+            this._boundOnDocumentPointerDown,
             true
           );
         }
@@ -2678,9 +2601,7 @@ var wpDesktop = function(exports) {
       this.element.addEventListener("transitionend", onTransitionEnd);
       setTimeout(onDone, 300);
     }
-    /**
-     * Get a snapshot of the window state for persistence.
-     */
+    /** Get a snapshot of the window state for persistence. */
     getSnapshot() {
       const isHidden = this.element.offsetParent === null;
       if (isHidden) {
@@ -2706,1271 +2627,31 @@ var wpDesktop = function(exports) {
         state: this.state
       };
     }
-    /**
-     * Number of external sub-tabs currently open on this window.
-     * Zero for windows that haven't had any external-link clicks.
-     * Exposed publicly (rather than via the snapshot) so callers
-     * like the Overview label renderer can decorate thumbnails
-     * without paying the cost of a full serialization pass.
-     */
+    /** Number of external sub-tabs currently open on this window. */
     getExternalTabCount() {
-      return this.externalTabs.size;
+      return externalTabCount(this);
+    }
+    /** Serializable snapshot of this window's external sub-tabs. */
+    getExternalTabsSnapshot() {
+      return externalTabsSnapshot(this);
     }
     /**
-     * Serializable snapshot of this window's external sub-tabs.
-     * Iteration order follows the `Map`'s insertion order, which
-     * matches the tab strip's left-to-right order — so restoring
-     * preserves the visual layout.
+     * Toggle the actions menu from an external caller (e.g., keyboard
+     * shortcut). Kept here so the panel-focus + outside-click wiring
+     * lives in a single place.
      */
-    getExternalTabsSnapshot() {
-      const out = [];
-      for (const entry of this.externalTabs.values()) {
-        let url = entry.url;
-        try {
-          const href = entry.iframe.contentWindow?.location.href;
-          if (href && href !== "about:blank") {
-            url = href;
-          }
-        } catch {
-        }
-        out.push({ url, label: entry.label });
-      }
-      return out;
+    toggleActionsMenu() {
+      toggleActionsMenu(this);
+    }
+    /** Close the actions menu from an external caller. */
+    closeActionsMenu() {
+      closeActionsMenu(this);
+    }
+    /** Open the actions menu from an external caller. */
+    openActionsMenu() {
+      openActionsMenu(this);
     }
   }
-  const BASE_Z_INDEX = 100;
-  const CASCADE_OFFSET = 30;
-  const _WindowManager = class _WindowManager {
-    constructor(desktop) {
-      this.stack = [];
-      this.cascadeIndex = 0;
-      this.desktops = [
-        // translators: default desktop name — "Desktop 1"
-        { id: "desktop-1", label: __("Desktop 1") }
-      ];
-      this.activeDesktopId = "desktop-1";
-      this.desktopSeq = 1;
-      this.onToggleStartupRequested = null;
-      this.desktopResizeObserver = null;
-      this.snapEnabled = (() => {
-        try {
-          return window.localStorage.getItem(
-            _WindowManager.SNAP_STORAGE_KEY
-          ) === "1";
-        } catch {
-          return false;
-        }
-      })();
-      this.overviewActive = false;
-      this.overviewSnapshot = /* @__PURE__ */ new Map();
-      this.overviewLabels = /* @__PURE__ */ new Map();
-      this.overviewPointerDownHandler = null;
-      this.overviewPointerUpHandler = null;
-      this.overviewKeyHandler = null;
-      this.overviewPressTarget = null;
-      this.overviewClickBlocker = null;
-      this.overviewTopBar = null;
-      this.overviewMouseHandler = null;
-      this.lastOverviewHoverId = null;
-      this.desktop = desktop;
-      if (typeof ResizeObserver !== "undefined") {
-        this.desktopResizeObserver = new ResizeObserver(
-          () => this.reflowMaximizedWindows()
-        );
-        this.desktopResizeObserver.observe(desktop);
-      }
-      this.installIframeFocusBridge();
-    }
-    /**
-     * Clicks inside an iframe don't cross the browsing-context
-     * boundary — pointerdown / focusin in the iframe's document
-     * never reach the parent. BUT the parent `window` does lose
-     * focus, because focus moves to the iframe's content window.
-     *
-     * We use that signal: listen for `window.blur` on the parent,
-     * check `document.activeElement` — if it's an iframe, walk up
-     * to its owning `.wp-desktop-window`, find the matching Window
-     * in our stack, and focus it. Covers clicks on the primary
-     * iframe AND any external-tab sub-iframes mounted as
-     * descendants of the window element.
-     *
-     * One listener at the window level is cheaper than N per-window
-     * listeners and doesn't require passing anything through Window
-     * instances that aren't already exposed.
-     */
-    installIframeFocusBridge() {
-      window.addEventListener("blur", () => {
-        window.setTimeout(() => {
-          const active2 = this.desktop.ownerDocument?.activeElement ?? null;
-          if (!active2 || active2.tagName !== "IFRAME") {
-            return;
-          }
-          const winEl = active2.closest(
-            ".wp-desktop-window"
-          );
-          if (!winEl) {
-            return;
-          }
-          const id = winEl.id.replace(/^wp-window-/, "");
-          const win = this.getById(id);
-          if (!win) {
-            return;
-          }
-          if (this.overviewActive) {
-            return;
-          }
-          if (this.getFocused() === win) {
-            return;
-          }
-          this.focus(win);
-        }, 0);
-      });
-    }
-    /**
-     * Re-apply maximize bounds to any window currently in
-     * `state === 'maximized'`. Called from the desktop-area
-     * ResizeObserver so the user can shrink the browser window
-     * without the maximized content refusing to follow.
-     *
-     * Skipped during overview mode: there, windows carry CSS
-     * transforms for the thumbnail layout, and touching their
-     * inline geometry would desync the live transform math.
-     * Overview exit re-applies maximize correctly via its own path.
-     *
-     * Fullscreen windows aren't touched either — they're
-     * `position: fixed; inset: 0` in CSS, so the viewport naturally
-     * sizes them without JS involvement.
-     */
-    reflowMaximizedWindows() {
-      if (this.overviewActive) {
-        return;
-      }
-      for (const w of this.stack) {
-        if (w.state !== "maximized") {
-          continue;
-        }
-        const parent = w.element.parentElement;
-        if (!parent) {
-          continue;
-        }
-        w.element.style.width = `${parent.clientWidth}px`;
-        w.element.style.height = `${parent.clientHeight}px`;
-      }
-    }
-    /**
-     * Open a new window — or focus an existing one — for the given page.
-     *
-     * Matches any existing window sharing the same `baseId` (defaulting to
-     * the config's `id`). For singleton pages (Settings, Dashboard, …)
-     * `baseId === id`, so this behaves exactly like strict id matching.
-     * For multi pages, clicking the dock icon while a window is already
-     * open focuses the most-recent instance rather than creating a twin.
-     *
-     * To force a brand-new instance alongside an existing one, use
-     * {@link openNew}.
-     */
-    open(config) {
-      const baseId = config.baseId || config.id;
-      const existing = this.getByBaseId(baseId);
-      if (existing) {
-        this.focus(existing);
-        if (existing.state === "minimized") {
-          existing.restore();
-        }
-        return existing;
-      }
-      return this.createWindow({ ...config, baseId });
-    }
-    /**
-     * Open a brand-new window even if one is already open for this page.
-     *
-     * Only makes sense for pages flagged `multi` — invoked by the dock's
-     * "+" chip and the window title-bar's "Open another" action. The new
-     * instance gets a suffixed id (`${baseId}-2`, `${baseId}-3`, …) while
-     * keeping the same baseId so the dock still groups it with siblings.
-     *
-     * Finds the lowest unused suffix, so closing an intermediate instance
-     * and opening another won't reuse its id while it's still in-flight.
-     */
-    openNew(config) {
-      const baseId = config.baseId || config.id;
-      const nextId = this.nextInstanceId(baseId);
-      return this.createWindow({ ...config, id: nextId, baseId });
-    }
-    /**
-     * Build and mount a window element. Common tail shared by open() and
-     * openNew() — everything that happens once the id has been resolved.
-     */
-    createWindow(config) {
-      const desktopRect = this.desktop.getBoundingClientRect();
-      const defaultWidth = Math.min(Math.round(desktopRect.width * 0.8), 1200);
-      const defaultHeight = Math.min(Math.round(desktopRect.height * 0.8), 800);
-      const cascadeX = 40 + this.cascadeIndex % 8 * CASCADE_OFFSET;
-      const cascadeY = 40 + this.cascadeIndex % 8 * CASCADE_OFFSET;
-      const fullConfig = {
-        icon: config.icon || "dashicons-admin-generic",
-        x: config.x ?? cascadeX,
-        y: config.y ?? cascadeY,
-        width: config.width ?? defaultWidth,
-        height: config.height ?? defaultHeight,
-        minWidth: config.minWidth ?? 320,
-        minHeight: config.minHeight ?? 200,
-        ...config,
-        baseId: config.baseId || config.id,
-        // New windows always join the active desktop. A caller can
-        // pre-seed `desktopId` (e.g. session restore) by passing it
-        // in `config`, which the spread above preserves.
-        desktopId: config.desktopId || this.activeDesktopId
-      };
-      this.cascadeIndex++;
-      const win = new Window(fullConfig);
-      win.onFocusRequest = (w) => this.focus(w);
-      win.onClose = (w) => this.remove(w);
-      win.onMinimize = () => {
-        const visible = this.stack.filter((w) => w.state !== "minimized");
-        if (visible.length > 0) {
-          this.focus(visible[visible.length - 1]);
-        }
-      };
-      win.onOpenAnother = (w) => {
-        this.openNew({
-          id: w.config.baseId || w.id,
-          baseId: w.config.baseId || w.id,
-          url: w.config.url,
-          title: w.config.title,
-          icon: w.config.icon,
-          submenu: w.config.submenu,
-          multi: true
-        });
-      };
-      win.onToggleStartup = (w) => {
-        this.onToggleStartupRequested?.(w);
-      };
-      win.snapConfigProvider = () => this.getSnapConfig();
-      this.stack.push(win);
-      this.desktop.appendChild(win.element);
-      this.applyDesktopVisibility(win);
-      this.focus(win);
-      const openedDetail = {
-        windowId: win.id,
-        page: config.url,
-        title: config.title,
-        url: config.url
-      };
-      document.dispatchEvent(
-        new CustomEvent("wp-desktop-window-opened", { detail: openedDetail })
-      );
-      doAction(HOOKS.WINDOW_OPENED, openedDetail);
-      return win;
-    }
-    /**
-     * Find the next unused suffixed id for a given baseId. Prefers the
-     * bare baseId itself if free (user closed the original), then walks
-     * `-2`, `-3`, … until it lands on one not currently in the stack.
-     */
-    nextInstanceId(baseId) {
-      const taken = new Set(this.stack.map((w) => w.id));
-      if (!taken.has(baseId)) {
-        return baseId;
-      }
-      let n = 2;
-      while (taken.has(`${baseId}-${n}`)) {
-        n++;
-      }
-      return `${baseId}-${n}`;
-    }
-    /**
-     * Focus a window: bring it to top of z-stack.
-     */
-    focus(win) {
-      const idx = this.stack.indexOf(win);
-      if (idx > -1) {
-        this.stack.splice(idx, 1);
-      }
-      this.stack.push(win);
-      this.stack.forEach((w, i) => {
-        w.setZIndex(BASE_Z_INDEX + i);
-        w.setFocused(i === this.stack.length - 1);
-      });
-      const focusedDetail = { windowId: win.id };
-      document.dispatchEvent(
-        new CustomEvent("wp-desktop-window-focused", { detail: focusedDetail })
-      );
-      doAction(HOOKS.WINDOW_FOCUSED, focusedDetail);
-    }
-    /**
-     * Remove a window from the stack and DOM.
-     */
-    remove(win) {
-      const idx = this.stack.indexOf(win);
-      if (idx > -1) {
-        this.stack.splice(idx, 1);
-      }
-      if (this.stack.length > 0) {
-        this.focus(this.stack[this.stack.length - 1]);
-      }
-      const closedDetail = { windowId: win.id };
-      document.dispatchEvent(
-        new CustomEvent("wp-desktop-window-closed", { detail: closedDetail })
-      );
-      doAction(HOOKS.WINDOW_CLOSED, closedDetail);
-    }
-    /**
-     * Get a window by its ID.
-     */
-    getById(id) {
-      return this.stack.find((w) => w.id === id);
-    }
-    /**
-     * Get the most-recently-focused window for a given baseId.
-     *
-     * Multi-instance windows share a baseId; the stack is ordered bottom
-     * to top by focus, so iterating from the end finds the best candidate
-     * to bring forward when the user re-clicks the dock icon.
-     */
-    getByBaseId(baseId) {
-      for (let i = this.stack.length - 1; i >= 0; i--) {
-        const w = this.stack[i];
-        if ((w.config.baseId || w.id) === baseId) {
-          return w;
-        }
-      }
-      return void 0;
-    }
-    /**
-     * Get every open window sharing the given baseId, ordered by
-     * instance slot (bare baseId first, then `-2`, `-3`, …) rather than
-     * z-order — so the dock's instance rail keeps a stable left-to-right
-     * order even as the user focuses between windows.
-     */
-    getAllByBaseId(baseId) {
-      const instanceSlot = (id) => {
-        if (id === baseId) {
-          return 1;
-        }
-        const prefix = `${baseId}-`;
-        if (id.startsWith(prefix)) {
-          const n = parseInt(id.slice(prefix.length), 10);
-          return Number.isFinite(n) ? n : 999;
-        }
-        return 999;
-      };
-      return this.stack.filter((w) => (w.config.baseId || w.id) === baseId).sort((a, b) => instanceSlot(a.id) - instanceSlot(b.id));
-    }
-    /**
-     * Get all open windows.
-     */
-    getAll() {
-      return [...this.stack];
-    }
-    /**
-     * Get the currently focused (topmost) window.
-     */
-    getFocused() {
-      return this.stack.length > 0 ? this.stack[this.stack.length - 1] : void 0;
-    }
-    // ==========================================================
-    // Virtual desktops ("Spaces")
-    //
-    // Each desktop owns its own set of windows. Switching desktops
-    // hides the previous group and shows the new one without
-    // destroying anything — iframe state, scroll position, in-page
-    // JS state all survive a switch. Only one desktop is active at
-    // any time.
-    // ==========================================================
-    /** Snapshot of the desktop list (display order). */
-    getDesktops() {
-      return [...this.desktops];
-    }
-    /**
-     * Currently active desktop. Always defined — there is always at
-     * least one desktop in the registry.
-     */
-    getActiveDesktop() {
-      const found = this.desktops.find(
-        (d) => d.id === this.activeDesktopId
-      );
-      return found ?? this.desktops[0];
-    }
-    /** Convenience wrapper used by snapshot serialisation. */
-    getActiveDesktopId() {
-      return this.getActiveDesktop().id;
-    }
-    /**
-     * Show / hide a single window based on whether its desktop matches
-     * the active one. Centralises the "windows on inactive desktops
-     * are display:none" rule so any future tweak (e.g. opacity-fade
-     * instead of hard hide) lives in one place.
-     *
-     * Native windows ride along with their desktop just like iframe
-     * windows — there's no reason "OS Settings opened on Desktop 2"
-     * should leak into Desktop 1.
-     */
-    applyDesktopVisibility(win) {
-      const visible = win.config.desktopId === this.activeDesktopId;
-      win.element.style.display = visible ? "" : "none";
-    }
-    /**
-     * Re-evaluate visibility for every window. Called after the active
-     * desktop changes or after a window is reassigned to a different
-     * desktop (e.g. when its previous desktop was closed and its
-     * windows were migrated to the survivor).
-     */
-    refreshDesktopVisibility() {
-      for (const w of this.stack) {
-        this.applyDesktopVisibility(w);
-      }
-    }
-    /**
-     * Append a brand-new desktop and return it. The new desktop's
-     * label is auto-numbered (`Desktop 2`, `Desktop 3`, …) using the
-     * monotonic seq counter so closing + reopening doesn't reuse the
-     * same id mid-session.
-     */
-    createDesktop() {
-      this.desktopSeq++;
-      const desktop = {
-        id: `desktop-${this.desktopSeq}`,
-        // translators: %d is the desktop number (e.g., "Desktop 2")
-        label: sprintf(__("Desktop %d"), this.desktopSeq)
-      };
-      this.desktops.push(desktop);
-      doAction(HOOKS.DESKTOP_CREATED, { desktopId: desktop.id });
-      return desktop;
-    }
-    /**
-     * Switch the active desktop. No-op if `id` is already active or
-     * doesn't exist. Fires `wp-desktop.desktop.switched` with both
-     * the leaving and entering desktop ids so plugins can sync per-
-     * desktop state (active-desktop-aware indicators, custom widgets,
-     * etc.).
-     */
-    switchDesktop(id) {
-      if (id === this.activeDesktopId) {
-        return;
-      }
-      if (!this.desktops.some((d) => d.id === id)) {
-        return;
-      }
-      const previousId = this.activeDesktopId;
-      this.activeDesktopId = id;
-      this.refreshDesktopVisibility();
-      const topOnNew = [...this.stack].reverse().find((w) => w.config.desktopId === id && w.state !== "minimized");
-      if (topOnNew) {
-        this.focus(topOnNew);
-      }
-      doAction(HOOKS.DESKTOP_SWITCHED, {
-        from: previousId,
-        to: id
-      });
-    }
-    /**
-     * Close a desktop. Refuses to close the last remaining desktop —
-     * the shell needs at least one. Windows on the closed desktop
-     * migrate to the surviving desktop the user lands on (the one to
-     * the left in the bar, falling back to the first), so the user
-     * never silently loses work to a misclick.
-     */
-    closeDesktop(id) {
-      if (this.desktops.length <= 1) {
-        return;
-      }
-      const idx = this.desktops.findIndex((d) => d.id === id);
-      if (idx === -1) {
-        return;
-      }
-      const survivorIdx = idx > 0 ? idx - 1 : 1;
-      const survivor = this.desktops[survivorIdx];
-      for (const w of this.stack) {
-        if (w.config.desktopId === id) {
-          w.config.desktopId = survivor.id;
-        }
-      }
-      this.desktops.splice(idx, 1);
-      const wasActive = this.activeDesktopId === id;
-      if (wasActive) {
-        this.activeDesktopId = survivor.id;
-      }
-      if (this.overviewActive) {
-        this.relayoutOverviewForActiveDesktop();
-      } else {
-        this.refreshDesktopVisibility();
-      }
-      doAction(HOOKS.DESKTOP_CLOSED, {
-        desktopId: id,
-        migratedTo: survivor.id
-      });
-    }
-    /**
-     * Tear down + re-apply the overview grid for whichever desktop
-     * is currently active. Used by {@link closeDesktop} when the
-     * close happens mid-overview — without it, the post-close
-     * visual state is a mismatch (top bar visible, but windows at
-     * non-overview positions).
-     *
-     * Steps:
-     *   1. Clear overview state from every window that was in the
-     *      previous snapshot (transform → restored, class removed,
-     *      label dropped).
-     *   2. Re-evaluate `display` per window so the new active
-     *      desktop's windows surface and the rest hide.
-     *   3. Snapshot + lay out the new active desktop's eligible
-     *      windows in the overview grid.
-     *
-     * If the new active desktop has no eligible windows (empty
-     * desktop), the overview just shows the top bar over the dim
-     * backdrop — the user can still pick another desktop or hit
-     * Escape.
-     */
-    relayoutOverviewForActiveDesktop() {
-      for (const [winId, snap] of this.overviewSnapshot) {
-        const w = this.getById(winId);
-        if (w) {
-          w.element.style.transform = snap.transform;
-          w.element.style.transition = snap.transition;
-          w.element.classList.remove("wp-desktop-window--overview");
-        }
-      }
-      for (const label of this.overviewLabels.values()) {
-        label.remove();
-      }
-      this.overviewLabels.clear();
-      this.overviewSnapshot.clear();
-      this.refreshDesktopVisibility();
-      const eligible = this.stack.filter(
-        (w) => w.state !== "minimized" && w.config.desktopId === this.activeDesktopId
-      );
-      if (eligible.length === 0) {
-        return;
-      }
-      for (const w of eligible) {
-        this.overviewSnapshot.set(w.id, {
-          transform: w.element.style.transform || "",
-          transition: w.element.style.transition || ""
-        });
-      }
-      const targetRect = this.desktop.getBoundingClientRect();
-      const layout = computeOverviewLayout(
-        eligible,
-        targetRect,
-        _WindowManager.OVERVIEW_TOP_BAR_RESERVE
-      );
-      for (const item of layout) {
-        const el = item.win.element;
-        el.classList.add("wp-desktop-window--overview");
-        const dx = item.x - el.offsetLeft;
-        const dy = item.y - el.offsetTop;
-        el.style.transform = `translate(${dx}px, ${dy}px) scale(${item.scale})`;
-        const label = this.createOverviewLabel(item);
-        el.insertAdjacentElement("afterend", label);
-        this.overviewLabels.set(item.win.id, label);
-      }
-    }
-    // ==========================================================
-    // Window-arrangement layouts
-    // ==========================================================
-    /**
-     * Cascade-lay-out every eligible window from the top-left of the
-     * desktop area, each offset so previous windows' title bars stay
-     * visible. Mirrors the classic Windows/macOS "cascade windows"
-     * behavior; resets any fullscreen/maximized/minimized state
-     * first so the cascade actually takes effect.
-     *
-     * Eligibility:
-     *   - Not native (OS Settings etc. are pinned)
-     *   - Will be restored from minimized so all windows are visible
-     *
-     * Sizing: uniform — 70% of the desktop area's minor axes, capped
-     * so a 4K screen doesn't produce absurdly large windows. Offset
-     * wraps back to the start after enough steps fit — a 20-window
-     * cascade on a 1080p screen reuses the top-left after ~8 steps.
-     */
-    cascade() {
-      const eligible = this.stack.filter(
-        (w) => w.config.desktopId === this.activeDesktopId
-      );
-      if (eligible.length === 0) {
-        return;
-      }
-      doAction(HOOKS.ARRANGE_CASCADE_STARTING, {
-        windowCount: eligible.length
-      });
-      for (const w of eligible) {
-        if (w.state === "fullscreen") {
-          w.toggleFullscreen();
-        }
-        if (w.state === "maximized") {
-          w.toggleMaximize();
-        }
-        if (w.state === "minimized") {
-          w.restore();
-        }
-      }
-      const rect = this.desktop.getBoundingClientRect();
-      const padding = 30;
-      const offset = 30;
-      const targetWidth = Math.min(Math.round(rect.width * 0.7), 1100);
-      const targetHeight = Math.min(Math.round(rect.height * 0.75), 750);
-      const maxStepsX = Math.max(
-        1,
-        Math.floor((rect.width - targetWidth - padding) / offset)
-      );
-      const maxStepsY = Math.max(
-        1,
-        Math.floor((rect.height - targetHeight - padding) / offset)
-      );
-      const maxSteps = Math.min(maxStepsX, maxStepsY);
-      eligible.forEach((w, i) => {
-        const step2 = i % Math.max(1, maxSteps);
-        w.element.style.left = `${padding + step2 * offset}px`;
-        w.element.style.top = `${padding + step2 * offset}px`;
-        w.element.style.width = `${targetWidth}px`;
-        w.element.style.height = `${targetHeight}px`;
-      });
-      const focused = this.getFocused();
-      if (focused) {
-        this.focus(focused);
-      }
-      document.dispatchEvent(
-        new CustomEvent("wp-desktop-window-changed", {
-          detail: { reason: "cascade" }
-        })
-      );
-      doAction(HOOKS.ARRANGE_CASCADE_APPLIED, {
-        windowCount: eligible.length
-      });
-    }
-    /**
-     * Tile every eligible window into a uniform grid that covers the
-     * desktop area — "Show all windows," macOS-style. The grid
-     * dimensions (cols × rows) are picked to maximise individual
-     * window size while still fitting all of them, by matching the
-     * cell aspect ratio to the desktop area's aspect ratio.
-     *
-     * Algorithm: among every (cols, rows) pair where `cols * rows ≥ N`,
-     * pick the one whose cell aspect ratio (areaWidth/cols : areaHeight/rows)
-     * is closest to the area's aspect ratio. Ties broken by fewer empty
-     * cells. Capped at 6 cols / 6 rows so a runaway window count
-     * doesn't produce postage-stamp tiles.
-     */
-    tile() {
-      const eligible = this.stack.filter(
-        (w) => w.config.desktopId === this.activeDesktopId
-      );
-      if (eligible.length === 0) {
-        return;
-      }
-      for (const w of eligible) {
-        if (w.state === "fullscreen") {
-          w.toggleFullscreen();
-        }
-        if (w.state === "maximized") {
-          w.toggleMaximize();
-        }
-        if (w.state === "minimized") {
-          w.restore();
-        }
-      }
-      const rect = this.desktop.getBoundingClientRect();
-      const auto = pickGridDimensions(
-        eligible.length,
-        rect.width,
-        rect.height
-      );
-      const filtered = applyFilters(
-        HOOKS.ARRANGE_TILE_DIMENSIONS,
-        auto,
-        {
-          windowCount: eligible.length,
-          areaWidth: rect.width,
-          areaHeight: rect.height
-        }
-      );
-      const { cols, rows } = isValidGrid(filtered, eligible.length) ? { cols: Math.floor(filtered.cols), rows: Math.floor(filtered.rows) } : auto;
-      doAction(HOOKS.ARRANGE_TILE_STARTING, {
-        windowCount: eligible.length,
-        cols,
-        rows
-      });
-      const padding = 16;
-      const gap = 12;
-      const cellWidth = Math.floor(
-        (rect.width - padding * 2 - gap * (cols - 1)) / cols
-      );
-      const cellHeight = Math.floor(
-        (rect.height - padding * 2 - gap * (rows - 1)) / rows
-      );
-      eligible.forEach((w, i) => {
-        const col = i % cols;
-        const row = Math.floor(i / cols);
-        w.element.style.left = `${padding + col * (cellWidth + gap)}px`;
-        w.element.style.top = `${padding + row * (cellHeight + gap)}px`;
-        w.element.style.width = `${cellWidth}px`;
-        w.element.style.height = `${cellHeight}px`;
-      });
-      const focused = this.getFocused();
-      if (focused) {
-        this.focus(focused);
-      }
-      document.dispatchEvent(
-        new CustomEvent("wp-desktop-window-changed", {
-          detail: { reason: "tile" }
-        })
-      );
-      doAction(HOOKS.ARRANGE_TILE_APPLIED, {
-        windowCount: eligible.length,
-        cols,
-        rows
-      });
-    }
-    /** Public read for UI (admin-bar checkbox initial state). */
-    isSnapEnabled() {
-      return this.snapEnabled;
-    }
-    /**
-     * Toggle (or set) the snap-to-grid preference. Persisted via
-     * localStorage and broadcast through {@link HOOKS.ARRANGE_SNAP_CHANGED}
-     * so any external UI mirroring the state stays in sync.
-     */
-    setSnapEnabled(enabled) {
-      if (this.snapEnabled === enabled) {
-        return;
-      }
-      this.snapEnabled = enabled;
-      try {
-        window.localStorage.setItem(
-          _WindowManager.SNAP_STORAGE_KEY,
-          enabled ? "1" : "0"
-        );
-      } catch {
-      }
-      doAction(HOOKS.ARRANGE_SNAP_CHANGED, { enabled });
-    }
-    /**
-     * Resolve the live snap config for a window's drag/resize loop.
-     * Cell sizes scale with the desktop area so a small viewport gets
-     * a smaller grid (~12 cols × 8 rows) and a 4K monitor gets a
-     * proportionally finer one.
-     *
-     * Each call hits `getBoundingClientRect`, so callers should cache
-     * the result for the duration of a single drag rather than calling
-     * once per pointermove.
-     */
-    getSnapConfig() {
-      if (!this.snapEnabled) {
-        return { enabled: false, cellWidth: 0, cellHeight: 0 };
-      }
-      const rect = this.desktop.getBoundingClientRect();
-      const targetCols = rect.width >= rect.height ? 12 : 8;
-      const auto = {
-        cellWidth: Math.max(
-          40,
-          Math.round(rect.width / targetCols)
-        ),
-        cellHeight: Math.max(
-          40,
-          Math.round(rect.height / Math.round(targetCols * 0.66))
-        )
-      };
-      const filtered = applyFilters(
-        HOOKS.ARRANGE_SNAP_CELL_SIZE,
-        auto,
-        { areaWidth: rect.width, areaHeight: rect.height }
-      );
-      const { cellWidth, cellHeight } = isValidCellSize(filtered) ? filtered : auto;
-      return { enabled: true, cellWidth, cellHeight };
-    }
-    /**
-     * Enter overview mode — animate every eligible window to a
-     * grid thumbnail layout. Clicking a thumbnail exits overview
-     * and fullscreens the clicked window. Pressing Escape or
-     * clicking the backdrop exits without selection.
-     */
-    enterOverview() {
-      if (this.overviewActive) {
-        return;
-      }
-      const eligible = this.stack.filter(
-        (w) => w.state !== "minimized" && w.config.desktopId === this.activeDesktopId
-      );
-      this.overviewActive = true;
-      doAction(HOOKS.OVERVIEW_ENTERING, {});
-      this.overviewSnapshot.clear();
-      for (const w of eligible) {
-        this.overviewSnapshot.set(w.id, {
-          transform: w.element.style.transform || "",
-          transition: w.element.style.transition || ""
-        });
-      }
-      for (const w of eligible) {
-        if (w.state === "fullscreen") {
-          w.toggleFullscreen();
-        }
-      }
-      const dockEl = document.getElementById("wp-desktop-dock");
-      const dockWidth = dockEl ? dockEl.offsetWidth : 0;
-      const currentRect = this.desktop.getBoundingClientRect();
-      const targetRect = new DOMRect(
-        currentRect.left - dockWidth,
-        currentRect.top,
-        currentRect.width + dockWidth,
-        currentRect.height
-      );
-      this.desktop.classList.add("wp-desktop-area--overview");
-      const shell = document.getElementById("wp-desktop-shell");
-      shell?.classList.add("wp-desktop-shell--overview");
-      this.overviewTopBar = this.buildOverviewTopBar();
-      this.desktop.appendChild(this.overviewTopBar);
-      const layout = computeOverviewLayout(
-        eligible,
-        targetRect,
-        _WindowManager.OVERVIEW_TOP_BAR_RESERVE
-      );
-      this.overviewLabels.clear();
-      for (const item of layout) {
-        const el = item.win.element;
-        el.classList.add("wp-desktop-window--overview");
-        const dx = item.x - el.offsetLeft;
-        const dy = item.y - el.offsetTop;
-        el.style.transform = `translate(${dx}px, ${dy}px) scale(${item.scale})`;
-        const label = this.createOverviewLabel(item);
-        el.insertAdjacentElement("afterend", label);
-        this.overviewLabels.set(item.win.id, label);
-      }
-      const pressTargetForEvent = (e) => {
-        const target = e.target;
-        const winEl = target?.closest(
-          ".wp-desktop-window--overview"
-        );
-        if (winEl) {
-          return {
-            id: winEl.id.replace(/^wp-window-/, ""),
-            element: winEl
-          };
-        }
-        if (target === this.desktop) {
-          return { id: "backdrop", element: this.desktop };
-        }
-        return null;
-      };
-      this.overviewPointerDownHandler = (e) => {
-        if (e.button !== 0) {
-          this.overviewPressTarget = null;
-          return;
-        }
-        this.overviewPressTarget = pressTargetForEvent(e);
-        if (this.overviewPressTarget) {
-          e.preventDefault();
-          e.stopPropagation();
-        }
-      };
-      this.overviewPointerUpHandler = (e) => {
-        if (e.button !== 0) {
-          return;
-        }
-        const pressed = this.overviewPressTarget;
-        this.overviewPressTarget = null;
-        if (!pressed) {
-          return;
-        }
-        const rect = pressed.element.getBoundingClientRect();
-        const inside = e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom;
-        if (!inside) {
-          return;
-        }
-        e.preventDefault();
-        e.stopPropagation();
-        if (pressed.id === "backdrop") {
-          this.exitOverview();
-          return;
-        }
-        const selected = this.getById(pressed.id);
-        doAction(HOOKS.OVERVIEW_WINDOW_CLICK, { windowId: pressed.id });
-        this.exitOverview(selected, true);
-      };
-      this.overviewKeyHandler = (e) => {
-        if (e.key === "Escape") {
-          this.exitOverview();
-        }
-      };
-      this.desktop.addEventListener(
-        "pointerdown",
-        this.overviewPointerDownHandler,
-        true
-      );
-      this.desktop.addEventListener(
-        "pointerup",
-        this.overviewPointerUpHandler,
-        true
-      );
-      this.overviewClickBlocker = (e) => {
-        const target = e.target;
-        if (target?.closest(".wp-desktop-overview-top-bar")) {
-          return;
-        }
-        e.stopPropagation();
-        e.preventDefault();
-      };
-      this.desktop.addEventListener(
-        "click",
-        this.overviewClickBlocker,
-        true
-      );
-      document.addEventListener("keydown", this.overviewKeyHandler);
-      this.lastOverviewHoverId = null;
-      this.overviewMouseHandler = (e) => {
-        const target = e.target;
-        const winEl = target?.closest(
-          ".wp-desktop-window--overview"
-        );
-        const newId = winEl ? winEl.id.replace(/^wp-window-/, "") : null;
-        if (newId === this.lastOverviewHoverId) {
-          return;
-        }
-        if (this.lastOverviewHoverId) {
-          doAction(HOOKS.OVERVIEW_WINDOW_UNHOVER, {
-            windowId: this.lastOverviewHoverId
-          });
-        }
-        if (newId) {
-          doAction(HOOKS.OVERVIEW_WINDOW_HOVER, { windowId: newId });
-        }
-        this.lastOverviewHoverId = newId;
-      };
-      this.desktop.addEventListener("mouseover", this.overviewMouseHandler);
-      window.setTimeout(() => {
-        if (this.overviewActive) {
-          doAction(HOOKS.OVERVIEW_ENTERED, {});
-        }
-      }, 300);
-    }
-    /**
-     * Build the floating caption that sits above an overview
-     * thumbnail. Carries the window's icon + title, plus a secondary
-     * line with the external-tab count when the window has any — so
-     * users can tell at a glance "oh this one has 3 sub-tabs open"
-     * without expanding a thumbnail.
-     *
-     * Label sits OUTSIDE the window's transform (as a sibling in the
-     * desktop area), so scaling the thumbnail has no effect on its
-     * text size.
-     */
-    /**
-     * Build the overview top bar — a tile per virtual desktop plus a
-     * trailing "+" tile that creates a new one. Each tile carries:
-     *
-     *  - the desktop's label
-     *  - a window-count meta line ("3 windows")
-     *  - an active-state border when the desktop is the current one
-     *  - a per-tile close button (X) revealed on hover, hidden when
-     *    only one desktop exists (you can't close the last one)
-     *
-     * Tile click → switch + exit overview onto that desktop. The plus
-     * tile creates a new desktop, switches to it, and exits. The X on
-     * a tile closes that desktop (without exiting overview, so the
-     * user can keep reorganising).
-     */
-    buildOverviewTopBar() {
-      const bar = document.createElement("div");
-      bar.className = "wp-desktop-overview-top-bar";
-      const list = document.createElement("div");
-      list.className = "wp-desktop-overview-top-bar__list";
-      bar.appendChild(list);
-      for (const d of this.desktops) {
-        list.appendChild(this.buildDesktopTile(d));
-      }
-      const addTile = document.createElement("button");
-      addTile.type = "button";
-      addTile.className = "wp-desktop-overview-top-bar__tile wp-desktop-overview-top-bar__tile--add";
-      addTile.setAttribute("aria-label", __("Add new desktop"));
-      addTile.innerHTML = '<span class="wp-desktop-overview-top-bar__tile-plus" aria-hidden="true">+</span>';
-      addTile.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const created = this.createDesktop();
-        this.exitOverviewToDesktop(created.id);
-      });
-      list.appendChild(addTile);
-      return bar;
-    }
-    /** Build a single desktop tile for the overview top bar. */
-    buildDesktopTile(d) {
-      const tile = document.createElement("button");
-      tile.type = "button";
-      tile.className = "wp-desktop-overview-top-bar__tile";
-      tile.dataset.desktopId = d.id;
-      if (d.id === this.activeDesktopId) {
-        tile.classList.add(
-          "wp-desktop-overview-top-bar__tile--active"
-        );
-      }
-      tile.setAttribute("aria-label", sprintf(__("Switch to %s"), d.label));
-      const preview = document.createElement("span");
-      preview.className = "wp-desktop-overview-top-bar__tile-preview";
-      const count = this.stack.filter(
-        (w) => w.config.desktopId === d.id
-      ).length;
-      if (count > 0) {
-        const badge = document.createElement("span");
-        badge.className = "wp-desktop-overview-top-bar__tile-count";
-        badge.textContent = String(count);
-        preview.appendChild(badge);
-      }
-      tile.appendChild(preview);
-      const label = document.createElement("span");
-      label.className = "wp-desktop-overview-top-bar__tile-label";
-      label.textContent = d.label;
-      tile.appendChild(label);
-      const closeBtn = document.createElement("span");
-      closeBtn.className = "wp-desktop-overview-top-bar__tile-close";
-      closeBtn.setAttribute("role", "button");
-      closeBtn.setAttribute("tabindex", "0");
-      closeBtn.setAttribute("aria-label", sprintf(__("Close %s"), d.label));
-      closeBtn.innerHTML = '<svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
-      closeBtn.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        this.closeDesktop(d.id);
-        this.refreshOverviewTopBar();
-      });
-      tile.appendChild(closeBtn);
-      tile.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        this.exitOverviewToDesktop(d.id);
-      });
-      return tile;
-    }
-    /**
-     * Re-render the top bar in place. Called after any operation that
-     * mutates the desktop list (create, close) so the bar reflects
-     * the new state without a full overview exit/re-enter cycle.
-     */
-    refreshOverviewTopBar() {
-      if (!this.overviewTopBar) {
-        return;
-      }
-      const fresh = this.buildOverviewTopBar();
-      this.overviewTopBar.replaceWith(fresh);
-      this.overviewTopBar = fresh;
-    }
-    /**
-     * Switch to the given desktop, then exit overview without a
-     * specific window selection. Used by top-bar tile clicks and the
-     * post-create flow.
-     */
-    exitOverviewToDesktop(desktopId) {
-      this.switchDesktop(desktopId);
-      this.exitOverview();
-    }
-    createOverviewLabel(item) {
-      const label = document.createElement("div");
-      label.className = "wp-desktop-overview-label";
-      label.dataset.windowId = item.win.id;
-      const thumbW = item.win.element.offsetWidth * item.scale;
-      label.style.left = `${item.x}px`;
-      label.style.top = `${item.y - 34}px`;
-      label.style.width = `${thumbW}px`;
-      const iconClass = item.win.config.icon || "dashicons-admin-generic";
-      const icon = document.createElement("span");
-      icon.className = `wp-desktop-overview-label__icon dashicons ${iconClass}`;
-      icon.setAttribute("aria-hidden", "true");
-      label.appendChild(icon);
-      const title = document.createElement("span");
-      title.className = "wp-desktop-overview-label__title";
-      title.textContent = item.win.config.title;
-      label.appendChild(title);
-      const tabCount = item.win.getExternalTabCount();
-      if (tabCount > 0) {
-        const meta = document.createElement("span");
-        meta.className = "wp-desktop-overview-label__meta";
-        meta.textContent = sprintf(
-          // translators: %d is the number of external sub-tabs open on this window.
-          _n("· %d open tab", "· %d open tabs", tabCount),
-          tabCount
-        );
-        label.appendChild(meta);
-      }
-      return label;
-    }
-    /**
-     * Exit overview mode. When `selected` is given and `maximize` is
-     * true, the clicked window animates directly from its grid
-     * thumbnail position to maximized bounds — one smooth pass,
-     * no back-to-original-then-forward-to-maximized round trip.
-     *
-     * The trick: the overview transforms are cleared for every
-     * window (transform → ''), which starts a transition on transform.
-     * For the selected window we ALSO call `maximize()` in the same
-     * frame, which changes `left/top/width/height` to cover the
-     * desktop area. Because the base window CSS transitions both
-     * `transform` AND those four geometry properties, the two
-     * transitions run as one composite 280 ms animation: the window
-     * lerps from scaled-grid-position straight to maximized-bounds.
-     */
-    exitOverview(selected, maximize = false) {
-      if (!this.overviewActive) {
-        return;
-      }
-      this.overviewActive = false;
-      doAction(HOOKS.OVERVIEW_EXITING, {
-        windowId: selected && maximize ? selected.id : void 0,
-        reason: selected && maximize ? "select" : "cancel"
-      });
-      this.desktop.classList.remove("wp-desktop-area--overview");
-      const shell = document.getElementById("wp-desktop-shell");
-      shell?.classList.remove("wp-desktop-shell--overview");
-      for (const [id, snap] of this.overviewSnapshot) {
-        const w = this.getById(id);
-        if (!w) {
-          continue;
-        }
-        w.element.style.transform = snap.transform;
-      }
-      if (selected && maximize) {
-        this.focus(selected);
-        selected.maximize();
-      }
-      for (const label of this.overviewLabels.values()) {
-        label.classList.add("wp-desktop-overview-label--out");
-      }
-      if (this.overviewTopBar) {
-        this.overviewTopBar.classList.add(
-          "wp-desktop-overview-top-bar--out"
-        );
-      }
-      const ANIMATION_MS = 280;
-      window.setTimeout(() => {
-        for (const w of this.stack) {
-          w.element.classList.remove("wp-desktop-window--overview");
-        }
-        for (const label of this.overviewLabels.values()) {
-          label.remove();
-        }
-        this.overviewLabels.clear();
-        this.overviewSnapshot.clear();
-        if (this.overviewTopBar) {
-          this.overviewTopBar.remove();
-          this.overviewTopBar = null;
-        }
-        if (this.overviewClickBlocker) {
-          this.desktop.removeEventListener(
-            "click",
-            this.overviewClickBlocker,
-            true
-          );
-          this.overviewClickBlocker = null;
-        }
-        doAction(HOOKS.OVERVIEW_EXITED, {
-          windowId: selected && maximize ? selected.id : void 0,
-          reason: selected && maximize ? "select" : "cancel"
-        });
-      }, ANIMATION_MS);
-      if (this.overviewPointerDownHandler) {
-        this.desktop.removeEventListener(
-          "pointerdown",
-          this.overviewPointerDownHandler,
-          true
-        );
-        this.overviewPointerDownHandler = null;
-      }
-      if (this.overviewPointerUpHandler) {
-        this.desktop.removeEventListener(
-          "pointerup",
-          this.overviewPointerUpHandler,
-          true
-        );
-        this.overviewPointerUpHandler = null;
-      }
-      this.overviewPressTarget = null;
-      if (this.overviewKeyHandler) {
-        document.removeEventListener("keydown", this.overviewKeyHandler);
-        this.overviewKeyHandler = null;
-      }
-      if (this.overviewMouseHandler) {
-        this.desktop.removeEventListener(
-          "mouseover",
-          this.overviewMouseHandler
-        );
-        this.overviewMouseHandler = null;
-      }
-      if (this.lastOverviewHoverId) {
-        doAction(HOOKS.OVERVIEW_WINDOW_UNHOVER, {
-          windowId: this.lastOverviewHoverId
-        });
-        this.lastOverviewHoverId = null;
-      }
-    }
-    /**
-     * Serialize the current window stack for session persistence.
-     *
-     * Order in the returned `windows` array mirrors z-order (earliest
-     * opened / lowest-z first, focused last) so restoring preserves the
-     * stacking the user left behind.
-     */
-    snapshot() {
-      const focused = this.getFocused();
-      const persistable = this.stack.filter((w) => !w.config.native);
-      const windows = persistable.map((w) => {
-        const snap = w.getSnapshot();
-        const externalTabs = w.getExternalTabsSnapshot();
-        return {
-          id: w.id,
-          baseId: w.config.baseId || w.id,
-          desktopId: w.config.desktopId || this.activeDesktopId,
-          url: w.getCurrentUrl(),
-          title: w.config.title,
-          icon: w.config.icon,
-          state: snap.state,
-          x: snap.x,
-          y: snap.y,
-          width: snap.width,
-          height: snap.height,
-          ...externalTabs.length > 0 ? { externalTabs } : {}
-        };
-      });
-      const focusedId = focused && !focused.config.native ? focused.id : "";
-      return {
-        windows,
-        desktops: this.getDesktops(),
-        activeDesktop: this.activeDesktopId,
-        focused: focusedId,
-        updated: Math.floor(Date.now() / 1e3)
-      };
-    }
-    /**
-     * Replace the in-memory desktops list with a server-restored
-     * snapshot. Called once during shell boot, BEFORE any windows are
-     * recreated, so the per-window `desktopId` assignments line up
-     * with desktop ids that actually exist.
-     *
-     * Defends against an empty list — the shell can't function with
-     * zero desktops, so an empty payload falls back to the default.
-     * The seq counter advances past the highest numeric suffix in
-     * the restored list so newly created desktops don't collide.
-     */
-    seedDesktops(desktops, activeDesktopId) {
-      if (desktops.length === 0) {
-        return;
-      }
-      this.desktops = desktops.map((d) => ({ ...d }));
-      this.activeDesktopId = desktops.some((d) => d.id === activeDesktopId) ? activeDesktopId : desktops[0].id;
-      let highest = 0;
-      for (const d of desktops) {
-        const match = d.id.match(/^desktop-(\d+)$/);
-        if (match) {
-          const n = parseInt(match[1], 10);
-          if (Number.isFinite(n) && n > highest) {
-            highest = n;
-          }
-        }
-      }
-      this.desktopSeq = Math.max(this.desktopSeq, highest);
-    }
-  };
-  _WindowManager.SNAP_STORAGE_KEY = "wp-desktop-snap-to-grid";
-  _WindowManager.OVERVIEW_TOP_BAR_RESERVE = 120;
-  let WindowManager = _WindowManager;
   function isValidGrid(candidate, windowCount) {
     if (!candidate || typeof candidate !== "object") {
       return false;
@@ -4058,6 +2739,1079 @@ var wpDesktop = function(exports) {
       };
     });
   }
+  const OVERVIEW_TOP_BAR_RESERVE = 120;
+  function enterOverview(mgr) {
+    if (mgr._overviewActive) {
+      return;
+    }
+    const eligible = mgr._stack.filter(
+      (w) => w.state !== "minimized" && w.config.desktopId === mgr._activeDesktopId
+    );
+    mgr._overviewActive = true;
+    doAction(HOOKS.OVERVIEW_ENTERING, {});
+    mgr._overviewSnapshot.clear();
+    for (const w of eligible) {
+      mgr._overviewSnapshot.set(w.id, {
+        transform: w.element.style.transform || "",
+        transition: w.element.style.transition || ""
+      });
+    }
+    for (const w of eligible) {
+      if (w.state === "fullscreen") {
+        w.toggleFullscreen();
+      }
+    }
+    const dockEl = document.getElementById("wp-desktop-dock");
+    const dockWidth = dockEl ? dockEl.offsetWidth : 0;
+    const currentRect = mgr._desktop.getBoundingClientRect();
+    const targetRect = new DOMRect(
+      currentRect.left - dockWidth,
+      currentRect.top,
+      currentRect.width + dockWidth,
+      currentRect.height
+    );
+    mgr._desktop.classList.add("wp-desktop-area--overview");
+    const shell = document.getElementById("wp-desktop-shell");
+    shell?.classList.add("wp-desktop-shell--overview");
+    mgr._overviewTopBar = buildOverviewTopBar(mgr);
+    mgr._desktop.appendChild(mgr._overviewTopBar);
+    const layout = computeOverviewLayout(
+      eligible,
+      targetRect,
+      OVERVIEW_TOP_BAR_RESERVE
+    );
+    mgr._overviewLabels.clear();
+    for (const item of layout) {
+      const el = item.win.element;
+      el.classList.add("wp-desktop-window--overview");
+      const dx = item.x - el.offsetLeft;
+      const dy = item.y - el.offsetTop;
+      el.style.transform = `translate(${dx}px, ${dy}px) scale(${item.scale})`;
+      const label = createOverviewLabel(item);
+      el.insertAdjacentElement("afterend", label);
+      mgr._overviewLabels.set(item.win.id, label);
+    }
+    const pressTargetForEvent = (e) => {
+      const target = e.target;
+      const winEl = target?.closest(
+        ".wp-desktop-window--overview"
+      );
+      if (winEl) {
+        return {
+          id: winEl.id.replace(/^wp-window-/, ""),
+          element: winEl
+        };
+      }
+      if (target === mgr._desktop) {
+        return { id: "backdrop", element: mgr._desktop };
+      }
+      return null;
+    };
+    mgr._overviewPointerDownHandler = (e) => {
+      if (e.button !== 0) {
+        mgr._overviewPressTarget = null;
+        return;
+      }
+      mgr._overviewPressTarget = pressTargetForEvent(e);
+      if (mgr._overviewPressTarget) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+    mgr._overviewPointerUpHandler = (e) => {
+      if (e.button !== 0) {
+        return;
+      }
+      const pressed = mgr._overviewPressTarget;
+      mgr._overviewPressTarget = null;
+      if (!pressed) {
+        return;
+      }
+      const rect = pressed.element.getBoundingClientRect();
+      const inside = e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom;
+      if (!inside) {
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      if (pressed.id === "backdrop") {
+        exitOverview(mgr);
+        return;
+      }
+      const selected = mgr.getById(pressed.id);
+      doAction(HOOKS.OVERVIEW_WINDOW_CLICK, { windowId: pressed.id });
+      exitOverview(mgr, selected, true);
+    };
+    mgr._overviewKeyHandler = (e) => {
+      if (e.key === "Escape") {
+        exitOverview(mgr);
+      }
+    };
+    mgr._desktop.addEventListener(
+      "pointerdown",
+      mgr._overviewPointerDownHandler,
+      true
+    );
+    mgr._desktop.addEventListener(
+      "pointerup",
+      mgr._overviewPointerUpHandler,
+      true
+    );
+    mgr._overviewClickBlocker = (e) => {
+      const target = e.target;
+      if (target?.closest(".wp-desktop-overview-top-bar")) {
+        return;
+      }
+      e.stopPropagation();
+      e.preventDefault();
+    };
+    mgr._desktop.addEventListener(
+      "click",
+      mgr._overviewClickBlocker,
+      true
+    );
+    document.addEventListener("keydown", mgr._overviewKeyHandler);
+    mgr._lastOverviewHoverId = null;
+    mgr._overviewMouseHandler = (e) => {
+      const target = e.target;
+      const winEl = target?.closest(
+        ".wp-desktop-window--overview"
+      );
+      const newId = winEl ? winEl.id.replace(/^wp-window-/, "") : null;
+      if (newId === mgr._lastOverviewHoverId) {
+        return;
+      }
+      if (mgr._lastOverviewHoverId) {
+        doAction(HOOKS.OVERVIEW_WINDOW_UNHOVER, {
+          windowId: mgr._lastOverviewHoverId
+        });
+      }
+      if (newId) {
+        doAction(HOOKS.OVERVIEW_WINDOW_HOVER, { windowId: newId });
+      }
+      mgr._lastOverviewHoverId = newId;
+    };
+    mgr._desktop.addEventListener("mouseover", mgr._overviewMouseHandler);
+    window.setTimeout(() => {
+      if (mgr._overviewActive) {
+        doAction(HOOKS.OVERVIEW_ENTERED, {});
+      }
+    }, 300);
+  }
+  function buildOverviewTopBar(mgr) {
+    const bar = document.createElement("div");
+    bar.className = "wp-desktop-overview-top-bar";
+    const list = document.createElement("div");
+    list.className = "wp-desktop-overview-top-bar__list";
+    bar.appendChild(list);
+    for (const d of mgr._desktops) {
+      list.appendChild(buildDesktopTile(mgr, d));
+    }
+    const addTile = document.createElement("button");
+    addTile.type = "button";
+    addTile.className = "wp-desktop-overview-top-bar__tile wp-desktop-overview-top-bar__tile--add";
+    addTile.setAttribute("aria-label", __("Add new desktop"));
+    addTile.innerHTML = '<span class="wp-desktop-overview-top-bar__tile-plus" aria-hidden="true">+</span>';
+    addTile.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const created = createDesktop(mgr);
+      exitOverviewToDesktop(mgr, created.id);
+    });
+    list.appendChild(addTile);
+    return bar;
+  }
+  function buildDesktopTile(mgr, d) {
+    const tile2 = document.createElement("button");
+    tile2.type = "button";
+    tile2.className = "wp-desktop-overview-top-bar__tile";
+    tile2.dataset.desktopId = d.id;
+    if (d.id === mgr._activeDesktopId) {
+      tile2.classList.add("wp-desktop-overview-top-bar__tile--active");
+    }
+    tile2.setAttribute("aria-label", sprintf(__("Switch to %s"), d.label));
+    const preview = document.createElement("span");
+    preview.className = "wp-desktop-overview-top-bar__tile-preview";
+    const count = mgr._stack.filter(
+      (w) => w.config.desktopId === d.id
+    ).length;
+    if (count > 0) {
+      const badge = document.createElement("span");
+      badge.className = "wp-desktop-overview-top-bar__tile-count";
+      badge.textContent = String(count);
+      preview.appendChild(badge);
+    }
+    tile2.appendChild(preview);
+    const label = document.createElement("span");
+    label.className = "wp-desktop-overview-top-bar__tile-label";
+    label.textContent = d.label;
+    tile2.appendChild(label);
+    const closeBtn = document.createElement("span");
+    closeBtn.className = "wp-desktop-overview-top-bar__tile-close";
+    closeBtn.setAttribute("role", "button");
+    closeBtn.setAttribute("tabindex", "0");
+    closeBtn.setAttribute("aria-label", sprintf(__("Close %s"), d.label));
+    closeBtn.innerHTML = '<svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
+    closeBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      closeDesktop(mgr, d.id);
+      refreshOverviewTopBar(mgr);
+    });
+    tile2.appendChild(closeBtn);
+    tile2.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      exitOverviewToDesktop(mgr, d.id);
+    });
+    return tile2;
+  }
+  function refreshOverviewTopBar(mgr) {
+    if (!mgr._overviewTopBar) {
+      return;
+    }
+    const fresh = buildOverviewTopBar(mgr);
+    mgr._overviewTopBar.replaceWith(fresh);
+    mgr._overviewTopBar = fresh;
+  }
+  function exitOverviewToDesktop(mgr, desktopId) {
+    switchDesktop(mgr, desktopId);
+    exitOverview(mgr);
+  }
+  function createOverviewLabel(item) {
+    const label = document.createElement("div");
+    label.className = "wp-desktop-overview-label";
+    label.dataset.windowId = item.win.id;
+    const thumbW = item.win.element.offsetWidth * item.scale;
+    label.style.left = `${item.x}px`;
+    label.style.top = `${item.y - 34}px`;
+    label.style.width = `${thumbW}px`;
+    const iconClass = item.win.config.icon || "dashicons-admin-generic";
+    const icon = document.createElement("span");
+    icon.className = `wp-desktop-overview-label__icon dashicons ${iconClass}`;
+    icon.setAttribute("aria-hidden", "true");
+    label.appendChild(icon);
+    const title = document.createElement("span");
+    title.className = "wp-desktop-overview-label__title";
+    title.textContent = item.win.config.title;
+    label.appendChild(title);
+    const tabCount = item.win.getExternalTabCount();
+    if (tabCount > 0) {
+      const meta = document.createElement("span");
+      meta.className = "wp-desktop-overview-label__meta";
+      meta.textContent = sprintf(
+        // translators: %d is the number of external sub-tabs open on this window.
+        _n("· %d open tab", "· %d open tabs", tabCount),
+        tabCount
+      );
+      label.appendChild(meta);
+    }
+    return label;
+  }
+  function exitOverview(mgr, selected, maximize = false) {
+    if (!mgr._overviewActive) {
+      return;
+    }
+    mgr._overviewActive = false;
+    doAction(HOOKS.OVERVIEW_EXITING, {
+      windowId: selected && maximize ? selected.id : void 0,
+      reason: selected && maximize ? "select" : "cancel"
+    });
+    mgr._desktop.classList.remove("wp-desktop-area--overview");
+    const shell = document.getElementById("wp-desktop-shell");
+    shell?.classList.remove("wp-desktop-shell--overview");
+    for (const [id, snap] of mgr._overviewSnapshot) {
+      const w = mgr.getById(id);
+      if (!w) {
+        continue;
+      }
+      w.element.style.transform = snap.transform;
+    }
+    if (selected && maximize) {
+      mgr.focus(selected);
+      selected.maximize();
+    }
+    for (const label of mgr._overviewLabels.values()) {
+      label.classList.add("wp-desktop-overview-label--out");
+    }
+    if (mgr._overviewTopBar) {
+      mgr._overviewTopBar.classList.add(
+        "wp-desktop-overview-top-bar--out"
+      );
+    }
+    const ANIMATION_MS = 280;
+    window.setTimeout(() => {
+      for (const w of mgr._stack) {
+        w.element.classList.remove("wp-desktop-window--overview");
+      }
+      for (const label of mgr._overviewLabels.values()) {
+        label.remove();
+      }
+      mgr._overviewLabels.clear();
+      mgr._overviewSnapshot.clear();
+      if (mgr._overviewTopBar) {
+        mgr._overviewTopBar.remove();
+        mgr._overviewTopBar = null;
+      }
+      if (mgr._overviewClickBlocker) {
+        mgr._desktop.removeEventListener(
+          "click",
+          mgr._overviewClickBlocker,
+          true
+        );
+        mgr._overviewClickBlocker = null;
+      }
+      doAction(HOOKS.OVERVIEW_EXITED, {
+        windowId: selected && maximize ? selected.id : void 0,
+        reason: selected && maximize ? "select" : "cancel"
+      });
+    }, ANIMATION_MS);
+    if (mgr._overviewPointerDownHandler) {
+      mgr._desktop.removeEventListener(
+        "pointerdown",
+        mgr._overviewPointerDownHandler,
+        true
+      );
+      mgr._overviewPointerDownHandler = null;
+    }
+    if (mgr._overviewPointerUpHandler) {
+      mgr._desktop.removeEventListener(
+        "pointerup",
+        mgr._overviewPointerUpHandler,
+        true
+      );
+      mgr._overviewPointerUpHandler = null;
+    }
+    mgr._overviewPressTarget = null;
+    if (mgr._overviewKeyHandler) {
+      document.removeEventListener("keydown", mgr._overviewKeyHandler);
+      mgr._overviewKeyHandler = null;
+    }
+    if (mgr._overviewMouseHandler) {
+      mgr._desktop.removeEventListener(
+        "mouseover",
+        mgr._overviewMouseHandler
+      );
+      mgr._overviewMouseHandler = null;
+    }
+    if (mgr._lastOverviewHoverId) {
+      doAction(HOOKS.OVERVIEW_WINDOW_UNHOVER, {
+        windowId: mgr._lastOverviewHoverId
+      });
+      mgr._lastOverviewHoverId = null;
+    }
+  }
+  function getDesktops(mgr) {
+    return [...mgr._desktops];
+  }
+  function getActiveDesktop(mgr) {
+    const found = mgr._desktops.find((d) => d.id === mgr._activeDesktopId);
+    return found ?? mgr._desktops[0];
+  }
+  function getActiveDesktopId(mgr) {
+    return getActiveDesktop(mgr).id;
+  }
+  function applyDesktopVisibility(mgr, win) {
+    const visible = win.config.desktopId === mgr._activeDesktopId;
+    win.element.style.display = visible ? "" : "none";
+  }
+  function refreshDesktopVisibility(mgr) {
+    for (const w of mgr._stack) {
+      applyDesktopVisibility(mgr, w);
+    }
+  }
+  function createDesktop(mgr) {
+    mgr._desktopSeq++;
+    const desktop = {
+      id: `desktop-${mgr._desktopSeq}`,
+      // translators: %d is the desktop number (e.g., "Desktop 2")
+      label: sprintf(__("Desktop %d"), mgr._desktopSeq)
+    };
+    mgr._desktops.push(desktop);
+    doAction(HOOKS.DESKTOP_CREATED, { desktopId: desktop.id });
+    return desktop;
+  }
+  function switchDesktop(mgr, id) {
+    if (id === mgr._activeDesktopId) {
+      return;
+    }
+    if (!mgr._desktops.some((d) => d.id === id)) {
+      return;
+    }
+    const previousId = mgr._activeDesktopId;
+    mgr._activeDesktopId = id;
+    refreshDesktopVisibility(mgr);
+    const topOnNew = [...mgr._stack].reverse().find(
+      (w) => w.config.desktopId === id && w.state !== "minimized"
+    );
+    if (topOnNew) {
+      mgr.focus(topOnNew);
+    }
+    doAction(HOOKS.DESKTOP_SWITCHED, {
+      from: previousId,
+      to: id
+    });
+  }
+  function closeDesktop(mgr, id) {
+    if (mgr._desktops.length <= 1) {
+      return;
+    }
+    const idx = mgr._desktops.findIndex((d) => d.id === id);
+    if (idx === -1) {
+      return;
+    }
+    const survivorIdx = idx > 0 ? idx - 1 : 1;
+    const survivor = mgr._desktops[survivorIdx];
+    for (const w of mgr._stack) {
+      if (w.config.desktopId === id) {
+        w.config.desktopId = survivor.id;
+      }
+    }
+    mgr._desktops.splice(idx, 1);
+    const wasActive = mgr._activeDesktopId === id;
+    if (wasActive) {
+      mgr._activeDesktopId = survivor.id;
+    }
+    if (mgr._overviewActive) {
+      relayoutOverviewForActiveDesktop(mgr);
+    } else {
+      refreshDesktopVisibility(mgr);
+    }
+    doAction(HOOKS.DESKTOP_CLOSED, {
+      desktopId: id,
+      migratedTo: survivor.id
+    });
+  }
+  function relayoutOverviewForActiveDesktop(mgr) {
+    for (const [winId, snap] of mgr._overviewSnapshot) {
+      const w = mgr.getById(winId);
+      if (w) {
+        w.element.style.transform = snap.transform;
+        w.element.style.transition = snap.transition;
+        w.element.classList.remove("wp-desktop-window--overview");
+      }
+    }
+    for (const label of mgr._overviewLabels.values()) {
+      label.remove();
+    }
+    mgr._overviewLabels.clear();
+    mgr._overviewSnapshot.clear();
+    refreshDesktopVisibility(mgr);
+    const eligible = mgr._stack.filter(
+      (w) => w.state !== "minimized" && w.config.desktopId === mgr._activeDesktopId
+    );
+    if (eligible.length === 0) {
+      return;
+    }
+    for (const w of eligible) {
+      mgr._overviewSnapshot.set(w.id, {
+        transform: w.element.style.transform || "",
+        transition: w.element.style.transition || ""
+      });
+    }
+    const targetRect = mgr._desktop.getBoundingClientRect();
+    const layout = computeOverviewLayout(
+      eligible,
+      targetRect,
+      OVERVIEW_TOP_BAR_RESERVE
+    );
+    for (const item of layout) {
+      const el = item.win.element;
+      el.classList.add("wp-desktop-window--overview");
+      const dx = item.x - el.offsetLeft;
+      const dy = item.y - el.offsetTop;
+      el.style.transform = `translate(${dx}px, ${dy}px) scale(${item.scale})`;
+      const label = createOverviewLabel(item);
+      el.insertAdjacentElement("afterend", label);
+      mgr._overviewLabels.set(item.win.id, label);
+    }
+  }
+  function seedDesktops(mgr, desktops, activeDesktopId) {
+    if (desktops.length === 0) {
+      return;
+    }
+    mgr._desktops = desktops.map((d) => ({ ...d }));
+    mgr._activeDesktopId = desktops.some((d) => d.id === activeDesktopId) ? activeDesktopId : desktops[0].id;
+    let highest = 0;
+    for (const d of desktops) {
+      const match = d.id.match(/^desktop-(\d+)$/);
+      if (match) {
+        const n = parseInt(match[1], 10);
+        if (Number.isFinite(n) && n > highest) {
+          highest = n;
+        }
+      }
+    }
+    mgr._desktopSeq = Math.max(mgr._desktopSeq, highest);
+  }
+  function cascade(mgr) {
+    const eligible = mgr._stack.filter(
+      (w) => w.config.desktopId === mgr._activeDesktopId
+    );
+    if (eligible.length === 0) {
+      return;
+    }
+    doAction(HOOKS.ARRANGE_CASCADE_STARTING, {
+      windowCount: eligible.length
+    });
+    for (const w of eligible) {
+      if (w.state === "fullscreen") {
+        w.toggleFullscreen();
+      }
+      if (w.state === "maximized") {
+        w.toggleMaximize();
+      }
+      if (w.state === "minimized") {
+        w.restore();
+      }
+    }
+    const rect = mgr._desktop.getBoundingClientRect();
+    const padding = 30;
+    const offset = 30;
+    const targetWidth = Math.min(Math.round(rect.width * 0.7), 1100);
+    const targetHeight = Math.min(Math.round(rect.height * 0.75), 750);
+    const maxStepsX = Math.max(
+      1,
+      Math.floor((rect.width - targetWidth - padding) / offset)
+    );
+    const maxStepsY = Math.max(
+      1,
+      Math.floor((rect.height - targetHeight - padding) / offset)
+    );
+    const maxSteps = Math.min(maxStepsX, maxStepsY);
+    eligible.forEach((w, i) => {
+      const step2 = i % Math.max(1, maxSteps);
+      w.element.style.left = `${padding + step2 * offset}px`;
+      w.element.style.top = `${padding + step2 * offset}px`;
+      w.element.style.width = `${targetWidth}px`;
+      w.element.style.height = `${targetHeight}px`;
+    });
+    const focused = mgr.getFocused();
+    if (focused) {
+      mgr.focus(focused);
+    }
+    document.dispatchEvent(
+      new CustomEvent("wp-desktop-window-changed", {
+        detail: { reason: "cascade" }
+      })
+    );
+    doAction(HOOKS.ARRANGE_CASCADE_APPLIED, {
+      windowCount: eligible.length
+    });
+  }
+  function tile(mgr) {
+    const eligible = mgr._stack.filter(
+      (w) => w.config.desktopId === mgr._activeDesktopId
+    );
+    if (eligible.length === 0) {
+      return;
+    }
+    for (const w of eligible) {
+      if (w.state === "fullscreen") {
+        w.toggleFullscreen();
+      }
+      if (w.state === "maximized") {
+        w.toggleMaximize();
+      }
+      if (w.state === "minimized") {
+        w.restore();
+      }
+    }
+    const rect = mgr._desktop.getBoundingClientRect();
+    const auto = pickGridDimensions(
+      eligible.length,
+      rect.width,
+      rect.height
+    );
+    const filtered = applyFilters(
+      HOOKS.ARRANGE_TILE_DIMENSIONS,
+      auto,
+      {
+        windowCount: eligible.length,
+        areaWidth: rect.width,
+        areaHeight: rect.height
+      }
+    );
+    const { cols, rows } = isValidGrid(filtered, eligible.length) ? { cols: Math.floor(filtered.cols), rows: Math.floor(filtered.rows) } : auto;
+    doAction(HOOKS.ARRANGE_TILE_STARTING, {
+      windowCount: eligible.length,
+      cols,
+      rows
+    });
+    const padding = 16;
+    const gap = 12;
+    const cellWidth = Math.floor(
+      (rect.width - padding * 2 - gap * (cols - 1)) / cols
+    );
+    const cellHeight = Math.floor(
+      (rect.height - padding * 2 - gap * (rows - 1)) / rows
+    );
+    eligible.forEach((w, i) => {
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      w.element.style.left = `${padding + col * (cellWidth + gap)}px`;
+      w.element.style.top = `${padding + row * (cellHeight + gap)}px`;
+      w.element.style.width = `${cellWidth}px`;
+      w.element.style.height = `${cellHeight}px`;
+    });
+    const focused = mgr.getFocused();
+    if (focused) {
+      mgr.focus(focused);
+    }
+    document.dispatchEvent(
+      new CustomEvent("wp-desktop-window-changed", {
+        detail: { reason: "tile" }
+      })
+    );
+    doAction(HOOKS.ARRANGE_TILE_APPLIED, {
+      windowCount: eligible.length,
+      cols,
+      rows
+    });
+  }
+  const SNAP_STORAGE_KEY = "wp-desktop-snap-to-grid";
+  function loadSnapEnabled() {
+    try {
+      return window.localStorage.getItem(SNAP_STORAGE_KEY) === "1";
+    } catch {
+      return false;
+    }
+  }
+  function setSnapEnabled(mgr, enabled) {
+    if (mgr._snapEnabled === enabled) {
+      return;
+    }
+    mgr._snapEnabled = enabled;
+    try {
+      window.localStorage.setItem(SNAP_STORAGE_KEY, enabled ? "1" : "0");
+    } catch {
+    }
+    doAction(HOOKS.ARRANGE_SNAP_CHANGED, { enabled });
+  }
+  function getSnapConfig(mgr) {
+    if (!mgr._snapEnabled) {
+      return { enabled: false, cellWidth: 0, cellHeight: 0 };
+    }
+    const rect = mgr._desktop.getBoundingClientRect();
+    const targetCols = rect.width >= rect.height ? 12 : 8;
+    const auto = {
+      cellWidth: Math.max(40, Math.round(rect.width / targetCols)),
+      cellHeight: Math.max(
+        40,
+        Math.round(rect.height / Math.round(targetCols * 0.66))
+      )
+    };
+    const filtered = applyFilters(
+      HOOKS.ARRANGE_SNAP_CELL_SIZE,
+      auto,
+      { areaWidth: rect.width, areaHeight: rect.height }
+    );
+    const { cellWidth, cellHeight } = isValidCellSize(filtered) ? filtered : auto;
+    return { enabled: true, cellWidth, cellHeight };
+  }
+  const BASE_Z_INDEX = 100;
+  const CASCADE_OFFSET = 30;
+  class WindowManager {
+    constructor(desktop) {
+      this._stack = [];
+      this.cascadeIndex = 0;
+      this._desktops = [
+        // translators: default desktop name — "Desktop 1"
+        { id: "desktop-1", label: "Desktop 1" }
+      ];
+      this._activeDesktopId = "desktop-1";
+      this._desktopSeq = 1;
+      this.onToggleStartupRequested = null;
+      this.desktopResizeObserver = null;
+      this._snapEnabled = loadSnapEnabled();
+      this._overviewActive = false;
+      this._overviewSnapshot = /* @__PURE__ */ new Map();
+      this._overviewLabels = /* @__PURE__ */ new Map();
+      this._overviewPointerDownHandler = null;
+      this._overviewPointerUpHandler = null;
+      this._overviewKeyHandler = null;
+      this._overviewPressTarget = null;
+      this._overviewClickBlocker = null;
+      this._overviewTopBar = null;
+      this._overviewMouseHandler = null;
+      this._lastOverviewHoverId = null;
+      this._desktop = desktop;
+      if (typeof ResizeObserver !== "undefined") {
+        this.desktopResizeObserver = new ResizeObserver(
+          () => this.reflowMaximizedWindows()
+        );
+        this.desktopResizeObserver.observe(desktop);
+      }
+      this.installIframeFocusBridge();
+    }
+    /**
+     * Clicks inside an iframe don't cross the browsing-context
+     * boundary — pointerdown / focusin in the iframe's document never
+     * reach the parent. BUT the parent `window` does lose focus,
+     * because focus moves to the iframe's content window.
+     *
+     * We use that signal: listen for `window.blur` on the parent,
+     * check `document.activeElement` — if it's an iframe, walk up to
+     * its owning `.wp-desktop-window`, find the matching Window in
+     * our stack, and focus it. Covers clicks on the primary iframe
+     * AND any external-tab sub-iframes mounted as descendants of the
+     * window element.
+     */
+    installIframeFocusBridge() {
+      window.addEventListener("blur", () => {
+        window.setTimeout(() => {
+          const active2 = this._desktop.ownerDocument?.activeElement ?? null;
+          if (!active2 || active2.tagName !== "IFRAME") {
+            return;
+          }
+          const winEl = active2.closest(
+            ".wp-desktop-window"
+          );
+          if (!winEl) {
+            return;
+          }
+          const id = winEl.id.replace(/^wp-window-/, "");
+          const win = this.getById(id);
+          if (!win) {
+            return;
+          }
+          if (this._overviewActive) {
+            return;
+          }
+          if (this.getFocused() === win) {
+            return;
+          }
+          this.focus(win);
+        }, 0);
+      });
+    }
+    /**
+     * Re-apply maximize bounds to any window currently in
+     * `state === 'maximized'`. Called from the desktop-area
+     * ResizeObserver so the user can shrink the browser window
+     * without the maximized content refusing to follow.
+     */
+    reflowMaximizedWindows() {
+      if (this._overviewActive) {
+        return;
+      }
+      for (const w of this._stack) {
+        if (w.state !== "maximized") {
+          continue;
+        }
+        const parent = w.element.parentElement;
+        if (!parent) {
+          continue;
+        }
+        w.element.style.width = `${parent.clientWidth}px`;
+        w.element.style.height = `${parent.clientHeight}px`;
+      }
+    }
+    /**
+     * Open a new window — or focus an existing one — for the given
+     * page.
+     *
+     * Matches any existing window sharing the same `baseId`
+     * (defaulting to the config's `id`). For singleton pages
+     * (Settings, Dashboard, …) `baseId === id`, so this behaves
+     * exactly like strict id matching. For multi pages, clicking the
+     * dock icon while a window is already open focuses the
+     * most-recent instance rather than creating a twin.
+     *
+     * To force a brand-new instance alongside an existing one, use
+     * {@link openNew}.
+     */
+    open(config) {
+      const baseId = config.baseId || config.id;
+      const existing = this.getByBaseIdOnActiveDesktop(baseId);
+      if (existing) {
+        this.focus(existing);
+        if (existing.state === "minimized") {
+          existing.restore();
+        }
+        return existing;
+      }
+      const id = this.getByBaseId(baseId) ? this.nextInstanceId(baseId) : config.id;
+      return this.createWindow({ ...config, id, baseId });
+    }
+    /**
+     * Open a brand-new window even if one is already open for this
+     * page. Only makes sense for pages flagged `multi`.
+     */
+    openNew(config) {
+      const baseId = config.baseId || config.id;
+      const nextId = this.nextInstanceId(baseId);
+      return this.createWindow({ ...config, id: nextId, baseId });
+    }
+    /**
+     * Build and mount a window element. Common tail shared by
+     * `open()` and `openNew()`.
+     */
+    createWindow(config) {
+      const desktopRect = this._desktop.getBoundingClientRect();
+      const defaultWidth = Math.min(Math.round(desktopRect.width * 0.8), 1200);
+      const defaultHeight = Math.min(Math.round(desktopRect.height * 0.8), 800);
+      const cascadeX = 40 + this.cascadeIndex % 8 * CASCADE_OFFSET;
+      const cascadeY = 40 + this.cascadeIndex % 8 * CASCADE_OFFSET;
+      const fullConfig = {
+        icon: config.icon || "dashicons-admin-generic",
+        x: config.x ?? cascadeX,
+        y: config.y ?? cascadeY,
+        width: config.width ?? defaultWidth,
+        height: config.height ?? defaultHeight,
+        minWidth: config.minWidth ?? 320,
+        minHeight: config.minHeight ?? 200,
+        ...config,
+        baseId: config.baseId || config.id,
+        // New windows always join the active desktop. A caller can
+        // pre-seed `desktopId` (e.g. session restore) by passing it
+        // in `config`, which the spread above preserves.
+        desktopId: config.desktopId || this._activeDesktopId
+      };
+      this.cascadeIndex++;
+      const win = new Window(fullConfig);
+      win.onFocusRequest = (w) => this.focus(w);
+      win.onClose = (w) => this.remove(w);
+      win.onMinimize = () => {
+        const visible = this._stack.filter((w) => w.state !== "minimized");
+        if (visible.length > 0) {
+          this.focus(visible[visible.length - 1]);
+        }
+      };
+      win.onOpenAnother = (w) => {
+        this.openNew({
+          id: w.config.baseId || w.id,
+          baseId: w.config.baseId || w.id,
+          url: w.config.url,
+          title: w.config.title,
+          icon: w.config.icon,
+          submenu: w.config.submenu,
+          multi: true
+        });
+      };
+      win.onToggleStartup = (w) => {
+        this.onToggleStartupRequested?.(w);
+      };
+      win.snapConfigProvider = () => this.getSnapConfig();
+      this._stack.push(win);
+      this._desktop.appendChild(win.element);
+      applyDesktopVisibility(this, win);
+      this.focus(win);
+      const openedDetail = {
+        windowId: win.id,
+        page: config.url,
+        title: config.title,
+        url: config.url
+      };
+      document.dispatchEvent(
+        new CustomEvent("wp-desktop-window-opened", { detail: openedDetail })
+      );
+      doAction(HOOKS.WINDOW_OPENED, openedDetail);
+      return win;
+    }
+    /**
+     * Find the next unused suffixed id for a given baseId. Prefers
+     * the bare baseId itself if free (user closed the original), then
+     * walks `-2`, `-3`, … until it lands on one not currently in the
+     * stack.
+     */
+    nextInstanceId(baseId) {
+      const taken = new Set(this._stack.map((w) => w.id));
+      if (!taken.has(baseId)) {
+        return baseId;
+      }
+      let n = 2;
+      while (taken.has(`${baseId}-${n}`)) {
+        n++;
+      }
+      return `${baseId}-${n}`;
+    }
+    /** Focus a window: bring it to top of z-stack. */
+    focus(win) {
+      const idx = this._stack.indexOf(win);
+      if (idx > -1) {
+        this._stack.splice(idx, 1);
+      }
+      this._stack.push(win);
+      this._stack.forEach((w, i) => {
+        w.setZIndex(BASE_Z_INDEX + i);
+        w.setFocused(i === this._stack.length - 1);
+      });
+      const focusedDetail = { windowId: win.id };
+      document.dispatchEvent(
+        new CustomEvent("wp-desktop-window-focused", { detail: focusedDetail })
+      );
+      doAction(HOOKS.WINDOW_FOCUSED, focusedDetail);
+    }
+    /** Remove a window from the stack and DOM. */
+    remove(win) {
+      const idx = this._stack.indexOf(win);
+      if (idx > -1) {
+        this._stack.splice(idx, 1);
+      }
+      if (this._stack.length > 0) {
+        this.focus(this._stack[this._stack.length - 1]);
+      }
+      const closedDetail = { windowId: win.id };
+      document.dispatchEvent(
+        new CustomEvent("wp-desktop-window-closed", { detail: closedDetail })
+      );
+      doAction(HOOKS.WINDOW_CLOSED, closedDetail);
+    }
+    /** Get a window by its ID. */
+    getById(id) {
+      return this._stack.find((w) => w.id === id);
+    }
+    /**
+     * Get the most-recently-focused window for a given baseId.
+     *
+     * Multi-instance windows share a baseId; the stack is ordered
+     * bottom to top by focus, so iterating from the end finds the
+     * best candidate to bring forward when the user re-clicks the
+     * dock icon.
+     */
+    getByBaseId(baseId) {
+      for (let i = this._stack.length - 1; i >= 0; i--) {
+        const w = this._stack[i];
+        if ((w.config.baseId || w.id) === baseId) {
+          return w;
+        }
+      }
+      return void 0;
+    }
+    /**
+     * Like {@link getByBaseId} but only considers windows on the
+     * currently-active virtual desktop. The dock's "open or focus"
+     * path uses this — a Plugins instance that lives on Desktop 2 is
+     * invisible from Desktop 1's dock click, so clicking Plugins on
+     * Desktop 1 should open a fresh instance there instead of trying
+     * to focus the far-off sibling (which would silently do nothing
+     * because the other desktop's windows are display: none here).
+     */
+    getByBaseIdOnActiveDesktop(baseId) {
+      for (let i = this._stack.length - 1; i >= 0; i--) {
+        const w = this._stack[i];
+        if ((w.config.baseId || w.id) !== baseId) {
+          continue;
+        }
+        const winDesktop = w.config.desktopId || this._activeDesktopId;
+        if (winDesktop === this._activeDesktopId) {
+          return w;
+        }
+      }
+      return void 0;
+    }
+    /**
+     * Get every open window sharing the given baseId, ordered by
+     * instance slot (bare baseId first, then `-2`, `-3`, …) rather
+     * than z-order — so the dock's instance rail keeps a stable
+     * left-to-right order even as the user focuses between windows.
+     */
+    getAllByBaseId(baseId) {
+      const instanceSlot = (id) => {
+        if (id === baseId) {
+          return 1;
+        }
+        const prefix = `${baseId}-`;
+        if (id.startsWith(prefix)) {
+          const n = parseInt(id.slice(prefix.length), 10);
+          return Number.isFinite(n) ? n : 999;
+        }
+        return 999;
+      };
+      return this._stack.filter((w) => (w.config.baseId || w.id) === baseId).sort((a, b) => instanceSlot(a.id) - instanceSlot(b.id));
+    }
+    /** Get all open windows. */
+    getAll() {
+      return [...this._stack];
+    }
+    /** Get the currently focused (topmost) window. */
+    getFocused() {
+      return this._stack.length > 0 ? this._stack[this._stack.length - 1] : void 0;
+    }
+    // ---- Virtual desktop delegations ----
+    getDesktops() {
+      return getDesktops(this);
+    }
+    getActiveDesktop() {
+      return getActiveDesktop(this);
+    }
+    getActiveDesktopId() {
+      return getActiveDesktopId(this);
+    }
+    createDesktop() {
+      return createDesktop(this);
+    }
+    switchDesktop(id) {
+      switchDesktop(this, id);
+    }
+    closeDesktop(id) {
+      closeDesktop(this, id);
+    }
+    // ---- Arrange + snap delegations ----
+    cascade() {
+      cascade(this);
+    }
+    tile() {
+      tile(this);
+    }
+    isSnapEnabled() {
+      return this._snapEnabled;
+    }
+    setSnapEnabled(enabled) {
+      setSnapEnabled(this, enabled);
+    }
+    getSnapConfig() {
+      return getSnapConfig(this);
+    }
+    // ---- Overview delegations ----
+    enterOverview() {
+      enterOverview(this);
+    }
+    exitOverview(selected, maximize = false) {
+      exitOverview(this, selected, maximize);
+    }
+    /**
+     * Serialize the current window stack for session persistence.
+     *
+     * Order in the returned `windows` array mirrors z-order (earliest
+     * opened / lowest-z first, focused last) so restoring preserves
+     * the stacking the user left behind.
+     */
+    snapshot() {
+      const focused = this.getFocused();
+      const persistable = this._stack.filter((w) => !w.config.native);
+      const windows = persistable.map((w) => {
+        const snap = w.getSnapshot();
+        const externalTabs = w.getExternalTabsSnapshot();
+        return {
+          id: w.id,
+          baseId: w.config.baseId || w.id,
+          desktopId: w.config.desktopId || this._activeDesktopId,
+          url: w.getCurrentUrl(),
+          title: w.config.title,
+          icon: w.config.icon,
+          state: snap.state,
+          x: snap.x,
+          y: snap.y,
+          width: snap.width,
+          height: snap.height,
+          ...externalTabs.length > 0 ? { externalTabs } : {}
+        };
+      });
+      const focusedId = focused && !focused.config.native ? focused.id : "";
+      return {
+        windows,
+        desktops: this.getDesktops(),
+        activeDesktop: this._activeDesktopId,
+        focused: focusedId,
+        updated: Math.floor(Date.now() / 1e3)
+      };
+    }
+    seedDesktops(desktops, activeDesktopId) {
+      seedDesktops(this, desktops, activeDesktopId);
+    }
+  }
   class Dock {
     constructor(container, windowManager, items, adminUrl) {
       this.itemElements = /* @__PURE__ */ new Map();
@@ -4092,9 +3846,9 @@ var wpDesktop = function(exports) {
         this.systemSeparator.setAttribute("aria-hidden", "true");
         this.container.appendChild(this.systemSeparator);
       }
-      const tile = this.createSystemItemButton(item);
-      this.systemItemElements.set(item.id, tile);
-      this.container.appendChild(tile);
+      const tile2 = this.createSystemItemButton(item);
+      this.systemItemElements.set(item.id, tile2);
+      this.container.appendChild(tile2);
       this.updateActiveStates();
     }
     /**
@@ -4115,18 +3869,18 @@ var wpDesktop = function(exports) {
      * styling is shared.
      */
     createSystemItemButton(item) {
-      const tile = document.createElement("div");
-      tile.className = "wp-desktop-dock__item wp-desktop-dock__item--system";
-      tile.dataset.systemId = item.id;
+      const tile2 = document.createElement("div");
+      tile2.className = "wp-desktop-dock__item wp-desktop-dock__item--system";
+      tile2.dataset.systemId = item.id;
       const primary = document.createElement("button");
       primary.className = "wp-desktop-dock__item-primary";
       primary.setAttribute("type", "button");
       primary.setAttribute("aria-label", item.title);
       primary.appendChild(this.createIcon(item.icon));
       primary.addEventListener("click", () => item.onOpen());
-      tile.appendChild(primary);
-      this.bindTooltip(tile, item.title);
-      return tile;
+      tile2.appendChild(primary);
+      this.bindTooltip(tile2, item.title);
+      return tile2;
     }
     /**
      * Create a single dock icon tile.
@@ -4138,11 +3892,11 @@ var wpDesktop = function(exports) {
      * container so the DOM is stable.
      */
     createItemButton(item) {
-      const tile = document.createElement("div");
-      tile.className = "wp-desktop-dock__item";
-      tile.dataset.menuSlug = item.id;
+      const tile2 = document.createElement("div");
+      tile2.className = "wp-desktop-dock__item";
+      tile2.dataset.menuSlug = item.id;
       if (item.multi) {
-        tile.classList.add("wp-desktop-dock__item--multi");
+        tile2.classList.add("wp-desktop-dock__item--multi");
       }
       const primary = document.createElement("button");
       primary.className = "wp-desktop-dock__item-primary";
@@ -4167,7 +3921,7 @@ var wpDesktop = function(exports) {
       primary.addEventListener("click", () => {
         this.openPage(item);
       });
-      tile.appendChild(primary);
+      tile2.appendChild(primary);
       if (item.multi) {
         const addBtn = document.createElement("button");
         addBtn.type = "button";
@@ -4191,18 +3945,18 @@ var wpDesktop = function(exports) {
         });
         addBtn.addEventListener("pointerleave", (e) => {
           const next = e.relatedTarget;
-          if (next && tile.contains(next)) {
-            const rect = tile.getBoundingClientRect();
+          if (next && tile2.contains(next)) {
+            const rect = tile2.getBoundingClientRect();
             this.tooltip.textContent = item.title;
             this.tooltip.style.top = `${rect.top + rect.height / 2 - 14}px`;
             return;
           }
           this.tooltip.classList.remove("wp-desktop-dock__tooltip--visible");
         });
-        tile.appendChild(addBtn);
+        tile2.appendChild(addBtn);
       }
-      this.bindTooltip(tile, item.title);
-      return tile;
+      this.bindTooltip(tile2, item.title);
+      return tile2;
     }
     /**
      * Create the icon element based on the icon type.
@@ -4328,8 +4082,8 @@ var wpDesktop = function(exports) {
       const activeDesktopId = this.windowManager.getActiveDesktopId();
       const onActiveDesktop = (w) => (w.config.desktopId || activeDesktopId) === activeDesktopId;
       for (const item of this.items) {
-        const tile = this.itemElements.get(item.id);
-        if (!tile) {
+        const tile2 = this.itemElements.get(item.id);
+        if (!tile2) {
           continue;
         }
         const baseId = this.deriveWindowId(item.url);
@@ -4338,10 +4092,10 @@ var wpDesktop = function(exports) {
         const singleOpen = !item.multi && !!single && onActiveDesktop(single);
         const isOpen = item.multi ? instances.length > 0 : singleOpen;
         const isFocused = focusedBaseId === baseId && !!focused && onActiveDesktop(focused);
-        tile.classList.toggle("wp-desktop-dock__item--active", isOpen);
-        tile.classList.toggle("wp-desktop-dock__item--focused", isFocused);
+        tile2.classList.toggle("wp-desktop-dock__item--active", isOpen);
+        tile2.classList.toggle("wp-desktop-dock__item--focused", isFocused);
         if (item.multi) {
-          const addBtn = tile.querySelector(
+          const addBtn = tile2.querySelector(
             ".wp-desktop-dock__item-new"
           );
           if (addBtn) {
@@ -4350,14 +4104,14 @@ var wpDesktop = function(exports) {
         }
       }
       for (const sys of this.systemItems) {
-        const tile = this.systemItemElements.get(sys.id);
-        if (!tile) {
+        const tile2 = this.systemItemElements.get(sys.id);
+        if (!tile2) {
           continue;
         }
         const isOpen = sys.isOpen ? sys.isOpen() : false;
         const isFocused = !!focused && focused.id === sys.id;
-        tile.classList.toggle("wp-desktop-dock__item--active", isOpen);
-        tile.classList.toggle("wp-desktop-dock__item--focused", isFocused);
+        tile2.classList.toggle("wp-desktop-dock__item--active", isOpen);
+        tile2.classList.toggle("wp-desktop-dock__item--focused", isFocused);
       }
     }
   }
@@ -5362,10 +5116,10 @@ var wpDesktop = function(exports) {
     return wrap.firstElementChild;
   }
   function renderUploadPane(ctx, pane, body) {
-    const tile = document.createElement("div");
-    tile.className = "wp-desktop-os-settings__upload-tile";
-    tile.dataset.wallpaperId = CUSTOM_IMAGE_ID;
-    tile.setAttribute(
+    const tile2 = document.createElement("div");
+    tile2.className = "wp-desktop-os-settings__upload-tile";
+    tile2.dataset.wallpaperId = CUSTOM_IMAGE_ID;
+    tile2.setAttribute(
       "aria-pressed",
       ctx.state.wallpaper === CUSTOM_IMAGE_ID ? "true" : "false"
     );
@@ -5376,26 +5130,26 @@ var wpDesktop = function(exports) {
     fileInput.addEventListener("change", () => {
       const file = fileInput.files?.[0];
       if (file) {
-        void handleImageFile(ctx, file, tile, body);
+        void handleImageFile(ctx, file, tile2, body);
       }
       fileInput.value = "";
     });
-    render(html`${fileInput}${tile}`, pane);
-    renderUploadTile(ctx, tile, fileInput, body);
+    render(html`${fileInput}${tile2}`, pane);
+    renderUploadTile(ctx, tile2, fileInput, body);
   }
-  function renderUploadTile(ctx, tile, fileInput, body) {
-    tile.classList.remove("wp-desktop-os-settings__upload-tile--filled");
-    tile.classList.remove("wp-desktop-os-settings__upload-tile--dragover");
-    tile.classList.remove("wp-desktop-os-settings__upload-tile--busy");
-    tile.removeAttribute("aria-label");
+  function renderUploadTile(ctx, tile2, fileInput, body) {
+    tile2.classList.remove("wp-desktop-os-settings__upload-tile--filled");
+    tile2.classList.remove("wp-desktop-os-settings__upload-tile--dragover");
+    tile2.classList.remove("wp-desktop-os-settings__upload-tile--busy");
+    tile2.removeAttribute("aria-label");
     const hasImage = !!ctx.state.customImage;
     if (hasImage) {
-      tile.classList.add("wp-desktop-os-settings__upload-tile--filled");
-      tile.setAttribute("aria-label", __("Custom image wallpaper"));
-      tile.style.backgroundImage = `url("${encodeURI(ctx.state.customImage.url)}")`;
+      tile2.classList.add("wp-desktop-os-settings__upload-tile--filled");
+      tile2.setAttribute("aria-label", __("Custom image wallpaper"));
+      tile2.style.backgroundImage = `url("${encodeURI(ctx.state.customImage.url)}")`;
     } else {
-      tile.style.backgroundImage = "";
-      tile.setAttribute("aria-label", __("Upload a wallpaper image"));
+      tile2.style.backgroundImage = "";
+      tile2.setAttribute("aria-label", __("Upload a wallpaper image"));
     }
     const onRemove = (e) => {
       e.stopPropagation();
@@ -5406,7 +5160,7 @@ var wpDesktop = function(exports) {
       registerCustomImageIfPresent(ctx.state);
       ctx.save();
       ctx.apply();
-      renderUploadTile(ctx, tile, fileInput, body);
+      renderUploadTile(ctx, tile2, fileInput, body);
       refreshWallpaperPressedState(ctx, body);
     };
     render(
@@ -5435,10 +5189,10 @@ var wpDesktop = function(exports) {
 						>
 					</div>
 				`,
-      tile
+      tile2
     );
-    tile.onclick = () => {
-      if (tile.classList.contains("wp-desktop-os-settings__upload-tile--busy")) {
+    tile2.onclick = () => {
+      if (tile2.classList.contains("wp-desktop-os-settings__upload-tile--busy")) {
         return;
       }
       if (ctx.state.customImage) {
@@ -5447,35 +5201,35 @@ var wpDesktop = function(exports) {
       }
       fileInput.click();
     };
-    tile.ondragover = (e) => {
+    tile2.ondragover = (e) => {
       e.preventDefault();
-      tile.classList.add("wp-desktop-os-settings__upload-tile--dragover");
+      tile2.classList.add("wp-desktop-os-settings__upload-tile--dragover");
     };
-    tile.ondragleave = () => {
-      tile.classList.remove("wp-desktop-os-settings__upload-tile--dragover");
+    tile2.ondragleave = () => {
+      tile2.classList.remove("wp-desktop-os-settings__upload-tile--dragover");
     };
-    tile.ondrop = (e) => {
+    tile2.ondrop = (e) => {
       e.preventDefault();
-      tile.classList.remove("wp-desktop-os-settings__upload-tile--dragover");
+      tile2.classList.remove("wp-desktop-os-settings__upload-tile--dragover");
       const file = e.dataTransfer?.files?.[0];
       if (file) {
-        void handleImageFile(ctx, file, tile, body);
+        void handleImageFile(ctx, file, tile2, body);
       }
     };
   }
-  async function handleImageFile(ctx, file, tile, body) {
+  async function handleImageFile(ctx, file, tile2, body) {
     if (!file.type.startsWith("image/")) {
-      showUploadError(tile, __("That file isn’t an image."));
+      showUploadError(tile2, __("That file isn’t an image."));
       return;
     }
-    tile.classList.add("wp-desktop-os-settings__upload-tile--busy");
+    tile2.classList.add("wp-desktop-os-settings__upload-tile--busy");
     render(
       html`<span class="wp-desktop-os-settings__upload-status"
 			>${__("Uploading…")}</span
 		>`,
-      tile
+      tile2
     );
-    const fileInput = tile.parentElement?.querySelector(
+    const fileInput = tile2.parentElement?.querySelector(
       ".wp-desktop-os-settings__file-input"
     );
     try {
@@ -5486,25 +5240,25 @@ var wpDesktop = function(exports) {
       ctx.save();
       ctx.apply();
       if (fileInput) {
-        renderUploadTile(ctx, tile, fileInput, body);
+        renderUploadTile(ctx, tile2, fileInput, body);
       }
       refreshWallpaperPressedState(ctx, body);
     } catch (err) {
-      tile.classList.remove("wp-desktop-os-settings__upload-tile--busy");
+      tile2.classList.remove("wp-desktop-os-settings__upload-tile--busy");
       if (fileInput) {
-        renderUploadTile(ctx, tile, fileInput, body);
+        renderUploadTile(ctx, tile2, fileInput, body);
       }
       const message = err instanceof Error ? err.message : __("Upload failed.");
-      showUploadError(tile, message);
+      showUploadError(tile2, message);
     }
   }
-  function showUploadError(tile, message) {
-    let err = tile.querySelector(".wp-desktop-os-settings__upload-error");
+  function showUploadError(tile2, message) {
+    let err = tile2.querySelector(".wp-desktop-os-settings__upload-error");
     if (!err) {
       err = document.createElement("span");
       err.className = "wp-desktop-os-settings__upload-error";
       err.setAttribute("role", "status");
-      tile.appendChild(err);
+      tile2.appendChild(err);
     }
     err.textContent = message;
     window.setTimeout(() => {
@@ -7105,10 +6859,10 @@ var wpDesktop = function(exports) {
       }
     }
     buildAddTile() {
-      const tile = document.createElement("button");
-      tile.type = "button";
-      tile.className = "wp-desktop-widgets__add";
-      tile.setAttribute("aria-label", __("Add widget"));
+      const tile2 = document.createElement("button");
+      tile2.type = "button";
+      tile2.className = "wp-desktop-widgets__add";
+      tile2.setAttribute("aria-label", __("Add widget"));
       const plus = document.createElement("span");
       plus.className = "wp-desktop-widgets__add-plus";
       plus.setAttribute("aria-hidden", "true");
@@ -7116,19 +6870,19 @@ var wpDesktop = function(exports) {
       const label = document.createElement("span");
       label.className = "wp-desktop-widgets__add-label";
       label.textContent = __("Add widget");
-      tile.appendChild(plus);
-      tile.appendChild(label);
-      tile.addEventListener("click", (e) => {
+      tile2.appendChild(plus);
+      tile2.appendChild(label);
+      tile2.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
         openWidgetPicker({
-          anchor: tile,
+          anchor: tile2,
           registry: () => all(),
           enabledIds: () => [...this.enabledIds],
           onAdd: (id) => this.add(id)
         });
       });
-      return tile;
+      return tile2;
     }
     /**
      * Drop a card into the right parent based on its floating state.

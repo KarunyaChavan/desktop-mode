@@ -1,0 +1,152 @@
+/**
+ * Desktop Mode — Window state visuals.
+ *
+ * Every rule that keys off a `--state` modifier class: the resize
+ * handle + its overlay shield (drag/resize iframe-interception),
+ * maximize, fullscreen, the opening animation, minimize + closing
+ * fade-outs, reduced-motion scoped overrides, and the RTL cursor
+ * flip on the resize corner.
+ *
+ * Base chrome lives in window-chrome.css; the zoom-out grid lives
+ * in window-overview.css.
+ *
+ * @since 6.9.0
+ */
+
+/* Resize handle (bottom-right corner). */
+.wp-desktop-window__resize-handle {
+	position: absolute;
+	inset-inline-end: 0;
+	bottom: 0;
+	width: var(--wp-desktop-resize-size);
+	height: var(--wp-desktop-resize-size);
+	cursor: nwse-resize; /* RTL override below. */
+	background: linear-gradient(
+		135deg,
+		transparent 30%,
+		var(--wp-desktop-resize-color) 30%,
+		var(--wp-desktop-resize-color) 40%,
+		transparent 40%,
+		transparent 55%,
+		var(--wp-desktop-resize-color) 55%,
+		var(--wp-desktop-resize-color) 65%,
+		transparent 65%,
+		transparent 80%,
+		var(--wp-desktop-resize-color) 80%
+	);
+	z-index: 1;
+}
+
+/*
+ * During drag/resize, overlay the iframe to prevent it from
+ * capturing pointer events and breaking the drag.
+ */
+.wp-desktop-window--dragging .wp-desktop-window__body::after,
+.wp-desktop-window--resizing .wp-desktop-window__body::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	z-index: 10;
+}
+
+/*
+ * Maximized state: the pixel geometry is applied inline from JS
+ * (matching the desktop area) so left/top/width/height can animate.
+ * Only cosmetic overrides here.
+ */
+.wp-desktop-window--maximized {
+	border-radius: 0;
+}
+
+.wp-desktop-window--maximized .wp-desktop-window__resize-handle {
+	display: none;
+}
+
+/*
+ * Fullscreen ("focus") state — the window escapes the desktop area and
+ * covers the entire viewport, hiding the admin bar, dock, and taskbar
+ * behind it. Uses position: fixed so no ancestor overflow clips it, and
+ * a z-index above the admin bar (--wp-desktop-z-adminbar). Inline
+ * geometry set by toggleMaximize() is overridden with !important because
+ * we never want fullscreen to respect a saved x/y/width/height.
+ */
+.wp-desktop-window--fullscreen {
+	position: fixed !important;
+	left: 0 !important;
+	top: 0 !important;
+	width: 100vw !important;
+	height: 100vh !important;
+	z-index: var(--wp-desktop-z-fullscreen) !important;
+	border-radius: 0 !important;
+	border: none;
+}
+
+.wp-desktop-window--fullscreen .wp-desktop-window__resize-handle {
+	display: none;
+}
+
+/*
+ * Opening animation — subtle scale-up + fade-in.
+ * The class is added on creation and removed after the animation ends.
+ */
+@keyframes wp-desktop-window-open {
+	from {
+		opacity: 0;
+		transform: scale(0.92);
+	}
+	to {
+		opacity: 1;
+		transform: scale(1);
+	}
+}
+
+.wp-desktop-window--opening {
+	animation: wp-desktop-window-open 0.2s ease forwards;
+}
+
+/*
+ * Minimized state — fade + scale down.
+ * Uses opacity + pointer-events instead of display: none so the
+ * CSS transition can animate the change. The window is invisible
+ * and non-interactive but stays in the DOM for a smooth restore.
+ */
+.wp-desktop-window--minimized {
+	opacity: 0;
+	transform: scale(0.92) translateY(16px);
+	pointer-events: none;
+	will-change: transform, opacity;
+}
+
+/*
+ * Closing animation — fade out + slight scale down.
+ * The JS waits for transitionend then removes the element.
+ */
+.wp-desktop-window--closing {
+	opacity: 0;
+	transform: scale(0.95);
+	pointer-events: none;
+	will-change: transform, opacity;
+}
+
+/*
+ * Respect prefers-reduced-motion: collapse all durations to near-zero
+ * so state changes are instant but still technically transition
+ * (avoids layout jumps from display: none).
+ */
+@media ( prefers-reduced-motion: reduce ) {
+	.wp-desktop-window {
+		transition-duration: 0.01ms !important;
+	}
+	.wp-desktop-window--opening {
+		animation-duration: 0.01ms !important;
+	}
+}
+
+/* RTL: flip the resize cursor direction. */
+[dir="rtl"] .wp-desktop-window__resize-handle {
+	cursor: nesw-resize;
+}
+
+/* Toast styling moved into `<wpd-toast-container>` and `<wpd-toast>`
+ * (src/ui/components/wpd-toast/). The components own their shadow
+ * DOM styling; nothing at host level needs to reach inside. */

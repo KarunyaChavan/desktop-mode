@@ -1,0 +1,625 @@
+/**
+ * Desktop Mode — Overview (zoom-out grid).
+ *
+ * Animate every eligible window to a grid thumbnail, plus a top bar
+ * showing one tile per virtual desktop. Clicking a thumbnail exits
+ * overview and fullscreens the clicked window. Pressing Escape or
+ * clicking the backdrop exits without selection.
+ *
+ * The lifecycle is big (enter/exit + click + key handlers + top bar
+ * + label builders) so it lives here rather than piling onto the
+ * orchestrator. `desktops.ts` reaches back into `createOverviewLabel`
+ * during mid-overview desktop closes; the resulting import cycle is
+ * a function-level one (safe at runtime as long as neither side calls
+ * the other at module-load time).
+ *
+ * @since 0.8.1
+ */
+
+import { doAction, HOOKS } from '../hooks';
+import { _n, __, sprintf } from '../i18n';
+import type { Desktop } from '../types';
+import { computeOverviewLayout, type OverviewLayoutItem } from './geometry';
+import { OVERVIEW_TOP_BAR_RESERVE } from './overview-constants';
+import { closeDesktop, createDesktop, switchDesktop } from './desktops';
+import type { Window } from '../window';
+import type { WindowManager } from './index';
+
+/**
+ * Enter overview mode — animate every eligible window to a grid
+ * thumbnail layout. Clicking a thumbnail exits overview and
+ * fullscreens the clicked window. Pressing Escape or clicking the
+ * backdrop exits without selection.
+ */
+export function enterOverview( mgr: WindowManager ): void {
+	if ( mgr._overviewActive ) {
+		return;
+	}
+	// Overview shows only the ACTIVE desktop's windows in the main
+	// grid; windows on other desktops stay hidden underneath. The top
+	// bar (rendered later) gives the user a way to switch. Native
+	// windows (OS Settings, Jorvy, etc.) participate as first-class
+	// citizens — clicking their thumbnail maximizes them, they lay
+	// out in the grid, they count toward the top-bar tile's window
+	// count.
+	const eligible = mgr._stack.filter(
+		( w ) =>
+			w.state !== 'minimized' &&
+			w.config.desktopId === mgr._activeDesktopId,
+	);
+	// Even with zero windows on the active desktop we still enter
+	// overview — otherwise an empty desktop would have no way to
+	// reach the top bar to switch to one with windows.
+	mgr._overviewActive = true;
+
+	doAction( HOOKS.OVERVIEW_ENTERING, {} );
+
+	// Snapshot current transform + transition so exit can restore
+	// exactly — matters when plugins have applied custom transforms
+	// of their own.
+	mgr._overviewSnapshot.clear();
+	for ( const w of eligible ) {
+		mgr._overviewSnapshot.set( w.id, {
+			transform: w.element.style.transform || '',
+			transition: w.element.style.transition || '',
+		} );
+	}
+
+	// Fullscreen-state windows escape the shell's stacking context;
+	// bring them back into the normal flow before computing layout
+	// so the transform math stays consistent.
+	for ( const w of eligible ) {
+		if ( w.state === 'fullscreen' ) {
+			w.toggleFullscreen();
+		}
+	}
+
+	// Capture the desktop area's *target* rect BEFORE triggering the
+	// dock's collapse animation. The dock is a flex sibling about to
+	// shrink from its full width to 0 over ~280 ms — measuring after
+	// the class change would catch an in-transit width, making the
+	// overview grid lay out for a smaller area than it will actually
+	// occupy by the time the animation settles. We pre-measure the
+	// dock, compose a synthetic rect representing the *post-collapse*
+	// area, and pass THAT to `computeOverviewLayout`. Thumbnails then
+	// fly to fixed destinations while the dock glides out in
+	// parallel.
+	const dockEl = document.getElementById( 'wp-desktop-dock' );
+	const dockWidth = dockEl ? dockEl.offsetWidth : 0;
+	const currentRect = mgr._desktop.getBoundingClientRect();
+	const targetRect = new DOMRect(
+		currentRect.left - dockWidth,
+		currentRect.top,
+		currentRect.width + dockWidth,
+		currentRect.height,
+	);
+
+	mgr._desktop.classList.add( 'wp-desktop-area--overview' );
+	const shell = document.getElementById( 'wp-desktop-shell' );
+	shell?.classList.add( 'wp-desktop-shell--overview' );
+
+	// Build + mount the top bar. Belongs INSIDE the desktop area so
+	// it shares the dim backdrop, but its own clicks are allowed past
+	// the click blocker (see below).
+	mgr._overviewTopBar = buildOverviewTopBar( mgr );
+	mgr._desktop.appendChild( mgr._overviewTopBar );
+
+	// Reserve vertical space at the top for the bar so the grid
+	// shifts down (and shrinks to fit) — thumbnails never land behind
+	// the tile strip.
+	const layout = computeOverviewLayout(
+		eligible,
+		targetRect,
+		OVERVIEW_TOP_BAR_RESERVE,
+	);
+
+	mgr._overviewLabels.clear();
+	for ( const item of layout ) {
+		const el = item.win.element;
+		el.classList.add( 'wp-desktop-window--overview' );
+		const dx = item.x - el.offsetLeft;
+		const dy = item.y - el.offsetTop;
+		// transform-origin: top left (set in CSS) so translate + scale
+		// compose without drift.
+		el.style.transform = `translate(${ dx }px, ${ dy }px) scale(${ item.scale })`;
+
+		// Label above the thumbnail. Position in desktop-area
+		// coordinates so it's unaffected by the window's transform —
+		// critical for readability when thumbnails shrink to
+		// icon-size. The `data-window-id` attribute enables the
+		// adjacent-sibling CSS rule that keeps this label bright when
+		// its window is hovered (see windows.css).
+		const label = createOverviewLabel( item );
+		// Insert immediately AFTER the window element so the
+		// adjacent-sibling CSS selector ( `:hover + .label` ) can
+		// target the right label.
+		el.insertAdjacentElement( 'afterend', label );
+		mgr._overviewLabels.set( item.win.id, label );
+	}
+
+	// Press-in-same-element semantics, commit-on-release. Matches how
+	// native buttons / links feel: a press "arms" the element, and
+	// the release either fires the action (if it lands inside the
+	// armed element's visible bounds) or cancels (if the pointer
+	// moved off). We deliberately skip the `click` event here because
+	// its target is the common ancestor of the down/up pair, which
+	// produced the "press on A, release on B → browser synthesizes
+	// click on desktop → exits overview" bug we saw before.
+	//
+	// Hit-testing at release uses the pressed element's bounding rect
+	// rather than `e.target` equality — bounding rect is forgiving of
+	// a few pixels of finger drift during a quick tap, which strict
+	// target equality rejected (noticeable on small thumbnails).
+	const pressTargetForEvent = (
+		e: PointerEvent,
+	): { id: string; element: HTMLElement } | null => {
+		const target = e.target as HTMLElement | null;
+		const winEl = target?.closest<HTMLElement>(
+			'.wp-desktop-window--overview',
+		);
+		if ( winEl ) {
+			return {
+				id: winEl.id.replace( /^wp-window-/, '' ),
+				element: winEl,
+			};
+		}
+		if ( target === mgr._desktop ) {
+			return { id: 'backdrop', element: mgr._desktop };
+		}
+		return null;
+	};
+
+	mgr._overviewPointerDownHandler = ( e: PointerEvent ) => {
+		// Only primary button / single-touch — ignore right-click,
+		// middle-click, and pen-eraser so they don't latch a press
+		// target that a left-click up would then match against.
+		if ( e.button !== 0 ) {
+			mgr._overviewPressTarget = null;
+			return;
+		}
+		mgr._overviewPressTarget = pressTargetForEvent( e );
+		// Swallow the down so iframes / inner UI can't start a
+		// drag-select or native focus operation while we're acting
+		// as a click surface.
+		if ( mgr._overviewPressTarget ) {
+			e.preventDefault();
+			e.stopPropagation();
+		}
+	};
+
+	mgr._overviewPointerUpHandler = ( e: PointerEvent ) => {
+		if ( e.button !== 0 ) {
+			return;
+		}
+		const pressed = mgr._overviewPressTarget;
+		mgr._overviewPressTarget = null;
+		if ( ! pressed ) {
+			return;
+		}
+		const rect = pressed.element.getBoundingClientRect();
+		const inside =
+			e.clientX >= rect.left &&
+			e.clientX <= rect.right &&
+			e.clientY >= rect.top &&
+			e.clientY <= rect.bottom;
+		if ( ! inside ) {
+			// Release landed outside the pressed element's visible
+			// bounds — treat as a drag-off cancel.
+			return;
+		}
+		e.preventDefault();
+		e.stopPropagation();
+		if ( pressed.id === 'backdrop' ) {
+			exitOverview( mgr );
+			return;
+		}
+		const selected = mgr.getById( pressed.id );
+		doAction( HOOKS.OVERVIEW_WINDOW_CLICK, { windowId: pressed.id } );
+		exitOverview( mgr, selected, true );
+	};
+
+	mgr._overviewKeyHandler = ( e: KeyboardEvent ) => {
+		if ( e.key === 'Escape' ) {
+			exitOverview( mgr );
+		}
+	};
+	mgr._desktop.addEventListener(
+		'pointerdown',
+		mgr._overviewPointerDownHandler,
+		true,
+	);
+	mgr._desktop.addEventListener(
+		'pointerup',
+		mgr._overviewPointerUpHandler,
+		true,
+	);
+	// Sticky capture-phase click blocker. Stops the browser-synthesized
+	// click that follows every pointerdown+pointerup pair from ever
+	// reaching the desktop area's "minimize every window" click
+	// handler. Top-bar clicks are exempt — those are deliberate UI
+	// interactions (switch desktop, create, close) that need their
+	// own handlers to fire.
+	mgr._overviewClickBlocker = ( e: MouseEvent ) => {
+		const target = e.target as HTMLElement | null;
+		if ( target?.closest( '.wp-desktop-overview-top-bar' ) ) {
+			return;
+		}
+		e.stopPropagation();
+		e.preventDefault();
+	};
+	mgr._desktop.addEventListener(
+		'click',
+		mgr._overviewClickBlocker,
+		true,
+	);
+	document.addEventListener( 'keydown', mgr._overviewKeyHandler );
+
+	// Hover delegation — mouseover bubbles up to the desktop area, so
+	// one handler covers every thumbnail. We track the last-hovered
+	// window id so we can fire paired hover/unhover actions even when
+	// the pointer moves directly from one thumbnail to the next
+	// without crossing empty space.
+	mgr._lastOverviewHoverId = null;
+	mgr._overviewMouseHandler = ( e: MouseEvent ) => {
+		const target = e.target as HTMLElement | null;
+		const winEl = target?.closest<HTMLElement>(
+			'.wp-desktop-window--overview',
+		);
+		const newId = winEl
+			? winEl.id.replace( /^wp-window-/, '' )
+			: null;
+		if ( newId === mgr._lastOverviewHoverId ) {
+			return;
+		}
+		if ( mgr._lastOverviewHoverId ) {
+			doAction( HOOKS.OVERVIEW_WINDOW_UNHOVER, {
+				windowId: mgr._lastOverviewHoverId,
+			} );
+		}
+		if ( newId ) {
+			doAction( HOOKS.OVERVIEW_WINDOW_HOVER, { windowId: newId } );
+		}
+		mgr._lastOverviewHoverId = newId;
+	};
+	mgr._desktop.addEventListener( 'mouseover', mgr._overviewMouseHandler );
+
+	// Signal "entered" after the grid animation settles. Matches the
+	// 280 ms transform transition — plugins listening here can safely
+	// read final layout positions.
+	window.setTimeout( () => {
+		if ( mgr._overviewActive ) {
+			doAction( HOOKS.OVERVIEW_ENTERED, {} );
+		}
+	}, 300 );
+}
+
+/** Build the overview top bar — a tile per virtual desktop plus "+". */
+function buildOverviewTopBar( mgr: WindowManager ): HTMLElement {
+	const bar = document.createElement( 'div' );
+	bar.className = 'wp-desktop-overview-top-bar';
+
+	const list = document.createElement( 'div' );
+	list.className = 'wp-desktop-overview-top-bar__list';
+	bar.appendChild( list );
+
+	for ( const d of mgr._desktops ) {
+		list.appendChild( buildDesktopTile( mgr, d ) );
+	}
+
+	// Trailing "+" tile.
+	const addTile = document.createElement( 'button' );
+	addTile.type = 'button';
+	addTile.className =
+		'wp-desktop-overview-top-bar__tile wp-desktop-overview-top-bar__tile--add';
+	addTile.setAttribute( 'aria-label', __( 'Add new desktop' ) );
+	addTile.innerHTML =
+		'<span class="wp-desktop-overview-top-bar__tile-plus" aria-hidden="true">+</span>';
+	addTile.addEventListener( 'click', ( e: MouseEvent ) => {
+		e.preventDefault();
+		e.stopPropagation();
+		const created = createDesktop( mgr );
+		// Auto-switch to the new desktop AND exit overview onto it —
+		// matches macOS Spaces ergonomics where pressing "+" lands
+		// you on the freshly-created blank space.
+		exitOverviewToDesktop( mgr, created.id );
+	} );
+	list.appendChild( addTile );
+
+	return bar;
+}
+
+/** Build a single desktop tile for the overview top bar. */
+function buildDesktopTile( mgr: WindowManager, d: Desktop ): HTMLElement {
+	const tile = document.createElement( 'button' );
+	tile.type = 'button';
+	tile.className = 'wp-desktop-overview-top-bar__tile';
+	tile.dataset.desktopId = d.id;
+	if ( d.id === mgr._activeDesktopId ) {
+		tile.classList.add( 'wp-desktop-overview-top-bar__tile--active' );
+	}
+	// translators: %s is the desktop label
+	tile.setAttribute( 'aria-label', sprintf( __( 'Switch to %s' ), d.label ) );
+
+	const preview = document.createElement( 'span' );
+	preview.className = 'wp-desktop-overview-top-bar__tile-preview';
+	// Window-count badge inside the preview area gives users a quick
+	// "what's on this desktop" hint without needing real per-window
+	// thumbnails (a follow-up enhancement). Includes native windows —
+	// they're windows just like iframes from the user's
+	// count-what's-open perspective.
+	const count = mgr._stack.filter(
+		( w ) => w.config.desktopId === d.id,
+	).length;
+	if ( count > 0 ) {
+		const badge = document.createElement( 'span' );
+		badge.className = 'wp-desktop-overview-top-bar__tile-count';
+		badge.textContent = String( count );
+		preview.appendChild( badge );
+	}
+	tile.appendChild( preview );
+
+	const label = document.createElement( 'span' );
+	label.className = 'wp-desktop-overview-top-bar__tile-label';
+	label.textContent = d.label;
+	tile.appendChild( label );
+
+	// Close X — hidden via CSS when only one desktop exists, so users
+	// can't soft-lock themselves out of the last one. We still render
+	// the button (rather than omitting) so its presence/absence
+	// doesn't reflow the tile.
+	const closeBtn = document.createElement( 'span' );
+	closeBtn.className = 'wp-desktop-overview-top-bar__tile-close';
+	closeBtn.setAttribute( 'role', 'button' );
+	closeBtn.setAttribute( 'tabindex', '0' );
+	// translators: %s is the desktop label
+	closeBtn.setAttribute( 'aria-label', sprintf( __( 'Close %s' ), d.label ) );
+	closeBtn.innerHTML =
+		'<svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
+	closeBtn.addEventListener( 'click', ( e: MouseEvent ) => {
+		// stopPropagation so the parent tile's click handler doesn't
+		// ALSO fire (which would switch + exit on top of the close).
+		e.preventDefault();
+		e.stopPropagation();
+		closeDesktop( mgr, d.id );
+		refreshOverviewTopBar( mgr );
+	} );
+	tile.appendChild( closeBtn );
+
+	tile.addEventListener( 'click', ( e: MouseEvent ) => {
+		e.preventDefault();
+		e.stopPropagation();
+		exitOverviewToDesktop( mgr, d.id );
+	} );
+
+	return tile;
+}
+
+/**
+ * Re-render the top bar in place. Called after any operation that
+ * mutates the desktop list (create, close) so the bar reflects the
+ * new state without a full overview exit/re-enter cycle.
+ */
+function refreshOverviewTopBar( mgr: WindowManager ): void {
+	if ( ! mgr._overviewTopBar ) {
+		return;
+	}
+	const fresh = buildOverviewTopBar( mgr );
+	mgr._overviewTopBar.replaceWith( fresh );
+	mgr._overviewTopBar = fresh;
+}
+
+/**
+ * Switch to the given desktop, then exit overview without a specific
+ * window selection. Used by top-bar tile clicks and the post-create
+ * flow.
+ */
+function exitOverviewToDesktop( mgr: WindowManager, desktopId: string ): void {
+	switchDesktop( mgr, desktopId );
+	// Exit overview WITHOUT selecting a specific window — the active
+	// desktop has its own focus state that the switch already
+	// restored.
+	exitOverview( mgr );
+}
+
+/**
+ * Build the floating caption that sits above an overview thumbnail.
+ * Carries the window's icon + title, plus a secondary line with the
+ * external-tab count when the window has any — so users can tell at a
+ * glance "oh this one has 3 sub-tabs open" without expanding a
+ * thumbnail.
+ *
+ * Label sits OUTSIDE the window's transform (as a sibling in the
+ * desktop area), so scaling the thumbnail has no effect on its text
+ * size.
+ */
+export function createOverviewLabel( item: OverviewLayoutItem ): HTMLElement {
+	const label = document.createElement( 'div' );
+	label.className = 'wp-desktop-overview-label';
+	label.dataset.windowId = item.win.id;
+
+	// Position: horizontally aligned with the thumbnail, sitting just
+	// above its top edge. The 34 px offset = label height (28) + a
+	// 6 px gap. Width matches the thumbnail so the label ellipsizes
+	// rather than overflowing into a neighbor.
+	const thumbW = item.win.element.offsetWidth * item.scale;
+	label.style.left = `${ item.x }px`;
+	label.style.top = `${ item.y - 34 }px`;
+	label.style.width = `${ thumbW }px`;
+
+	// Icon — mirrors the dashicon the window's title bar uses.
+	// `config.icon` is already a Dashicons class string by
+	// construction, but guard against unexpected values.
+	const iconClass = item.win.config.icon || 'dashicons-admin-generic';
+	const icon = document.createElement( 'span' );
+	icon.className = `wp-desktop-overview-label__icon dashicons ${ iconClass }`;
+	icon.setAttribute( 'aria-hidden', 'true' );
+	label.appendChild( icon );
+
+	const title = document.createElement( 'span' );
+	title.className = 'wp-desktop-overview-label__title';
+	title.textContent = item.win.config.title;
+	label.appendChild( title );
+
+	// Secondary: external-tab count. Only appended when > 0 so we
+	// don't waste visual weight on the common "no extras" case.
+	const tabCount = item.win.getExternalTabCount();
+	if ( tabCount > 0 ) {
+		const meta = document.createElement( 'span' );
+		meta.className = 'wp-desktop-overview-label__meta';
+		meta.textContent = sprintf(
+			// translators: %d is the number of external sub-tabs open on this window.
+			_n( '· %d open tab', '· %d open tabs', tabCount ),
+			tabCount,
+		);
+		label.appendChild( meta );
+	}
+
+	return label;
+}
+
+/**
+ * Exit overview mode. When `selected` is given and `maximize` is
+ * true, the clicked window animates directly from its grid thumbnail
+ * position to maximized bounds — one smooth pass, no back-to-original-
+ * then-forward-to-maximized round trip.
+ */
+export function exitOverview(
+	mgr: WindowManager,
+	selected?: Window,
+	maximize = false,
+): void {
+	if ( ! mgr._overviewActive ) {
+		return;
+	}
+	mgr._overviewActive = false;
+
+	doAction( HOOKS.OVERVIEW_EXITING, {
+		windowId: selected && maximize ? selected.id : undefined,
+		reason: selected && maximize ? 'select' : 'cancel',
+	} );
+
+	// Remove area + shell classes AT T=0 so the backdrop fades and
+	// the dock slides back in IN PARALLEL with the windows animating
+	// home. Previously these were deferred to the end of the window
+	// animation — producing a visible two-phase unwind (windows
+	// first, then dock) that felt sequential. The only class we
+	// DON'T remove yet is `wp-desktop-window--overview` on each
+	// window: it carries `transform-origin: top left`, needed for
+	// the in-flight transform transition. Yanking it here would
+	// shift the origin to center mid-animation and wobble the path.
+	mgr._desktop.classList.remove( 'wp-desktop-area--overview' );
+	const shell = document.getElementById( 'wp-desktop-shell' );
+	shell?.classList.remove( 'wp-desktop-shell--overview' );
+
+	// Unselected windows: transform → '' (snaps back to their
+	// pre-overview inline geometry). Selected window (if any):
+	// transform is cleared the same way, AND `maximize()` fires,
+	// setting inline left/top/width/height to maximize bounds. Both
+	// transitions animate together for a single frictionless path
+	// from grid to maximized.
+	for ( const [ id, snap ] of mgr._overviewSnapshot ) {
+		const w = mgr.getById( id );
+		if ( ! w ) {
+			continue;
+		}
+		w.element.style.transform = snap.transform;
+	}
+
+	if ( selected && maximize ) {
+		// Focus first so z-index and focused-class are right from the
+		// moment the animation starts — no pop-to-top late in the
+		// transition.
+		mgr.focus( selected );
+		selected.maximize();
+	}
+
+	// Start labels fading immediately — they overshoot the area when
+	// a selected window maximizes, and we don't want them lingering
+	// as the window grows beneath. Opacity transition is CSS-side
+	// (see `.wp-desktop-overview-label--out`).
+	for ( const label of mgr._overviewLabels.values() ) {
+		label.classList.add( 'wp-desktop-overview-label--out' );
+	}
+
+	// Top bar fades out in parallel with the windows. Removed fully
+	// when the animation settles (in the setTimeout below).
+	if ( mgr._overviewTopBar ) {
+		mgr._overviewTopBar.classList.add(
+			'wp-desktop-overview-top-bar--out',
+		);
+	}
+
+	// After the animation completes, strip the per-window overview
+	// class (kept in place through the transition for the
+	// transform-origin reason noted above) and the labels.
+	const ANIMATION_MS = 280;
+	window.setTimeout( () => {
+		for ( const w of mgr._stack ) {
+			w.element.classList.remove( 'wp-desktop-window--overview' );
+		}
+		for ( const label of mgr._overviewLabels.values() ) {
+			label.remove();
+		}
+		mgr._overviewLabels.clear();
+		mgr._overviewSnapshot.clear();
+		if ( mgr._overviewTopBar ) {
+			mgr._overviewTopBar.remove();
+			mgr._overviewTopBar = null;
+		}
+		// Click blocker lifts LAST, on the same tick the overview
+		// officially ends. By this point the browser-synthesized
+		// click that followed the user's final pointerup has long
+		// fired and been swallowed — releasing earlier would let
+		// that click through to "minimize all".
+		if ( mgr._overviewClickBlocker ) {
+			mgr._desktop.removeEventListener(
+				'click',
+				mgr._overviewClickBlocker,
+				true,
+			);
+			mgr._overviewClickBlocker = null;
+		}
+		doAction( HOOKS.OVERVIEW_EXITED, {
+			windowId: selected && maximize ? selected.id : undefined,
+			reason: selected && maximize ? 'select' : 'cancel',
+		} );
+	}, ANIMATION_MS );
+
+	if ( mgr._overviewPointerDownHandler ) {
+		mgr._desktop.removeEventListener(
+			'pointerdown',
+			mgr._overviewPointerDownHandler,
+			true,
+		);
+		mgr._overviewPointerDownHandler = null;
+	}
+	if ( mgr._overviewPointerUpHandler ) {
+		mgr._desktop.removeEventListener(
+			'pointerup',
+			mgr._overviewPointerUpHandler,
+			true,
+		);
+		mgr._overviewPointerUpHandler = null;
+	}
+	mgr._overviewPressTarget = null;
+	if ( mgr._overviewKeyHandler ) {
+		document.removeEventListener( 'keydown', mgr._overviewKeyHandler );
+		mgr._overviewKeyHandler = null;
+	}
+	if ( mgr._overviewMouseHandler ) {
+		mgr._desktop.removeEventListener(
+			'mouseover',
+			mgr._overviewMouseHandler,
+		);
+		mgr._overviewMouseHandler = null;
+	}
+	// Fire a final unhover if pointer was over a thumbnail when exit
+	// kicked in — paired-hover guarantee for plugin authors doing
+	// accounting.
+	if ( mgr._lastOverviewHoverId ) {
+		doAction( HOOKS.OVERVIEW_WINDOW_UNHOVER, {
+			windowId: mgr._lastOverviewHoverId,
+		} );
+		mgr._lastOverviewHoverId = null;
+	}
+}

@@ -39,6 +39,7 @@ import {
 } from './native-windows';
 import { registerBuiltInWidgets } from './widgets/built-in';
 import * as widgetRegistry from './widgets/registry';
+import { createWidgetRegistrySync } from './widgets/server-sync';
 import { WPD_COMPONENT_TAGS } from './ui/components';
 import {
 	registerModule,
@@ -516,6 +517,19 @@ function init(): void {
 		Array.isArray( config.nativeWindows ) ? config.nativeWindows : [],
 	);
 
+	// Widget-registry sync — same story for the right-column widget
+	// layer. Plugins declare widgets via `wp_register_desktop_widget()`;
+	// the shell adds / removes defs from its registry as plugins
+	// activate / deactivate mid-session, dynamically loading the
+	// plugin's script so the mount callback lands on
+	// `window.wpDesktopWidgets[ id ]` before we build the WidgetDef.
+	const syncServerWidgets = createWidgetRegistrySync( {
+		layer: widgetLayer,
+	} );
+	void syncServerWidgets(
+		Array.isArray( config.serverWidgets ) ? config.serverWidgets : [],
+	);
+
 	// Live menu refresh — rebuild both rails when a plugin activation
 	// or deactivation lands in any windowed `plugins.php`. Without
 	// this the dock + taskbar reflect the server-side `$menu` at
@@ -533,6 +547,7 @@ function init(): void {
 		desktopArea,
 		config,
 		syncNativeWindows,
+		syncServerWidgets,
 	);
 
 	// Expose the public API on `window.wp.desktop`. The `hooks` field
@@ -1142,6 +1157,9 @@ function bindMenuRefresh(
 	syncNativeWindows: (
 		list: import( './types' ).NativeWindowServerEntry[],
 	) => Promise< void >,
+	syncServerWidgets: (
+		list: import( './types' ).DesktopWidgetServerEntry[],
+	) => Promise< void >,
 ): () => Promise<void> {
 	// Shared applier — takes a freshly-split payload and rebuilds
 	// both rails. Extracted so the message-with-payload path (no
@@ -1150,10 +1168,12 @@ function bindMenuRefresh(
 		dockItems?: unknown;
 		taskbarItems?: unknown;
 		nativeWindows?: unknown;
+		serverWidgets?: unknown;
 	} ): void => {
 		const dockItems = payload.dockItems;
 		const taskbarItems = payload.taskbarItems;
 		const nativeWindows = payload.nativeWindows;
+		const serverWidgets = payload.serverWidgets;
 
 		// Guard: an empty `dockItems` list is NEVER legitimate —
 		// WordPress Core always ships Dashboard, which lands on the
@@ -1200,6 +1220,18 @@ function bindMenuRefresh(
 			config.nativeWindows =
 				nativeWindows as DesktopConfig[ 'nativeWindows' ];
 		}
+
+		// Widget-registry sync — same lifecycle story for the
+		// right-column widget layer. Plugins declared via
+		// `wp_register_desktop_widget()` show up in the picker
+		// without a reload; deactivated plugin widgets disappear.
+		if ( Array.isArray( serverWidgets ) ) {
+			void syncServerWidgets(
+				serverWidgets as import( './types' ).DesktopWidgetServerEntry[],
+			);
+			config.serverWidgets =
+				serverWidgets as DesktopConfig[ 'serverWidgets' ];
+		}
 	};
 
 	const refresh = async (): Promise<void> => {
@@ -1219,6 +1251,7 @@ function bindMenuRefresh(
 				dockItems?: DesktopConfig[ 'dockItems' ];
 				taskbarItems?: DesktopConfig[ 'taskbarItems' ];
 				nativeWindows?: DesktopConfig[ 'nativeWindows' ];
+				serverWidgets?: DesktopConfig[ 'serverWidgets' ];
 			};
 			applyPayload( data );
 		} catch ( err ) {

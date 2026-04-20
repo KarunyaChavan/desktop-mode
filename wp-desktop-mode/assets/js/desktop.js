@@ -6450,7 +6450,7 @@ var wpDesktop = function(exports) {
       seed$1.push(def);
     }
   }
-  function unregister(id) {
+  function unregister$1(id) {
     const idx = seed$1.findIndex((w) => w.id === id);
     if (idx >= 0) {
       seed$1.splice(idx, 1);
@@ -7219,7 +7219,7 @@ var wpDesktop = function(exports) {
   }
   function registerCustomImageIfPresent(state) {
     if (!state.customImage) {
-      unregister(CUSTOM_IMAGE_ID);
+      unregister$1(CUSTOM_IMAGE_ID);
       return;
     }
     const safeUrl = encodeURI(state.customImage.url);
@@ -7889,6 +7889,12 @@ var wpDesktop = function(exports) {
       seed[idx] = def;
     } else {
       seed.push(def);
+    }
+  }
+  function unregister(id) {
+    const idx = seed.findIndex((w) => w.id === id);
+    if (idx >= 0) {
+      seed.splice(idx, 1);
     }
   }
   function all() {
@@ -8674,6 +8680,53 @@ var wpDesktop = function(exports) {
       return [...this.enabledIds];
     }
     /**
+     * Mount a widget ONLY if it's already in the user's enabled
+     * list AND not currently mounted. No-op when the widget isn't
+     * enabled (user never opted in) and no-op when it's already on
+     * screen. Used by the server-driven sync: when a plugin
+     * activates mid-session, its widget def registers via the
+     * sync's path; if the user had previously enabled that widget
+     * (in a prior session or before the plugin was deactivated),
+     * we want to bring it back on screen without toggling the
+     * "enabled" state or firing a `WIDGET_ADDED` action.
+     *
+     * The net behaviour is "rehydrate this one widget now that
+     * its def is finally registered," which is subtly different
+     * from `ensureMounted` (which OPT-INs the user into enabling
+     * the widget for the first time).
+     */
+    mountIfEnabled(id) {
+      if (!get(id)) {
+        return;
+      }
+      if (!this.enabledIds.includes(id)) {
+        return;
+      }
+      if (this.mounted.has(id)) {
+        return;
+      }
+      this.mountById(id);
+      this.paintEmptyState();
+    }
+    /**
+     * Unmount a widget without touching the persisted enablement.
+     * Used by the server-driven widget-registry sync: when a plugin
+     * deactivates mid-session, its widget defs disappear from the
+     * registry and we need to pull any mounted instance off the
+     * screen — but we deliberately KEEP the id in the user's
+     * enabled list so re-activating the plugin re-mounts it
+     * automatically through `hydrate()`.
+     *
+     * Idempotent; a no-op when the widget isn't currently mounted.
+     */
+    unmount(id) {
+      if (!this.mounted.has(id)) {
+        return;
+      }
+      this.unmountById(id);
+      this.paintEmptyState();
+    }
+    /**
      * Guarantee the widget identified by `id` is currently mounted,
      * adding it to the enabled list if it isn't. No-op when the
      * widget is already on screen. Intended for companion plugins
@@ -9192,6 +9245,96 @@ var wpDesktop = function(exports) {
   };
   function registerBuiltInWidgets() {
     register(clock);
+  }
+  function createWidgetRegistrySync(deps) {
+    const { layer } = deps;
+    const registered = /* @__PURE__ */ new Set();
+    const loadedScripts = /* @__PURE__ */ new Set();
+    const ensureScript = async (entry) => {
+      if (!entry.scriptUrl || loadedScripts.has(entry.scriptUrl)) {
+        return;
+      }
+      try {
+        await loadVendorScript(entry.scriptUrl);
+      } catch (err) {
+        doAction(HOOKS.SHELL_ERROR, {
+          scope: "widget-script-load",
+          id: entry.id,
+          error: err
+        });
+      }
+      loadedScripts.add(entry.scriptUrl);
+    };
+    const buildDefFromEntry = (entry) => {
+      const globals = window.wpDesktopWidgets || {};
+      const mount = globals[entry.id];
+      if (!mount) {
+        doAction(HOOKS.SHELL_ERROR, {
+          scope: "widget-missing-mount",
+          id: entry.id,
+          error: new Error(
+            `[wp-desktop-mode] No mount callback on window.wpDesktopWidgets["${entry.id}"]. Plugin script loaded but didn't register. Check the plugin's enqueue + global assignment.`
+          )
+        });
+        return null;
+      }
+      return {
+        id: entry.id,
+        label: entry.label,
+        description: entry.description,
+        icon: entry.icon,
+        movable: entry.movable,
+        resizable: entry.resizable,
+        minWidth: entry.minWidth || void 0,
+        minHeight: entry.minHeight || void 0,
+        maxWidth: entry.maxWidth || void 0,
+        maxHeight: entry.maxHeight || void 0,
+        defaultWidth: entry.defaultWidth || void 0,
+        defaultHeight: entry.defaultHeight || void 0,
+        mount
+      };
+    };
+    const registerEntry = async (entry) => {
+      if (registered.has(entry.id)) {
+        return;
+      }
+      await ensureScript(entry);
+      const def = buildDefFromEntry(entry);
+      if (!def) {
+        return;
+      }
+      register(def);
+      registered.add(entry.id);
+      refreshWidgetPicker();
+      if (layer) {
+        layer.mountIfEnabled(entry.id);
+      }
+    };
+    const unregisterEntry = (id) => {
+      if (!registered.has(id)) {
+        return;
+      }
+      layer?.unmount(id);
+      unregister(id);
+      registered.delete(id);
+      refreshWidgetPicker();
+    };
+    return async (list) => {
+      const incoming = /* @__PURE__ */ new Set();
+      for (const entry of list) {
+        incoming.add(entry.id);
+      }
+      for (const id of Array.from(registered)) {
+        if (!incoming.has(id)) {
+          unregisterEntry(id);
+        }
+      }
+      for (const entry of list) {
+        if (!registered.has(entry.id)) {
+          await registerEntry(entry);
+        }
+      }
+    };
   }
   const CONFIG = {
     /** Grid stride when sampling the logo PNG. Smaller → denser particle field → heavier frame cost. */
@@ -9794,13 +9937,20 @@ var wpDesktop = function(exports) {
     void syncNativeWindows(
       Array.isArray(config.nativeWindows) ? config.nativeWindows : []
     );
+    const syncServerWidgets = createWidgetRegistrySync({
+      layer: widgetLayer
+    });
+    void syncServerWidgets(
+      Array.isArray(config.serverWidgets) ? config.serverWidgets : []
+    );
     const refreshMenu = bindMenuRefresh(
       dock,
       taskbar,
       taskbarEl,
       desktopArea,
       config,
-      syncNativeWindows
+      syncNativeWindows,
+      syncServerWidgets
     );
     window.wp = window.wp || {};
     window.wp.desktop = {
@@ -10129,11 +10279,12 @@ var wpDesktop = function(exports) {
     });
   }
   const MENU_REFRESH_DEBOUNCE_MS = 250;
-  function bindMenuRefresh(dock, taskbar, taskbarEl, desktopArea, config, syncNativeWindows) {
+  function bindMenuRefresh(dock, taskbar, taskbarEl, desktopArea, config, syncNativeWindows, syncServerWidgets) {
     const applyPayload = (payload) => {
       const dockItems = payload.dockItems;
       const taskbarItems = payload.taskbarItems;
       const nativeWindows = payload.nativeWindows;
+      const serverWidgets = payload.serverWidgets;
       if (!Array.isArray(dockItems) || dockItems.length === 0) {
         return;
       }
@@ -10159,6 +10310,12 @@ var wpDesktop = function(exports) {
           nativeWindows
         );
         config.nativeWindows = nativeWindows;
+      }
+      if (Array.isArray(serverWidgets)) {
+        void syncServerWidgets(
+          serverWidgets
+        );
+        config.serverWidgets = serverWidgets;
       }
     };
     const refresh = async () => {

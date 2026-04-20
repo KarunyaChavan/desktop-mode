@@ -42,6 +42,7 @@ export type {
 	DesktopConfig,
 	DockItemConfig,
 	MonitorEntry,
+	DesktopWidgetServerEntry,
 	NativeWindowDef,
 	NativeWindowServerEntry,
 	Session,

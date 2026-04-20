@@ -177,6 +177,55 @@ export class WidgetLayer {
 	}
 
 	/**
+	 * Mount a widget ONLY if it's already in the user's enabled
+	 * list AND not currently mounted. No-op when the widget isn't
+	 * enabled (user never opted in) and no-op when it's already on
+	 * screen. Used by the server-driven sync: when a plugin
+	 * activates mid-session, its widget def registers via the
+	 * sync's path; if the user had previously enabled that widget
+	 * (in a prior session or before the plugin was deactivated),
+	 * we want to bring it back on screen without toggling the
+	 * "enabled" state or firing a `WIDGET_ADDED` action.
+	 *
+	 * The net behaviour is "rehydrate this one widget now that
+	 * its def is finally registered," which is subtly different
+	 * from `ensureMounted` (which OPT-INs the user into enabling
+	 * the widget for the first time).
+	 */
+	public mountIfEnabled( id: string ): void {
+		if ( ! registry.get( id ) ) {
+			return;
+		}
+		if ( ! this.enabledIds.includes( id ) ) {
+			return;
+		}
+		if ( this.mounted.has( id ) ) {
+			return;
+		}
+		this.mountById( id );
+		this.paintEmptyState();
+	}
+
+	/**
+	 * Unmount a widget without touching the persisted enablement.
+	 * Used by the server-driven widget-registry sync: when a plugin
+	 * deactivates mid-session, its widget defs disappear from the
+	 * registry and we need to pull any mounted instance off the
+	 * screen — but we deliberately KEEP the id in the user's
+	 * enabled list so re-activating the plugin re-mounts it
+	 * automatically through `hydrate()`.
+	 *
+	 * Idempotent; a no-op when the widget isn't currently mounted.
+	 */
+	public unmount( id: string ): void {
+		if ( ! this.mounted.has( id ) ) {
+			return;
+		}
+		this.unmountById( id );
+		this.paintEmptyState();
+	}
+
+	/**
 	 * Guarantee the widget identified by `id` is currently mounted,
 	 * adding it to the enabled list if it isn't. No-op when the
 	 * widget is already on screen. Intended for companion plugins

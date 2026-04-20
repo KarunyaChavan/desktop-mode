@@ -258,6 +258,42 @@ export interface NativeWindowServerEntry {
 }
 
 /**
+ * Server-declared desktop-widget entry passed from PHP via the
+ * `serverWidgets` config field. One entry per
+ * `wp_register_desktop_widget()` call.
+ *
+ * The mount callback itself is not serializable; plugins register
+ * it on `window.wpDesktopWidgets[ <id> ]` as a `(container, ctx)
+ * => teardown` function. The shell pairs that global with the
+ * metadata here to build a full `WidgetDef` at registration time.
+ *
+ * Mid-session activation injects the plugin's script (from
+ * `scriptUrl`) before reading the callback, so newly-activated
+ * plugins surface in the widget picker without a shell reload.
+ *
+ * @public
+ * @since 0.10.0
+ */
+export interface DesktopWidgetServerEntry {
+	id: string;
+	label: string;
+	description: string;
+	icon: string;
+	movable: boolean;
+	resizable: boolean;
+	minWidth: number;
+	minHeight: number;
+	maxWidth: number;
+	maxHeight: number;
+	defaultWidth: number;
+	defaultHeight: number;
+	/** Absolute URL of the plugin's enqueued script. Empty when no script was declared. */
+	scriptUrl: string;
+	/** WordPress script handle (informational). */
+	scriptHandle: string;
+}
+
+/**
  * Live geometry + state snapshot for a single window, returned by
  * `WindowManager.getVisibleRects()`.
  *
@@ -421,6 +457,14 @@ export interface DesktopConfig {
 	 * add / remove with no browser reload.
 	 */
 	nativeWindows: NativeWindowServerEntry[];
+	/**
+	 * Server-declared widgets (from `wp_register_desktop_widget()`).
+	 * Same lifecycle story as native windows — shell syncs the
+	 * widget registry + dynamically loads plugin scripts on mid-
+	 * session activation, so widgets appear in the picker without
+	 * a browser reload.
+	 */
+	serverWidgets: DesktopWidgetServerEntry[];
 	/** Previously saved session (may be empty on first run). */
 	session: Session;
 	/** REST endpoint for reading/writing the session. */

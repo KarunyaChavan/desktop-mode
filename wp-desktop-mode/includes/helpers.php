@@ -596,7 +596,51 @@ function wpdm_build_menu_payload() {
 		'dockItems'     => $dock,
 		'taskbarItems'  => $taskbar,
 		'nativeWindows' => wpdm_build_native_windows_payload(),
+		'serverWidgets' => function_exists( 'wpdm_build_desktop_widgets_payload' )
+			? wpdm_build_desktop_widgets_payload()
+			: array(),
 	);
+}
+
+/**
+ * Resolve a registered WP script handle to an absolute URL
+ * (with version cache-buster appended). Returns an empty string
+ * when the handle isn't registered or has no source — callers
+ * treat an empty string as "no script to load."
+ *
+ * Shared between `wp_register_desktop_window()` and
+ * `wp_register_desktop_widget()` because both need the same
+ * handle→URL plumbing to power mid-session dynamic script
+ * loading in the shell.
+ *
+ * @since 0.10.0
+ *
+ * @param string $handle WP script handle.
+ * @return string Absolute URL, or empty string on miss.
+ */
+function wpdm_resolve_script_url( $handle ) {
+	$handle = (string) $handle;
+	if ( '' === $handle ) {
+		return '';
+	}
+	$wp_scripts = wp_scripts();
+	if ( ! $wp_scripts || ! isset( $wp_scripts->registered[ $handle ] ) ) {
+		return '';
+	}
+	$registered = $wp_scripts->registered[ $handle ];
+	$src        = is_string( $registered->src ) ? $registered->src : '';
+	if ( '' === $src ) {
+		return '';
+	}
+	// Normalize relative paths + attach cache-bust ver.
+	$resolved = $src;
+	if ( 0 === strpos( $resolved, '/' ) && 0 !== strpos( $resolved, '//' ) ) {
+		$resolved = site_url( $resolved );
+	}
+	if ( ! empty( $registered->ver ) ) {
+		$resolved = add_query_arg( 'ver', $registered->ver, $resolved );
+	}
+	return $resolved;
 }
 
 /**
@@ -638,32 +682,8 @@ function wpdm_build_native_windows_payload() {
 
 		// Resolve script handle → URL so the shell can inject a
 		// `<script>` tag dynamically on mid-session activation.
-		// `wp_scripts()->registered[<handle>]->src` is the absolute
-		// path WordPress would have emitted during the normal
-		// enqueue. Missing handle → empty string; shell treats
-		// that as "template only, no script to load."
-		$script_url = '';
 		$script_handle = isset( $entry['script'] ) ? (string) $entry['script'] : '';
-		if ( '' !== $script_handle ) {
-			$wp_scripts = wp_scripts();
-			if ( $wp_scripts && isset( $wp_scripts->registered[ $script_handle ] ) ) {
-				$registered = $wp_scripts->registered[ $script_handle ];
-				$src = is_string( $registered->src ) ? $registered->src : '';
-				if ( '' !== $src ) {
-					// Prefer the fully-qualified URL — admin pages
-					// live at the admin origin so a protocol-relative
-					// shouldn't bite us, but explicit is better.
-					$resolved = $src;
-					if ( 0 === strpos( $resolved, '/' ) && 0 !== strpos( $resolved, '//' ) ) {
-						$resolved = site_url( $resolved );
-					}
-					if ( ! empty( $registered->ver ) ) {
-						$resolved = add_query_arg( 'ver', $registered->ver, $resolved );
-					}
-					$script_url = $resolved;
-				}
-			}
-		}
+		$script_url    = wpdm_resolve_script_url( $script_handle );
 
 		$out[] = array(
 			'id'           => $entry['id'],

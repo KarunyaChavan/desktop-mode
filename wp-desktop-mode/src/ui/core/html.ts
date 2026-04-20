@@ -1,23 +1,22 @@
 /**
  * wpd-ui — minimalistic tagged-template renderer.
  *
- * Inspired by lit-html; deliberately ~200 LOC instead of ~3000. Covers
+ * Inspired by lit-html; deliberately ~400 LOC instead of ~3000. Covers
  * the bindings we actually need:
  *
- *   - text:            `<div>${value}</div>`
- *   - attribute:       `<div class=${value}>...</div>`
- *   - event:           `<button @click=${handler}>...</button>`
- *   - property:        `<input .value=${value}>`
- *   - boolean attr:    `<button ?disabled=${cond}>...</button>`
+ *   - text:               `<div>${value}</div>`
+ *   - nested template:    `<div>${html\`<span>…</span>\`}</div>`
+ *   - array of values:    `<ul>${items.map(i => html\`<li>${i}</li>\`)}</ul>`
+ *   - attribute:          `<div class=${value}>…</div>`
+ *   - event:              `<button @click=${handler}>…</button>`
+ *   - property:           `<input .value=${value}>`
+ *   - boolean attr:       `<button ?disabled=${cond}>…</button>`
  *
- * What it does NOT do (on purpose):
- *   - Nested template results (no `${html\`...\`}` inside another template)
- *   - Keyed list rendering (arrays get serialised via `String()`)
- *   - SVG / MathML namespace handling beyond what `innerHTML` gives
- *
- * Use these primitives from `Component`'s `render()` or pass the
- * result to the lower-level `render(result, container)` helper when
- * mounting into an external node.
+ * A "text slot" — any `${}` between tags — can hold a primitive, a
+ * `TemplateResult`, or an array of either. Arrays diff positionally:
+ * matching lengths + matching child shapes update in place, otherwise
+ * the slot tears down and remounts fresh. Good enough for the UI
+ * we render; no keyed diffing for v1.
  *
  * @since 0.9.0
  */
@@ -41,24 +40,18 @@ export function html(
 	return { __wpdHtml: true, strings, values };
 }
 
+function isTemplateResult( v: unknown ): v is TemplateResult {
+	return !! v && ( v as { __wpdHtml?: boolean } ).__wpdHtml === true;
+}
+
 /**
  * A placeholder marker inserted wherever a `${}` slot lives. After
  * `innerHTML`-parse we walk the tree, find markers, and build a
  * list of `Part`s that know how to update their slot on re-render.
- *
- * The marker is unusual enough that no real markup collides with
- * it (double `$`, the word "wpd", `$$`). Both the text-node and
- * attribute-value forms use the same shape so a single walk picks
- * both up.
  */
 const MARKER_PREFIX = '$$wpd$$';
 const MARKER_RE = /\$\$wpd\$\$(\d+)\$\$/g;
 
-/**
- * Build the interpolated HTML string + returns the raw string so a
- * template element can parse it. Each `${}` slot is replaced by a
- * `$$wpd$$N$$` marker so the walk can find it.
- */
 function joinWithMarkers( strings: TemplateStringsArray ): string {
 	let out = strings[ 0 ];
 	for ( let i = 1; i < strings.length; i++ ) {
@@ -71,18 +64,48 @@ function joinWithMarkers( strings: TemplateStringsArray ): string {
 // Part types — one per binding discovered in the template.
 // ---------------------------------------------------------------
 
+/**
+ * A "child part" owns a rendered region of DOM bracketed by an
+ * end-anchor text node. Content is ALWAYS inserted as preceding
+ * siblings before the anchor; the anchor never moves.
+ *
+ * State tracks what's currently rendered so re-renders can:
+ *   - update text in place,
+ *   - diff nested templates when their `strings` match,
+ *   - diff arrays positionally when their length matches,
+ * and fall back to dispose + remount when shape changes.
+ */
+interface ChildPart {
+	anchor: Text;
+	state: ChildState | null;
+}
+
+type ChildState =
+	| { shape: 'text'; node: Text; text: string }
+	| {
+		shape: 'template';
+		strings: TemplateStringsArray;
+		parts: Part[];
+		/** Top-level nodes mounted for this template — drives dispose. */
+		nodes: Node[];
+	}
+	| { shape: 'array'; entries: ChildPart[] }
+	/**
+	 * Pre-built DOM node threaded through the template. Used when the
+	 * caller wants a stable reference (focus preservation, scroll,
+	 * existing event listeners). We hold the node exactly as given —
+	 * no cloning — so the caller keeps their reference valid.
+	 */
+	| { shape: 'node'; node: Node };
+
 interface NodePart {
 	kind: 'node';
 	valueIndex: number;
-	/** Placeholder text node the renderer replaces / updates. */
-	node: Text;
-	/** Last rendered value so we can skip no-op updates. */
-	last?: unknown;
+	child: ChildPart;
 }
 
 interface AttrPart {
 	kind: 'attr';
-	/** Value indices this attribute weaves — can be more than one. */
 	valueIndices: number[];
 	element: Element;
 	name: string;
@@ -120,12 +143,6 @@ type Part = NodePart | AttrPart | EventPart | PropPart | BoolAttrPart;
 /** Compiled template — cached per unique `strings` array. */
 interface Compiled {
 	template: HTMLTemplateElement;
-	/**
-	 * Factory that takes a cloned fragment and returns the Parts
-	 * wired to that clone's node tree. Kept as a factory (rather
-	 * than index paths) for clarity — templates rarely clone more
-	 * than once in practice anyway.
-	 */
 	buildParts: ( fragment: DocumentFragment ) => Part[];
 }
 
@@ -146,10 +163,6 @@ function compile( strings: TemplateStringsArray ): Compiled {
 	const template = document.createElement( 'template' );
 	template.innerHTML = joinWithMarkers( strings );
 
-	// Walk the just-parsed template, recording HOW to find each
-	// marker (node path + kind) so we can rebuild parts against any
-	// clone of this template. We don't store element references
-	// here — they belong to the template itself, not the clone.
 	interface Recipe {
 		path: number[];
 		kind: Part[ 'kind' ];
@@ -161,9 +174,6 @@ function compile( strings: TemplateStringsArray ): Compiled {
 	const recipes: Recipe[] = [];
 
 	const walk = ( node: Node, path: number[] ): void => {
-		// Collect element attribute bindings first — we consume +
-		// remove any `@…`/`.…`/`?…` attrs so a downstream mount
-		// doesn't see them.
 		if ( node.nodeType === Node.ELEMENT_NODE ) {
 			const el = node as Element;
 			for ( const attr of Array.from( el.attributes ) ) {
@@ -173,7 +183,6 @@ function compile( strings: TemplateStringsArray ): Compiled {
 				if ( MARKER_RE.test( rawValue ) ) {
 					MARKER_RE.lastIndex = 0;
 					if ( prefix === '@' ) {
-						// Event binding — single marker expected.
 						const match = MARKER_RE.exec( rawValue );
 						MARKER_RE.lastIndex = 0;
 						recipes.push( {
@@ -204,8 +213,6 @@ function compile( strings: TemplateStringsArray ): Compiled {
 						} );
 						el.removeAttribute( rawName );
 					} else {
-						// Regular attribute. Could carry 1+ markers;
-						// decompose into template fragments.
 						const fragments: string[] = [];
 						const indices: number[] = [];
 						let lastEnd = 0;
@@ -224,19 +231,21 @@ function compile( strings: TemplateStringsArray ): Compiled {
 							template: fragments,
 							valueIndices: indices,
 						} );
-						// Blank out the placeholder value; the attr
-						// part will set it on first render.
 						el.setAttribute( rawName, '' );
 					}
 				}
 			}
 		}
 
-		// Recurse. For text children we split nodes on markers so
-		// each marker becomes its own placeholder text node.
+		// Iterate a snapshot of children so mutations don't confuse the
+		// loop. Track `shift` so the recipe paths match the post-mutation
+		// live-DOM positions (not the snapshot indices) — each text-node
+		// split inserts `newNodes.length - 1` extra siblings.
 		const children = Array.from( node.childNodes );
+		let shift = 0;
 		for ( let i = 0; i < children.length; i++ ) {
 			const child = children[ i ];
+			const liveIndex = i + shift;
 			if ( child.nodeType === Node.TEXT_NODE ) {
 				const text = child.textContent || '';
 				if ( ! MARKER_RE.test( text ) ) {
@@ -244,8 +253,6 @@ function compile( strings: TemplateStringsArray ): Compiled {
 					continue;
 				}
 				MARKER_RE.lastIndex = 0;
-				// Replace the text node with a sequence of real text
-				// nodes + empty placeholders for each marker.
 				const parent = child.parentNode!;
 				let lastEnd = 0;
 				let m;
@@ -259,7 +266,7 @@ function compile( strings: TemplateStringsArray ): Compiled {
 					const placeholder = document.createTextNode( '' );
 					newNodes.push( placeholder );
 					newRecipes.push( {
-						path: [ ...path, i + newNodes.length - 1 ],
+						path: [ ...path, liveIndex + newNodes.length - 1 ],
 						kind: 'node',
 						valueIndex: Number( m[ 1 ] ),
 					} );
@@ -272,16 +279,11 @@ function compile( strings: TemplateStringsArray ): Compiled {
 					parent.insertBefore( nn, child );
 				}
 				parent.removeChild( child );
-				// The inserted nodes landed before `child`, so
-				// their indices are `i`, `i+1`, ... and we already
-				// wrote those into recipe paths above. Adjust child
-				// loop counter to skip over what we just inserted.
-				i += newNodes.length - 1;
+				// Net change in parent's child count: removed 1, added N.
+				shift += newNodes.length - 1;
 				recipes.push( ...newRecipes );
-				// Rebuild the local children cache since we mutated.
-				// (Only cosmetic — loop uses the immutable Array.from snapshot.)
 			} else {
-				walk( child, [ ...path, i ] );
+				walk( child, [ ...path, liveIndex ] );
 			}
 		}
 	};
@@ -299,7 +301,10 @@ function compile( strings: TemplateStringsArray ): Compiled {
 				out.push( {
 					kind: 'node',
 					valueIndex: r.valueIndex!,
-					node: node as Text,
+					child: {
+						anchor: node as Text,
+						state: null,
+					},
 				} );
 			} else if ( r.kind === 'attr' ) {
 				out.push( {
@@ -340,11 +345,10 @@ function compile( strings: TemplateStringsArray ): Compiled {
 	return entry;
 }
 
-/**
- * Per-container mount state: the strings array it was compiled
- * against, the parts wired to its DOM, the last values array. A
- * fresh `strings` identity triggers a full re-mount.
- */
+// ---------------------------------------------------------------
+// Render pipeline
+// ---------------------------------------------------------------
+
 interface MountState {
 	strings: TemplateStringsArray;
 	parts: Part[];
@@ -371,8 +375,6 @@ export function render(
 	const fragment = compiled.template.content.cloneNode( true ) as DocumentFragment;
 	const parts = compiled.buildParts( fragment );
 
-	// Reset container. Using textContent='' is faster than innerHTML=''
-	// because it avoids the HTML parser path.
 	while ( container.firstChild ) {
 		container.removeChild( container.firstChild );
 	}
@@ -386,14 +388,8 @@ export function render(
 function applyValues( parts: Part[], values: readonly unknown[] ): void {
 	for ( const part of parts ) {
 		if ( part.kind === 'node' ) {
-			const next = values[ part.valueIndex ];
-			if ( next !== part.last ) {
-				part.last = next;
-				part.node.textContent = formatText( next );
-			}
+			updateChildPart( part.child, values[ part.valueIndex ] );
 		} else if ( part.kind === 'attr' ) {
-			// Build the new attribute value from template fragments +
-			// current values. Skip the write if unchanged.
 			let composed = part.template[ 0 ];
 			for ( let i = 0; i < part.valueIndices.length; i++ ) {
 				composed += formatText( values[ part.valueIndices[ i ] ] );
@@ -439,13 +435,177 @@ function applyValues( parts: Part[], values: readonly unknown[] ): void {
 	}
 }
 
-/** Coerce a slot value to its text representation for text/attr parts. */
+/**
+ * Reconcile a `ChildPart` against a new value. Dispatches on the
+ * value's shape (text / template / array / nullish) and either
+ * updates in place or tears down + remounts.
+ */
+function updateChildPart( child: ChildPart, value: unknown ): void {
+	if ( value === null || value === undefined || value === false ) {
+		// Empty shape. Dispose whatever was there; leave nothing.
+		if ( child.state ) {
+			disposeChildState( child.state );
+			child.state = null;
+		}
+		return;
+	}
+
+	if ( Array.isArray( value ) ) {
+		updateArrayChild( child, value );
+		return;
+	}
+
+	if ( isTemplateResult( value ) ) {
+		updateTemplateChild( child, value );
+		return;
+	}
+
+	if ( value instanceof Node ) {
+		updateNodeChild( child, value );
+		return;
+	}
+
+	// Primitive (string / number / boolean-true).
+	updateTextChild( child, formatText( value ) );
+}
+
+function updateNodeChild( child: ChildPart, node: Node ): void {
+	const old = child.state;
+	if ( old?.shape === 'node' && old.node === node ) {
+		return;
+	}
+	if ( old ) {
+		disposeChildState( old );
+	}
+	insertBeforeAnchor( child, [ node ] );
+	child.state = { shape: 'node', node };
+}
+
+function updateTextChild( child: ChildPart, text: string ): void {
+	const old = child.state;
+	if ( old?.shape === 'text' ) {
+		// Compare the cached last-written string rather than reading
+		// back `node.textContent`. Some test harnesses (vi.spyOn with
+		// no mockImplementation) stub the property accessor entirely,
+		// so the getter returns undefined and a naive `!== text`
+		// check would always fire a write.
+		if ( old.text !== text ) {
+			old.node.textContent = text;
+			old.text = text;
+		}
+		return;
+	}
+	if ( old ) {
+		disposeChildState( old );
+	}
+	const node = document.createTextNode( text );
+	insertBeforeAnchor( child, [ node ] );
+	child.state = { shape: 'text', node, text };
+}
+
+function updateTemplateChild( child: ChildPart, result: TemplateResult ): void {
+	const old = child.state;
+	if ( old?.shape === 'template' && old.strings === result.strings ) {
+		applyValues( old.parts, result.values );
+		return;
+	}
+	if ( old ) {
+		disposeChildState( old );
+	}
+	const compiled = compile( result.strings );
+	const fragment = compiled.template.content.cloneNode( true ) as DocumentFragment;
+	const parts = compiled.buildParts( fragment );
+	const topNodes = Array.from( fragment.childNodes );
+	insertBeforeAnchor( child, [ fragment ] );
+	applyValues( parts, result.values );
+	child.state = {
+		shape: 'template',
+		strings: result.strings,
+		parts,
+		nodes: topNodes,
+	};
+}
+
+function updateArrayChild( child: ChildPart, arr: readonly unknown[] ): void {
+	const old = child.state;
+	if ( old?.shape === 'array' && old.entries.length === arr.length ) {
+		// Length match — reconcile each slot in place. Each entry
+		// has its own sub-anchor, so per-index transitions (text ↔
+		// template) handle themselves via the same update pipeline.
+		for ( let i = 0; i < arr.length; i++ ) {
+			updateChildPart( old.entries[ i ], arr[ i ] );
+		}
+		return;
+	}
+	if ( old ) {
+		disposeChildState( old );
+	}
+	// Mount each item with its own anchor so future re-renders can
+	// update in place. Anchors are inserted in order before this
+	// child's end anchor.
+	const entries: ChildPart[] = [];
+	for ( const v of arr ) {
+		const entryAnchor = document.createTextNode( '' );
+		insertBeforeAnchor( child, [ entryAnchor ] );
+		const entry: ChildPart = { anchor: entryAnchor, state: null };
+		updateChildPart( entry, v );
+		entries.push( entry );
+	}
+	child.state = { shape: 'array', entries };
+}
+
+/**
+ * Insert the given nodes into the DOM just before `child.anchor`.
+ * Works for both `DocumentFragment` (which empties on insert, so
+ * its child count is pre-captured by callers) and plain `Node`s.
+ */
+function insertBeforeAnchor( child: ChildPart, nodes: Node[] ): void {
+	const parent = child.anchor.parentNode;
+	if ( ! parent ) {
+		return;
+	}
+	for ( const node of nodes ) {
+		parent.insertBefore( node, child.anchor );
+	}
+}
+
+/**
+ * Recursively remove every node that was mounted for the given
+ * state. Event listeners on removed elements are GC'd with the
+ * nodes; no explicit cleanup needed.
+ */
+function disposeChildState( state: ChildState ): void {
+	if ( state.shape === 'text' ) {
+		state.node.remove();
+		return;
+	}
+	if ( state.shape === 'template' ) {
+		for ( const node of state.nodes ) {
+			if ( node.parentNode ) {
+				node.parentNode.removeChild( node );
+			}
+		}
+		return;
+	}
+	if ( state.shape === 'node' ) {
+		if ( state.node.parentNode ) {
+			state.node.parentNode.removeChild( state.node );
+		}
+		return;
+	}
+	// Array — dispose each entry's state AND remove its anchor.
+	for ( const entry of state.entries ) {
+		if ( entry.state ) {
+			disposeChildState( entry.state );
+		}
+		entry.anchor.remove();
+	}
+}
+
+/** Coerce a primitive slot value to its text representation. */
 function formatText( v: unknown ): string {
 	if ( v === null || v === undefined || v === false ) {
 		return '';
-	}
-	if ( Array.isArray( v ) ) {
-		return v.map( formatText ).join( '' );
 	}
 	return String( v );
 }

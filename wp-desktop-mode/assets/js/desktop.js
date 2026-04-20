@@ -269,6 +269,9 @@ var wpDesktop = function(exports) {
   function html(strings, ...values) {
     return { __wpdHtml: true, strings, values };
   }
+  function isTemplateResult(v) {
+    return !!v && v.__wpdHtml === true;
+  }
   const MARKER_PREFIX = "$$wpd$$";
   const MARKER_RE = /\$\$wpd\$\$(\d+)\$\$/g;
   function joinWithMarkers(strings) {
@@ -351,8 +354,10 @@ var wpDesktop = function(exports) {
         }
       }
       const children = Array.from(node.childNodes);
+      let shift = 0;
       for (let i = 0; i < children.length; i++) {
         const child = children[i];
+        const liveIndex = i + shift;
         if (child.nodeType === Node.TEXT_NODE) {
           const text = child.textContent || "";
           if (!MARKER_RE.test(text)) {
@@ -373,7 +378,7 @@ var wpDesktop = function(exports) {
             const placeholder = document.createTextNode("");
             newNodes.push(placeholder);
             newRecipes.push({
-              path: [...path, i + newNodes.length - 1],
+              path: [...path, liveIndex + newNodes.length - 1],
               kind: "node",
               valueIndex: Number(m[1])
             });
@@ -386,10 +391,10 @@ var wpDesktop = function(exports) {
             parent.insertBefore(nn, child);
           }
           parent.removeChild(child);
-          i += newNodes.length - 1;
+          shift += newNodes.length - 1;
           recipes.push(...newRecipes);
         } else {
-          walk(child, [...path, i]);
+          walk(child, [...path, liveIndex]);
         }
       }
     };
@@ -405,7 +410,10 @@ var wpDesktop = function(exports) {
           out.push({
             kind: "node",
             valueIndex: r.valueIndex,
-            node
+            child: {
+              anchor: node,
+              state: null
+            }
           });
         } else if (r.kind === "attr") {
           out.push({
@@ -464,11 +472,7 @@ var wpDesktop = function(exports) {
   function applyValues(parts, values) {
     for (const part of parts) {
       if (part.kind === "node") {
-        const next = values[part.valueIndex];
-        if (next !== part.last) {
-          part.last = next;
-          part.node.textContent = formatText(next);
-        }
+        updateChildPart(part.child, values[part.valueIndex]);
       } else if (part.kind === "attr") {
         let composed = part.template[0];
         for (let i = 0; i < part.valueIndices.length; i++) {
@@ -513,12 +517,136 @@ var wpDesktop = function(exports) {
       }
     }
   }
+  function updateChildPart(child, value) {
+    if (value === null || value === void 0 || value === false) {
+      if (child.state) {
+        disposeChildState(child.state);
+        child.state = null;
+      }
+      return;
+    }
+    if (Array.isArray(value)) {
+      updateArrayChild(child, value);
+      return;
+    }
+    if (isTemplateResult(value)) {
+      updateTemplateChild(child, value);
+      return;
+    }
+    if (value instanceof Node) {
+      updateNodeChild(child, value);
+      return;
+    }
+    updateTextChild(child, formatText(value));
+  }
+  function updateNodeChild(child, node) {
+    const old = child.state;
+    if (old?.shape === "node" && old.node === node) {
+      return;
+    }
+    if (old) {
+      disposeChildState(old);
+    }
+    insertBeforeAnchor(child, [node]);
+    child.state = { shape: "node", node };
+  }
+  function updateTextChild(child, text) {
+    const old = child.state;
+    if (old?.shape === "text") {
+      if (old.text !== text) {
+        old.node.textContent = text;
+        old.text = text;
+      }
+      return;
+    }
+    if (old) {
+      disposeChildState(old);
+    }
+    const node = document.createTextNode(text);
+    insertBeforeAnchor(child, [node]);
+    child.state = { shape: "text", node, text };
+  }
+  function updateTemplateChild(child, result) {
+    const old = child.state;
+    if (old?.shape === "template" && old.strings === result.strings) {
+      applyValues(old.parts, result.values);
+      return;
+    }
+    if (old) {
+      disposeChildState(old);
+    }
+    const compiled = compile(result.strings);
+    const fragment = compiled.template.content.cloneNode(true);
+    const parts = compiled.buildParts(fragment);
+    const topNodes = Array.from(fragment.childNodes);
+    insertBeforeAnchor(child, [fragment]);
+    applyValues(parts, result.values);
+    child.state = {
+      shape: "template",
+      strings: result.strings,
+      parts,
+      nodes: topNodes
+    };
+  }
+  function updateArrayChild(child, arr) {
+    const old = child.state;
+    if (old?.shape === "array" && old.entries.length === arr.length) {
+      for (let i = 0; i < arr.length; i++) {
+        updateChildPart(old.entries[i], arr[i]);
+      }
+      return;
+    }
+    if (old) {
+      disposeChildState(old);
+    }
+    const entries = [];
+    for (const v of arr) {
+      const entryAnchor = document.createTextNode("");
+      insertBeforeAnchor(child, [entryAnchor]);
+      const entry = { anchor: entryAnchor, state: null };
+      updateChildPart(entry, v);
+      entries.push(entry);
+    }
+    child.state = { shape: "array", entries };
+  }
+  function insertBeforeAnchor(child, nodes) {
+    const parent = child.anchor.parentNode;
+    if (!parent) {
+      return;
+    }
+    for (const node of nodes) {
+      parent.insertBefore(node, child.anchor);
+    }
+  }
+  function disposeChildState(state) {
+    if (state.shape === "text") {
+      state.node.remove();
+      return;
+    }
+    if (state.shape === "template") {
+      for (const node of state.nodes) {
+        if (node.parentNode) {
+          node.parentNode.removeChild(node);
+        }
+      }
+      return;
+    }
+    if (state.shape === "node") {
+      if (state.node.parentNode) {
+        state.node.parentNode.removeChild(state.node);
+      }
+      return;
+    }
+    for (const entry of state.entries) {
+      if (entry.state) {
+        disposeChildState(entry.state);
+      }
+      entry.anchor.remove();
+    }
+  }
   function formatText(v) {
     if (v === null || v === void 0 || v === false) {
       return "";
-    }
-    if (Array.isArray(v)) {
-      return v.map(formatText).join("");
     }
     return String(v);
   }
@@ -4233,68 +4361,6 @@ var wpDesktop = function(exports) {
       }
     }
   }
-  const seed$1 = [];
-  function register$1(def) {
-    if (!isValidDef$1(def)) {
-      if (typeof console !== "undefined") {
-        console.warn(
-          "[wp-desktop-mode] Ignored invalid wallpaper registration:",
-          def
-        );
-      }
-      return;
-    }
-    const idx = seed$1.findIndex((w) => w.id === def.id);
-    if (idx >= 0) {
-      seed$1[idx] = def;
-    } else {
-      seed$1.push(def);
-    }
-  }
-  function unregister(id) {
-    const idx = seed$1.findIndex((w) => w.id === id);
-    if (idx >= 0) {
-      seed$1.splice(idx, 1);
-    }
-  }
-  function all$1() {
-    const copy = seed$1.slice();
-    const filtered = applyFilters(HOOKS.WALLPAPERS, copy);
-    if (!Array.isArray(filtered)) {
-      if (typeof console !== "undefined") {
-        console.warn(
-          "[wp-desktop-mode] `wp-desktop.wallpapers` filter returned a non-array; falling back to seed list."
-        );
-      }
-      return copy;
-    }
-    return filtered.filter(isValidDef$1);
-  }
-  function get$1(id) {
-    return all$1().find((w) => w.id === id);
-  }
-  function isValidDef$1(def) {
-    if (!def || typeof def !== "object") {
-      return false;
-    }
-    const d = def;
-    if (typeof d.id !== "string" || d.id === "") {
-      return false;
-    }
-    if (typeof d.label !== "string" || d.label === "") {
-      return false;
-    }
-    if (typeof d.preview !== "string" || d.preview === "") {
-      return false;
-    }
-    if (d.type === "css") {
-      return typeof d.value === "string" || typeof d.resolveValue === "function";
-    }
-    if (d.type === "canvas") {
-      return typeof d.mount === "function";
-    }
-    return false;
-  }
   const styles$6 = css`
 	:host {
 		display: block;
@@ -4899,6 +4965,68 @@ var wpDesktop = function(exports) {
   _WpdTabs.styles = [tabsStyles];
   let WpdTabs = _WpdTabs;
   defineComponent("wpd-tabs", WpdTabs);
+  const seed$1 = [];
+  function register$1(def) {
+    if (!isValidDef$1(def)) {
+      if (typeof console !== "undefined") {
+        console.warn(
+          "[wp-desktop-mode] Ignored invalid wallpaper registration:",
+          def
+        );
+      }
+      return;
+    }
+    const idx = seed$1.findIndex((w) => w.id === def.id);
+    if (idx >= 0) {
+      seed$1[idx] = def;
+    } else {
+      seed$1.push(def);
+    }
+  }
+  function unregister(id) {
+    const idx = seed$1.findIndex((w) => w.id === id);
+    if (idx >= 0) {
+      seed$1.splice(idx, 1);
+    }
+  }
+  function all$1() {
+    const copy = seed$1.slice();
+    const filtered = applyFilters(HOOKS.WALLPAPERS, copy);
+    if (!Array.isArray(filtered)) {
+      if (typeof console !== "undefined") {
+        console.warn(
+          "[wp-desktop-mode] `wp-desktop.wallpapers` filter returned a non-array; falling back to seed list."
+        );
+      }
+      return copy;
+    }
+    return filtered.filter(isValidDef$1);
+  }
+  function get$1(id) {
+    return all$1().find((w) => w.id === id);
+  }
+  function isValidDef$1(def) {
+    if (!def || typeof def !== "object") {
+      return false;
+    }
+    const d = def;
+    if (typeof d.id !== "string" || d.id === "") {
+      return false;
+    }
+    if (typeof d.label !== "string" || d.label === "") {
+      return false;
+    }
+    if (typeof d.preview !== "string" || d.preview === "") {
+      return false;
+    }
+    if (d.type === "css") {
+      return typeof d.value === "string" || typeof d.resolveValue === "function";
+    }
+    if (d.type === "canvas") {
+      return typeof d.mount === "function";
+    }
+    return false;
+  }
   const STORAGE_KEY$1 = "wp-desktop-os-settings";
   const HD_MIN_WIDTH = 1920;
   const HD_MIN_HEIGHT = 1080;
@@ -4920,36 +5048,6 @@ var wpDesktop = function(exports) {
     { id: "default", label: "Default", width: 56, icon: 20 },
     { id: "large", label: "Large", width: 72, icon: 26 }
   ];
-  function translateAccentLabel(id, fallback) {
-    switch (id) {
-      case "wp-blue":
-        return __("WordPress Blue");
-      case "indigo":
-        return __("Indigo");
-      case "teal":
-        return __("Teal");
-      case "emerald":
-        return __("Emerald");
-      case "amber":
-        return __("Amber");
-      case "rose":
-        return __("Rose");
-      default:
-        return fallback;
-    }
-  }
-  function translateDockSizeLabel(id, fallback) {
-    switch (id) {
-      case "compact":
-        return __("Compact");
-      case "default":
-        return __("Default");
-      case "large":
-        return __("Large");
-      default:
-        return fallback;
-    }
-  }
   const DEFAULTS = {
     wallpaper: DEFAULT_WALLPAPER_ID,
     accent: "wp-blue",
@@ -4962,872 +5060,58 @@ var wpDesktop = function(exports) {
     customImage: null,
     libraryHdOnly: true
   };
-  class OsSettings {
-    constructor(config, layer) {
-      this.activeEditorTeardown = null;
-      this.config = config;
-      this.layer = layer;
-      this.state = this.load();
-      this.registerCustomGradient();
-      this.registerCustomImageIfPresent();
+  function isPromise(value) {
+    return !!value && typeof value === "object" && typeof value.then === "function";
+  }
+  function isHexColor(value) {
+    return typeof value === "string" && /^#[0-9a-f]{3,8}$/i.test(value);
+  }
+  function sanitizeFilename(name) {
+    const cleaned = name.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+    return cleaned || "wallpaper";
+  }
+  function isUsableImage(item) {
+    if (!item || typeof item.id !== "number" || !item.source_url) {
+      return false;
     }
-    /**
-     * Apply the current state: wallpaper via the layer, accent + dock
-     * size as CSS custom properties on the shell.
-     *
-     * Safe to call repeatedly — calls into `layer.apply` dedupe via
-     * generation counter; CSS property writes are idempotent.
-     */
-    apply() {
-      const shell = document.getElementById("wp-desktop-shell");
-      if (!shell) {
-        return;
-      }
-      const def = get$1(this.state.wallpaper) || get$1(DEFAULT_WALLPAPER_ID) || all$1()[0];
-      if (def) {
-        this.layer.apply(def);
-      }
-      const accent = ACCENTS.find((a) => a.id === this.state.accent) ?? ACCENTS[0];
-      const dockSize = DOCK_SIZES.find((d) => d.id === this.state.dockSize) ?? DOCK_SIZES[1];
-      const root = document.documentElement;
-      root.style.setProperty("--wp-admin-theme-color", accent.value);
-      root.style.setProperty("--wp-desktop-dock-width", `${dockSize.width}px`);
-      root.style.setProperty("--wp-desktop-dock-icon-size", `${dockSize.icon}px`);
+    const d = item.media_details;
+    return !!d && typeof d.width === "number" && typeof d.height === "number" && d.width > 0 && d.height > 0;
+  }
+  function stripHtml(markup) {
+    if (!markup) {
+      return "";
     }
-    /**
-     * Render the settings panel into the given native-window body.
-     *
-     * Builds three sections (wallpaper, accent, dock size) and wires
-     * each to save/apply on change. The panel is a one-shot build per
-     * window open — closing and re-opening renders a fresh tree.
-     */
-    renderPanel(body) {
-      this.teardownEditor();
-      body.classList.add("wp-desktop-os-settings");
-      body.innerHTML = "";
-      const intro = document.createElement("p");
-      intro.className = "wp-desktop-os-settings__intro";
-      intro.textContent = __(
-        "Personalize your desktop. Changes apply instantly and are saved to this browser."
-      );
-      body.appendChild(intro);
-      body.appendChild(this.buildWallpaperSection(body));
-      body.appendChild(this.buildAccentSection());
-      body.appendChild(this.buildDockSizeSection());
-      const footer = document.createElement("div");
-      footer.className = "wp-desktop-os-settings__footer";
-      const reset = document.createElement("wpd-button");
-      reset.setAttribute("variant", "ghost");
-      reset.textContent = __("Reset to defaults");
-      reset.addEventListener("click", () => {
-        const preservedImage = this.state.customImage;
-        this.state = { ...DEFAULTS, customImage: preservedImage };
-        this.save();
-        this.apply();
-        this.renderPanel(body);
-      });
-      footer.appendChild(reset);
-      body.appendChild(footer);
-    }
-    // ------------------------------------------------------------------
-    // Built-in dynamic registrations
-    // ------------------------------------------------------------------
-    /**
-     * Register the custom-gradient wallpaper. Its CSS value is computed
-     * on every apply from user state (so live edits through the editor
-     * repaint without re-registering), and its renderEditor hosts the
-     * color + angle controls.
-     */
-    registerCustomGradient() {
-      register$1({
-        id: CUSTOM_GRADIENT_ID,
-        label: __("Custom gradient"),
-        type: "css",
-        preview: this.customGradientCss(),
-        resolveValue: () => this.customGradientCss(),
-        renderEditor: (container) => this.renderCustomGradientEditor(container)
-      });
-    }
-    /**
-     * Register or update the custom-image wallpaper based on current
-     * state. Called on boot and after every upload/library pick/remove
-     * action so the registry entry tracks `state.customImage`.
-     */
-    registerCustomImageIfPresent() {
-      if (!this.state.customImage) {
-        unregister(CUSTOM_IMAGE_ID);
-        return;
-      }
-      const safeUrl = encodeURI(this.state.customImage.url);
-      const value = `url("${safeUrl}") center/cover no-repeat, #1d2327`;
-      register$1({
-        id: CUSTOM_IMAGE_ID,
-        label: __("Custom image"),
-        type: "css",
-        value,
-        preview: value
-      });
-    }
-    // ------------------------------------------------------------------
-    // Wallpaper section — registry-driven grid + editor slot + image UI
-    // ------------------------------------------------------------------
-    buildWallpaperSection(body) {
-      const section = document.createElement("wpd-section");
-      section.setAttribute("heading", __("Wallpaper"));
-      section.setAttribute(
-        "description",
-        __(
-          "The backdrop behind your windows. Pick a preset, mix your own gradient, or drop in an image."
-        )
-      );
-      const grid = document.createElement("div");
-      grid.className = "wp-desktop-os-settings__grid wp-desktop-os-settings__grid--wallpapers";
-      const editorSlot = document.createElement("div");
-      editorSlot.className = "wp-desktop-os-settings__editor-slot";
-      editorSlot.dataset.expanded = "false";
-      const editorInner = document.createElement("div");
-      editorInner.className = "wp-desktop-os-settings__editor-slot-inner";
-      editorSlot.appendChild(editorInner);
-      const onSelect = (def) => {
-        this.selectWallpaper(def.id, body);
-        this.syncEditorSlot(editorSlot, editorInner, def);
-      };
-      for (const def of all$1()) {
-        if (def.id === CUSTOM_IMAGE_ID) {
-          continue;
-        }
-        grid.appendChild(this.buildWallpaperSwatch(def, () => onSelect(def)));
-      }
-      section.appendChild(grid);
-      const active2 = get$1(this.state.wallpaper);
-      if (active2) {
-        this.syncEditorSlot(editorSlot, editorInner, active2);
-      }
-      section.appendChild(editorSlot);
-      section.appendChild(this.buildCustomImageSection(body));
-      return section;
-    }
-    buildWallpaperSwatch(def, onClick) {
-      const swatch = document.createElement("wpd-swatch");
-      swatch.setAttribute("value", def.id);
-      swatch.setAttribute("label", def.label);
-      swatch.setAttribute("preview", def.preview);
-      swatch.setAttribute("variant", "wallpaper");
-      swatch.dataset.wallpaperId = def.id;
-      if (this.state.wallpaper === def.id) {
-        swatch.setAttribute("selected", "");
-      }
-      const labelEl = document.createElement("span");
-      labelEl.className = "wp-desktop-os-settings__swatch-label";
-      labelEl.textContent = def.label;
-      swatch.appendChild(labelEl);
-      swatch.addEventListener("wpd-pick", onClick);
-      return swatch;
-    }
-    /**
-     * Select a wallpaper by id. Updates state, persists, applies to the
-     * shell, and refreshes the grid's aria-pressed attributes.
-     */
-    selectWallpaper(id, body) {
-      this.state.wallpaper = id;
-      this.save();
-      this.apply();
-      this.refreshWallpaperPressedState(body);
-    }
-    refreshWallpaperPressedState(body) {
-      body.querySelectorAll("[data-wallpaper-id]").forEach((el) => {
-        const selected = el.dataset.wallpaperId === this.state.wallpaper;
-        if (selected) {
-          el.setAttribute("selected", "");
-        } else {
-          el.removeAttribute("selected");
-        }
-        el.setAttribute("aria-pressed", selected ? "true" : "false");
-      });
-    }
-    /**
-     * Mount the given wallpaper's editor into the editor slot, tearing
-     * down any prior editor first. If the wallpaper has no editor, the
-     * slot collapses.
-     */
-    syncEditorSlot(slot, inner, def) {
-      this.teardownEditor();
-      inner.innerHTML = "";
-      if (!def.renderEditor) {
-        slot.dataset.expanded = "false";
-        return;
-      }
-      const ctx = {
-        id: def.id,
-        pluginUrl: "",
-        prefersReducedMotion: typeof window.matchMedia === "function" && window.matchMedia("( prefers-reduced-motion: reduce )").matches,
-        visible: !document.hidden
-      };
-      try {
-        const result = def.renderEditor(inner, ctx);
-        if (isPromise(result)) {
-          result.then((teardown) => {
-            this.activeEditorTeardown = teardown;
-          });
-        } else {
-          this.activeEditorTeardown = result;
-        }
-      } catch (err) {
-        if (typeof console !== "undefined") {
-          console.error(
-            `[wp-desktop-mode] Wallpaper "${def.id}" renderEditor threw:`,
-            err
-          );
-        }
-      }
-      slot.dataset.expanded = "true";
-    }
-    teardownEditor() {
-      if (this.activeEditorTeardown) {
-        try {
-          this.activeEditorTeardown();
-        } catch (err) {
-          if (typeof console !== "undefined") {
-            console.error(
-              "[wp-desktop-mode] Wallpaper editor teardown threw:",
-              err
-            );
-          }
-        }
-        this.activeEditorTeardown = null;
-      }
-    }
-    // ------------------------------------------------------------------
-    // Custom gradient editor — implements `renderEditor` for the
-    // built-in custom-gradient wallpaper. Color + angle inputs write
-    // to state; every change updates the swatch preview and re-applies.
-    // ------------------------------------------------------------------
-    renderCustomGradientEditor(container) {
-      container.classList.add("wp-desktop-os-settings__gradient-editor-inner");
-      container.innerHTML = "";
-      const onGradientChange = () => {
-        this.save();
-        this.apply();
-        this.syncGradientPreviewSwatch(container);
-      };
-      const row = document.createElement("div");
-      row.className = "wp-desktop-os-settings__gradient-row";
-      const fromField = document.createElement("wpd-color-field");
-      fromField.setAttribute("variant", "block");
-      fromField.setAttribute("label", __("From"));
-      fromField.setAttribute("value", this.state.customGradient.from);
-      fromField.addEventListener("wpd-color-change", (e) => {
-        this.state.customGradient.from = e.detail.value;
-        onGradientChange();
-      });
-      row.appendChild(fromField);
-      const toField = document.createElement("wpd-color-field");
-      toField.setAttribute("variant", "block");
-      toField.setAttribute("label", __("To"));
-      toField.setAttribute("value", this.state.customGradient.to);
-      toField.addEventListener("wpd-color-change", (e) => {
-        this.state.customGradient.to = e.detail.value;
-        onGradientChange();
-      });
-      row.appendChild(toField);
-      container.appendChild(row);
-      const angleField = document.createElement("wpd-range-field");
-      angleField.setAttribute("label", __("Angle"));
-      angleField.setAttribute("min", "0");
-      angleField.setAttribute("max", "360");
-      angleField.setAttribute("step", "1");
-      angleField.setAttribute("suffix", "°");
-      angleField.setAttribute(
-        "value",
-        String(this.state.customGradient.angle)
-      );
-      angleField.addEventListener("wpd-range-change", (e) => {
-        this.state.customGradient.angle = e.detail.value;
-        onGradientChange();
-      });
-      container.appendChild(angleField);
-      return () => {
-      };
-    }
-    syncGradientPreviewSwatch(editorEl) {
-      const section = editorEl.closest("wpd-section");
-      const preview = section?.querySelector(
-        `[data-wallpaper-id="${CUSTOM_GRADIENT_ID}"]`
-      );
-      if (preview) {
-        preview.style.background = this.customGradientCss();
-      }
-    }
-    customGradientCss() {
-      const { from, to, angle } = this.state.customGradient;
-      return `linear-gradient(${angle}deg, ${from}, ${to})`;
-    }
-    // ------------------------------------------------------------------
-    // Custom-image section — upload + library tabs (unchanged from v0.5)
-    // ------------------------------------------------------------------
-    buildCustomImageSection(body) {
-      const wrap = document.createElement("div");
-      wrap.className = "wp-desktop-os-settings__uploader";
-      const heading = document.createElement("h4");
-      heading.className = "wp-desktop-os-settings__uploader-heading";
-      heading.textContent = __("Or use your own image");
-      wrap.appendChild(heading);
-      const tabDefs = [];
-      const pane = document.createElement("div");
-      pane.className = "wp-desktop-os-settings__tab-pane";
-      if (this.config.canUpload) {
-        tabDefs.push({
-          key: "upload",
-          label: __("Upload new"),
-          render: () => this.renderUploadPane(pane, body)
-        });
-      }
-      tabDefs.push({
-        key: "library",
-        label: __("Media Library"),
-        render: () => this.renderLibraryPane(pane, body)
-      });
-      const initialKey = tabDefs[0].key;
-      const tabsEl = document.createElement("wpd-tabs");
-      tabsEl.setAttribute("value", initialKey);
-      tabsEl.setAttribute("label", __("Image source"));
-      for (const def of tabDefs) {
-        const tab = document.createElement("wpd-tab");
-        tab.setAttribute("value", def.key);
-        tab.textContent = def.label;
-        tabsEl.appendChild(tab);
-      }
-      tabsEl.addEventListener("wpd-tab-change", (e) => {
-        const key = e.detail.value;
-        tabDefs.find((t) => t.key === key)?.render();
-      });
-      if (tabDefs.length > 1) {
-        wrap.appendChild(tabsEl);
-      }
-      wrap.appendChild(pane);
-      tabDefs.find((t) => t.key === initialKey)?.render();
-      return wrap;
-    }
-    renderUploadPane(pane, body) {
-      pane.innerHTML = "";
-      const tile = document.createElement("div");
-      tile.className = "wp-desktop-os-settings__upload-tile";
-      tile.dataset.wallpaperId = CUSTOM_IMAGE_ID;
-      tile.setAttribute(
-        "aria-pressed",
-        this.state.wallpaper === CUSTOM_IMAGE_ID ? "true" : "false"
-      );
-      const fileInput = document.createElement("input");
-      fileInput.type = "file";
-      fileInput.accept = "image/*";
-      fileInput.className = "wp-desktop-os-settings__file-input";
-      fileInput.addEventListener("change", () => {
-        const file = fileInput.files?.[0];
-        if (file) {
-          void this.handleImageFile(file, tile, body);
-        }
-        fileInput.value = "";
-      });
-      pane.appendChild(fileInput);
-      this.renderUploadTile(tile, fileInput, body);
-      pane.appendChild(tile);
-    }
-    renderLibraryPane(pane, body) {
-      pane.innerHTML = "";
-      const library = document.createElement("div");
-      library.className = "wp-desktop-os-settings__library";
-      const toolbar = document.createElement("div");
-      toolbar.className = "wp-desktop-os-settings__library-toolbar";
-      const search = document.createElement("input");
-      search.type = "search";
-      search.placeholder = __("Search your media");
-      search.className = "wp-desktop-os-settings__library-search";
-      search.setAttribute("aria-label", __("Search media"));
-      toolbar.appendChild(search);
-      const hdToggle = document.createElement("wpd-checkbox-label");
-      hdToggle.setAttribute(
-        "label",
-        sprintf(
-          // translators: %1$d is the HD minimum width in px, %2$d is the minimum height.
-          __("Only HD (≥%1$d×%2$d)"),
-          HD_MIN_WIDTH,
-          HD_MIN_HEIGHT
-        )
-      );
-      if (this.state.libraryHdOnly) {
-        hdToggle.setAttribute("checked", "");
-      }
-      toolbar.appendChild(hdToggle);
-      library.appendChild(toolbar);
-      const grid = document.createElement("div");
-      grid.className = "wp-desktop-os-settings__library-grid";
-      library.appendChild(grid);
-      const footer = document.createElement("div");
-      footer.className = "wp-desktop-os-settings__library-footer";
-      const meta = document.createElement("span");
-      meta.className = "wp-desktop-os-settings__library-meta";
-      footer.appendChild(meta);
-      const loadMore = document.createElement("wpd-button");
-      loadMore.setAttribute("variant", "ghost");
-      loadMore.textContent = __("Load more");
-      footer.appendChild(loadMore);
-      library.appendChild(footer);
-      pane.appendChild(library);
-      let query = "";
-      let page = 0;
-      let totalPages = 0;
-      let loaded = [];
-      let hiddenByHd = 0;
-      let loading = false;
-      const updateMeta = () => {
-        const visible = this.visibleLibraryItems(loaded).length;
-        const parts = [
-          // translators: %d is the number of media items currently visible.
-          sprintf(__("Showing %d"), visible)
-        ];
-        if (this.state.libraryHdOnly && hiddenByHd > 0) {
-          parts.push(
-            // translators: %d is the number of images filtered out by the HD toggle.
-            sprintf(__("%d hidden by HD filter"), hiddenByHd)
-          );
-        }
-        meta.textContent = parts.join(" · ");
-        loadMore.hidden = page >= totalPages;
-        if (loading) {
-          loadMore.setAttribute("disabled", "");
-        } else {
-          loadMore.removeAttribute("disabled");
-        }
-      };
-      const renderGrid = () => {
-        grid.innerHTML = "";
-        const visible = this.visibleLibraryItems(loaded);
-        hiddenByHd = loaded.length - visible.length;
-        if (visible.length === 0 && !loading) {
-          const empty = document.createElement("p");
-          empty.className = "wp-desktop-os-settings__library-empty";
-          if (this.state.libraryHdOnly) {
-            empty.textContent = __(
-              "No HD images found. Try unchecking the filter, or upload a larger image."
-            );
-          } else {
-            empty.textContent = __("No images in your Media Library yet.");
-          }
-          grid.appendChild(empty);
-        } else {
-          for (const item of visible) {
-            grid.appendChild(this.buildLibraryTile(item, body));
-          }
-        }
-        updateMeta();
-      };
-      const loadNextPage = async () => {
-        if (loading || totalPages > 0 && page >= totalPages) {
-          return;
-        }
-        loading = true;
-        updateMeta();
-        if (page === 0) {
-          grid.innerHTML = "";
-          for (let i = 0; i < 8; i++) {
-            const sk = document.createElement("div");
-            sk.className = "wp-desktop-os-settings__library-tile wp-desktop-os-settings__library-tile--skeleton";
-            grid.appendChild(sk);
-          }
-        }
-        try {
-          const result = await this.fetchMediaPage(page + 1, query);
-          page = page + 1;
-          totalPages = result.totalPages;
-          loaded = loaded.concat(result.items);
-          renderGrid();
-        } catch (err) {
-          grid.innerHTML = "";
-          const errMsg = document.createElement("p");
-          errMsg.className = "wp-desktop-os-settings__library-error";
-          if (err instanceof Error) {
-            errMsg.textContent = sprintf(
-              // translators: %s is the browser-supplied error message.
-              __("Couldn’t load your media: %s"),
-              err.message
-            );
-          } else {
-            errMsg.textContent = __("Couldn’t load your media.");
-          }
-          grid.appendChild(errMsg);
-        } finally {
-          loading = false;
-          updateMeta();
-        }
-      };
-      const resetAndReload = () => {
-        page = 0;
-        totalPages = 0;
-        loaded = [];
-        hiddenByHd = 0;
-        void loadNextPage();
-      };
-      let searchTimer = null;
-      search.addEventListener("input", () => {
-        if (searchTimer !== null) {
-          window.clearTimeout(searchTimer);
-        }
-        searchTimer = window.setTimeout(() => {
-          searchTimer = null;
-          query = search.value.trim();
-          resetAndReload();
-        }, SEARCH_DEBOUNCE_MS);
-      });
-      hdToggle.addEventListener("wpd-checkbox-change", (e) => {
-        this.state.libraryHdOnly = e.detail.checked;
-        this.save();
-        resetAndReload();
-      });
-      loadMore.addEventListener("click", () => {
-        void loadNextPage();
-      });
-      void loadNextPage();
-    }
-    visibleLibraryItems(items) {
-      if (!this.state.libraryHdOnly) {
-        return items;
-      }
-      return items.filter(
-        (it) => it.media_details.width >= HD_MIN_WIDTH && it.media_details.height >= HD_MIN_HEIGHT
-      );
-    }
-    buildLibraryTile(item, body) {
-      const tile = document.createElement("button");
-      tile.type = "button";
-      tile.className = "wp-desktop-os-settings__library-tile";
-      tile.dataset.mediaId = String(item.id);
-      const isSelected = this.state.wallpaper === CUSTOM_IMAGE_ID && this.state.customImage?.id === item.id;
-      tile.setAttribute("aria-pressed", isSelected ? "true" : "false");
-      if (isSelected) {
-        tile.classList.add("wp-desktop-os-settings__library-tile--selected");
-      }
-      const sizes = item.media_details.sizes || {};
-      const thumbUrl = sizes.medium?.source_url || sizes.thumbnail?.source_url || sizes.large?.source_url || item.source_url;
-      tile.style.backgroundImage = `url("${encodeURI(thumbUrl)}")`;
-      const dims = document.createElement("span");
-      dims.className = "wp-desktop-os-settings__library-tile-dims";
-      dims.textContent = `${item.media_details.width}×${item.media_details.height}`;
-      tile.appendChild(dims);
-      const altOrTitle = item.alt_text || stripHtml(item.title?.rendered || "") || `Image #${item.id}`;
-      tile.setAttribute("aria-label", altOrTitle);
-      tile.title = altOrTitle;
-      tile.addEventListener("click", () => {
-        this.state.customImage = { id: item.id, url: item.source_url };
-        this.state.wallpaper = CUSTOM_IMAGE_ID;
-        this.registerCustomImageIfPresent();
-        this.save();
-        this.apply();
-        this.refreshWallpaperPressedState(body);
-        const grid = tile.parentElement;
-        if (grid) {
-          grid.querySelectorAll("[data-media-id]").forEach((el) => {
-            const selected = el.dataset.mediaId === String(item.id);
-            el.setAttribute("aria-pressed", selected ? "true" : "false");
-            el.classList.toggle(
-              "wp-desktop-os-settings__library-tile--selected",
-              selected
-            );
-          });
-        }
-      });
-      return tile;
-    }
-    async fetchMediaPage(page, search) {
-      const url = new URL(this.config.mediaUrl);
-      url.searchParams.set("media_type", "image");
-      url.searchParams.set("per_page", String(MEDIA_PER_PAGE));
-      url.searchParams.set("page", String(page));
-      url.searchParams.set("orderby", "date");
-      url.searchParams.set("order", "desc");
-      url.searchParams.set(
-        "_fields",
-        "id,source_url,alt_text,title,media_details"
-      );
-      if (search) {
-        url.searchParams.set("search", search);
-      }
-      if (this.state.libraryHdOnly) {
-        url.searchParams.set("wpdm_min_width", String(HD_MIN_WIDTH));
-        url.searchParams.set("wpdm_min_height", String(HD_MIN_HEIGHT));
-      }
-      const response = await fetch(url.toString(), {
-        credentials: "same-origin",
-        headers: { "X-WP-Nonce": this.config.restNonce }
-      });
-      if (!response.ok) {
-        let message = `HTTP ${response.status}`;
-        try {
-          const data = await response.json();
-          if (data && typeof data.message === "string") {
-            message = data.message;
-          }
-        } catch {
-        }
-        throw new Error(message);
-      }
-      const totalPagesHeader = response.headers.get("X-WP-TotalPages");
-      const totalPages = totalPagesHeader ? parseInt(totalPagesHeader, 10) : 1;
-      const items = await response.json();
-      return { items: items.filter(isUsableImage), totalPages: totalPages || 1 };
-    }
-    renderUploadTile(tile, fileInput, body) {
-      tile.innerHTML = "";
-      tile.classList.remove("wp-desktop-os-settings__upload-tile--filled");
-      tile.classList.remove("wp-desktop-os-settings__upload-tile--dragover");
-      tile.classList.remove("wp-desktop-os-settings__upload-tile--busy");
-      tile.removeAttribute("aria-label");
-      if (this.state.customImage) {
-        tile.classList.add("wp-desktop-os-settings__upload-tile--filled");
-        tile.setAttribute("aria-label", __("Custom image wallpaper"));
-        tile.style.backgroundImage = `url("${encodeURI(this.state.customImage.url)}")`;
-        const remove = document.createElement("wpd-button");
-        remove.setAttribute("variant", "danger");
-        remove.classList.add("wp-desktop-os-settings__upload-remove");
-        remove.setAttribute("aria-label", __("Remove custom image"));
-        remove.textContent = __("Remove");
-        remove.addEventListener("click", (e) => {
-          e.stopPropagation();
-          this.state.customImage = null;
-          if (this.state.wallpaper === CUSTOM_IMAGE_ID) {
-            this.state.wallpaper = DEFAULT_WALLPAPER_ID;
-          }
-          this.registerCustomImageIfPresent();
-          this.save();
-          this.apply();
-          this.renderUploadTile(tile, fileInput, body);
-          this.refreshWallpaperPressedState(body);
-        });
-        tile.appendChild(remove);
-      } else {
-        tile.style.backgroundImage = "";
-        const inner = document.createElement("div");
-        inner.className = "wp-desktop-os-settings__upload-inner";
-        const plus = document.createElement("span");
-        plus.className = "wp-desktop-os-settings__upload-plus";
-        plus.setAttribute("aria-hidden", "true");
-        plus.textContent = "+";
-        const prompt = document.createElement("span");
-        prompt.className = "wp-desktop-os-settings__upload-prompt";
-        prompt.textContent = __("Drop an image here, or click to upload");
-        const hint = document.createElement("span");
-        hint.className = "wp-desktop-os-settings__upload-hint";
-        hint.textContent = __(
-          "JPEG, PNG, or WebP · goes straight to your Media Library"
-        );
-        inner.appendChild(plus);
-        inner.appendChild(prompt);
-        inner.appendChild(hint);
-        tile.appendChild(inner);
-        tile.setAttribute("aria-label", __("Upload a wallpaper image"));
-      }
-      tile.onclick = () => {
-        if (tile.classList.contains("wp-desktop-os-settings__upload-tile--busy")) {
-          return;
-        }
-        if (this.state.customImage) {
-          this.selectWallpaper(CUSTOM_IMAGE_ID, body);
-          return;
-        }
-        fileInput.click();
-      };
-      tile.ondragover = (e) => {
-        e.preventDefault();
-        tile.classList.add("wp-desktop-os-settings__upload-tile--dragover");
-      };
-      tile.ondragleave = () => {
-        tile.classList.remove("wp-desktop-os-settings__upload-tile--dragover");
-      };
-      tile.ondrop = (e) => {
-        e.preventDefault();
-        tile.classList.remove("wp-desktop-os-settings__upload-tile--dragover");
-        const file = e.dataTransfer?.files?.[0];
-        if (file) {
-          void this.handleImageFile(file, tile, body);
-        }
-      };
-    }
-    async handleImageFile(file, tile, body) {
-      if (!file.type.startsWith("image/")) {
-        this.showUploadError(tile, __("That file isn’t an image."));
-        return;
-      }
-      tile.classList.add("wp-desktop-os-settings__upload-tile--busy");
-      const prevInner = tile.innerHTML;
-      tile.innerHTML = "";
-      const status = document.createElement("span");
-      status.className = "wp-desktop-os-settings__upload-status";
-      status.textContent = __("Uploading…");
-      tile.appendChild(status);
-      try {
-        const media = await this.uploadImage(file);
-        this.state.customImage = { id: media.id, url: media.url };
-        this.state.wallpaper = CUSTOM_IMAGE_ID;
-        this.registerCustomImageIfPresent();
-        this.save();
-        this.apply();
-        const fileInput = tile.parentElement?.querySelector(
-          ".wp-desktop-os-settings__file-input"
-        );
-        if (fileInput) {
-          this.renderUploadTile(tile, fileInput, body);
-        }
-        this.refreshWallpaperPressedState(body);
-      } catch (err) {
-        tile.innerHTML = prevInner;
-        tile.classList.remove("wp-desktop-os-settings__upload-tile--busy");
-        const message = err instanceof Error ? err.message : __("Upload failed.");
-        this.showUploadError(tile, message);
-      }
-    }
-    showUploadError(tile, message) {
-      let err = tile.querySelector(".wp-desktop-os-settings__upload-error");
-      if (!err) {
-        err = document.createElement("span");
-        err.className = "wp-desktop-os-settings__upload-error";
-        err.setAttribute("role", "status");
-        tile.appendChild(err);
-      }
-      err.textContent = message;
-      window.setTimeout(() => {
-        err?.remove();
-      }, 4e3);
-    }
-    async uploadImage(file) {
-      const response = await fetch(this.config.mediaUrl, {
-        method: "POST",
-        credentials: "same-origin",
-        headers: {
-          "X-WP-Nonce": this.config.restNonce,
-          "Content-Type": file.type,
-          "Content-Disposition": `attachment; filename="${sanitizeFilename(file.name)}"`
-        },
-        body: file
-      });
-      if (!response.ok) {
-        let message = `Upload failed (HTTP ${response.status}).`;
-        try {
-          const data2 = await response.json();
-          if (data2 && typeof data2.message === "string") {
-            message = data2.message;
-          }
-        } catch {
-        }
-        throw new Error(message);
-      }
-      const data = await response.json();
-      return { id: data.id, url: data.source_url };
-    }
-    // ------------------------------------------------------------------
-    // Accent + dock-size sections — composed from wpd-ui atoms
-    // (<wpd-section>, <wpd-swatch>, <wpd-swatch-grid>, <wpd-segmented>,
-    // <wpd-segment>). Previously hand-rolled DOM; the atoms cover the
-    // grid layout, selection state, a11y semantics, and event wiring.
-    // ------------------------------------------------------------------
-    buildAccentSection() {
-      const section = document.createElement("wpd-section");
-      section.setAttribute("heading", __("Accent color"));
-      section.setAttribute(
-        "description",
-        __("Used in focused window title bars, buttons, and focus rings.")
-      );
-      const grid = document.createElement("wpd-swatch-grid");
-      grid.setAttribute("label", __("Accent color"));
-      grid.setAttribute("mode", "row");
-      for (const accent of ACCENTS) {
-        const label = translateAccentLabel(accent.id, accent.label);
-        const swatch = document.createElement("wpd-swatch");
-        swatch.setAttribute("value", accent.id);
-        swatch.setAttribute("label", label);
-        swatch.setAttribute("preview", accent.value);
-        swatch.setAttribute("size", "small");
-        if (this.state.accent === accent.id) {
-          swatch.setAttribute("selected", "");
-        }
-        grid.appendChild(swatch);
-      }
-      grid.addEventListener("wpd-pick", (e) => {
-        const id = e.detail?.value ?? "";
-        if (!ACCENTS.some((a) => a.id === id)) {
-          return;
-        }
-        this.state.accent = id;
-        this.save();
-        this.apply();
-        for (const child of Array.from(grid.children)) {
-          if (child.getAttribute("value") === id) {
-            child.setAttribute("selected", "");
-          } else {
-            child.removeAttribute("selected");
-          }
-        }
-      });
-      section.appendChild(grid);
-      return section;
-    }
-    buildDockSizeSection() {
-      const section = document.createElement("wpd-section");
-      section.setAttribute("heading", __("Dock size"));
-      section.setAttribute(
-        "description",
-        __("Width of the dock and size of its icons.")
-      );
-      const group = document.createElement("wpd-segmented");
-      group.setAttribute("value", this.state.dockSize);
-      group.setAttribute("label", __("Dock size"));
-      for (const size of DOCK_SIZES) {
-        const seg = document.createElement("wpd-segment");
-        seg.setAttribute("value", size.id);
-        seg.textContent = translateDockSizeLabel(size.id, size.label);
-        group.appendChild(seg);
-      }
-      group.addEventListener("wpd-pick", (e) => {
-        const id = e.detail?.value ?? "";
-        if (!DOCK_SIZES.some((d) => d.id === id)) {
-          return;
-        }
-        this.state.dockSize = id;
-        this.save();
-        this.apply();
-      });
-      section.appendChild(group);
-      return section;
-    }
-    // ------------------------------------------------------------------
-    // Persistence
-    // ------------------------------------------------------------------
-    load() {
-      try {
-        const raw = window.localStorage.getItem(STORAGE_KEY$1);
-        if (!raw) {
-          return structuredDefaults();
-        }
-        const parsed = JSON.parse(raw);
-        return {
-          // `wallpaper` is now any non-empty string — registry
-          // membership is validated at apply time rather than
-          // here, so a plugin that gets enqueued late still
-          // delivers its persisted selection.
-          wallpaper: typeof parsed.wallpaper === "string" && parsed.wallpaper !== "" ? parsed.wallpaper : DEFAULTS.wallpaper,
-          accent: ACCENTS.some((a) => a.id === parsed.accent) ? parsed.accent : DEFAULTS.accent,
-          dockSize: DOCK_SIZES.some((d) => d.id === parsed.dockSize) ? parsed.dockSize : DEFAULTS.dockSize,
-          customGradient: sanitizeCustomGradient(parsed.customGradient),
-          customImage: sanitizeCustomImage(parsed.customImage),
-          libraryHdOnly: typeof parsed.libraryHdOnly === "boolean" ? parsed.libraryHdOnly : DEFAULTS.libraryHdOnly
-        };
-      } catch {
+    const el = document.createElement("div");
+    el.innerHTML = markup;
+    return el.textContent?.trim() || "";
+  }
+  function loadState() {
+    try {
+      const raw = window.localStorage.getItem(STORAGE_KEY$1);
+      if (!raw) {
         return structuredDefaults();
       }
+      const parsed = JSON.parse(raw);
+      return {
+        // `wallpaper` is now any non-empty string — registry
+        // membership is validated at apply time rather than here,
+        // so a plugin that gets enqueued late still delivers its
+        // persisted selection.
+        wallpaper: typeof parsed.wallpaper === "string" && parsed.wallpaper !== "" ? parsed.wallpaper : DEFAULTS.wallpaper,
+        accent: ACCENTS.some((a) => a.id === parsed.accent) ? parsed.accent : DEFAULTS.accent,
+        dockSize: DOCK_SIZES.some((d) => d.id === parsed.dockSize) ? parsed.dockSize : DEFAULTS.dockSize,
+        customGradient: sanitizeCustomGradient(parsed.customGradient),
+        customImage: sanitizeCustomImage(parsed.customImage),
+        libraryHdOnly: typeof parsed.libraryHdOnly === "boolean" ? parsed.libraryHdOnly : DEFAULTS.libraryHdOnly
+      };
+    } catch {
+      return structuredDefaults();
     }
-    save() {
-      try {
-        window.localStorage.setItem(STORAGE_KEY$1, JSON.stringify(this.state));
-      } catch {
-      }
+  }
+  function saveState(state) {
+    try {
+      window.localStorage.setItem(STORAGE_KEY$1, JSON.stringify(state));
+    } catch {
     }
   }
   function structuredDefaults() {
@@ -5861,30 +5145,864 @@ var wpDesktop = function(exports) {
     }
     return { id, url };
   }
-  function isHexColor(value) {
-    return typeof value === "string" && /^#[0-9a-f]{3,8}$/i.test(value);
-  }
-  function sanitizeFilename(name) {
-    const cleaned = name.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
-    return cleaned || "wallpaper";
-  }
-  function isUsableImage(item) {
-    if (!item || typeof item.id !== "number" || !item.source_url) {
-      return false;
+  function translateAccentLabel(id, fallback) {
+    switch (id) {
+      case "wp-blue":
+        return __("WordPress Blue");
+      case "indigo":
+        return __("Indigo");
+      case "teal":
+        return __("Teal");
+      case "emerald":
+        return __("Emerald");
+      case "amber":
+        return __("Amber");
+      case "rose":
+        return __("Rose");
+      default:
+        return fallback;
     }
-    const d = item.media_details;
-    return !!d && typeof d.width === "number" && typeof d.height === "number" && d.width > 0 && d.height > 0;
   }
-  function stripHtml(html2) {
-    if (!html2) {
-      return "";
+  function translateDockSizeLabel(id, fallback) {
+    switch (id) {
+      case "compact":
+        return __("Compact");
+      case "default":
+        return __("Default");
+      case "large":
+        return __("Large");
+      default:
+        return fallback;
     }
-    const el = document.createElement("div");
-    el.innerHTML = html2;
-    return el.textContent?.trim() || "";
   }
-  function isPromise(value) {
-    return !!value && typeof value === "object" && typeof value.then === "function";
+  function buildAccentSection(ctx) {
+    const onPick = (e) => {
+      const id = e.detail?.value ?? "";
+      if (!ACCENTS.some((a) => a.id === id)) {
+        return;
+      }
+      ctx.state.accent = id;
+      ctx.save();
+      ctx.apply();
+      paint();
+    };
+    const wrapper = document.createElement("div");
+    const paint = () => render(
+      html`
+				<wpd-section
+					heading=${__("Accent color")}
+					description=${__("Used in focused window title bars, buttons, and focus rings.")}
+				>
+					<wpd-swatch-grid
+						label=${__("Accent color")}
+						mode="row"
+						@wpd-pick=${onPick}
+					>
+						${ACCENTS.map(
+        (a) => html`<wpd-swatch
+								value=${a.id}
+								label=${translateAccentLabel(a.id, a.label)}
+								preview=${a.value}
+								size="small"
+								?selected=${ctx.state.accent === a.id}
+							></wpd-swatch>`
+      )}
+					</wpd-swatch-grid>
+				</wpd-section>
+			`,
+      wrapper
+    );
+    paint();
+    return wrapper;
+  }
+  function buildDockSizeSection(ctx) {
+    const onPick = (e) => {
+      const id = e.detail?.value ?? "";
+      if (!DOCK_SIZES.some((d) => d.id === id)) {
+        return;
+      }
+      ctx.state.dockSize = id;
+      ctx.save();
+      ctx.apply();
+      paint();
+    };
+    const wrapper = document.createElement("div");
+    const paint = () => render(
+      html`
+				<wpd-section
+					heading=${__("Dock size")}
+					description=${__("Width of the dock and size of its icons.")}
+				>
+					<wpd-segmented
+						value=${ctx.state.dockSize}
+						label=${__("Dock size")}
+						@wpd-pick=${onPick}
+					>
+						${DOCK_SIZES.map(
+        (s) => html`<wpd-segment value=${s.id}
+								>${translateDockSizeLabel(s.id, s.label)}</wpd-segment
+							>`
+      )}
+					</wpd-segmented>
+				</wpd-section>
+			`,
+      wrapper
+    );
+    paint();
+    return wrapper;
+  }
+  async function fetchMediaPage(config, page, search, hdOnly) {
+    const url = new URL(config.mediaUrl);
+    url.searchParams.set("media_type", "image");
+    url.searchParams.set("per_page", String(MEDIA_PER_PAGE));
+    url.searchParams.set("page", String(page));
+    url.searchParams.set("orderby", "date");
+    url.searchParams.set("order", "desc");
+    url.searchParams.set(
+      "_fields",
+      "id,source_url,alt_text,title,media_details"
+    );
+    if (search) {
+      url.searchParams.set("search", search);
+    }
+    if (hdOnly) {
+      url.searchParams.set("wpdm_min_width", String(HD_MIN_WIDTH));
+      url.searchParams.set("wpdm_min_height", String(HD_MIN_HEIGHT));
+    }
+    const response = await fetch(url.toString(), {
+      credentials: "same-origin",
+      headers: { "X-WP-Nonce": config.restNonce }
+    });
+    if (!response.ok) {
+      let message = `HTTP ${response.status}`;
+      try {
+        const data = await response.json();
+        if (data && typeof data.message === "string") {
+          message = data.message;
+        }
+      } catch {
+      }
+      throw new Error(message);
+    }
+    const totalPagesHeader = response.headers.get("X-WP-TotalPages");
+    const totalPages = totalPagesHeader ? parseInt(totalPagesHeader, 10) : 1;
+    const items = await response.json();
+    return { items: items.filter(isUsableImage), totalPages: totalPages || 1 };
+  }
+  async function uploadImage(config, file) {
+    const response = await fetch(config.mediaUrl, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "X-WP-Nonce": config.restNonce,
+        "Content-Type": file.type,
+        "Content-Disposition": `attachment; filename="${sanitizeFilename(file.name)}"`
+      },
+      body: file
+    });
+    if (!response.ok) {
+      let message = `Upload failed (HTTP ${response.status}).`;
+      try {
+        const data2 = await response.json();
+        if (data2 && typeof data2.message === "string") {
+          message = data2.message;
+        }
+      } catch {
+      }
+      throw new Error(message);
+    }
+    const data = await response.json();
+    return { id: data.id, url: data.source_url };
+  }
+  function buildCustomImageSection(ctx, body) {
+    const tabDefs = [];
+    const pane = document.createElement("div");
+    pane.className = "wp-desktop-os-settings__tab-pane";
+    if (ctx.config.canUpload) {
+      tabDefs.push({
+        key: "upload",
+        label: __("Upload new"),
+        render: () => renderUploadPane(ctx, pane, body)
+      });
+    }
+    tabDefs.push({
+      key: "library",
+      label: __("Media Library"),
+      render: () => renderLibraryPane(ctx, pane, body)
+    });
+    const initialKey = tabDefs[0].key;
+    const onTabChange = (e) => {
+      const key = e.detail.value;
+      tabDefs.find((t) => t.key === key)?.render();
+    };
+    const wrap = document.createElement("div");
+    render(
+      html`
+			<div class="wp-desktop-os-settings__uploader">
+				<h4 class="wp-desktop-os-settings__uploader-heading">
+					${__("Or use your own image")}
+				</h4>
+				${tabDefs.length > 1 ? html`<wpd-tabs
+							value=${initialKey}
+							label=${__("Image source")}
+							@wpd-tab-change=${onTabChange}
+						>
+							${tabDefs.map(
+        (def) => html`<wpd-tab value=${def.key}
+									>${def.label}</wpd-tab
+								>`
+      )}
+						</wpd-tabs>` : null}
+				${pane}
+			</div>
+		`,
+      wrap
+    );
+    tabDefs.find((t) => t.key === initialKey)?.render();
+    return wrap.firstElementChild;
+  }
+  function renderUploadPane(ctx, pane, body) {
+    const tile = document.createElement("div");
+    tile.className = "wp-desktop-os-settings__upload-tile";
+    tile.dataset.wallpaperId = CUSTOM_IMAGE_ID;
+    tile.setAttribute(
+      "aria-pressed",
+      ctx.state.wallpaper === CUSTOM_IMAGE_ID ? "true" : "false"
+    );
+    const fileInput = document.createElement("input");
+    fileInput.type = "file";
+    fileInput.accept = "image/*";
+    fileInput.className = "wp-desktop-os-settings__file-input";
+    fileInput.addEventListener("change", () => {
+      const file = fileInput.files?.[0];
+      if (file) {
+        void handleImageFile(ctx, file, tile, body);
+      }
+      fileInput.value = "";
+    });
+    render(html`${fileInput}${tile}`, pane);
+    renderUploadTile(ctx, tile, fileInput, body);
+  }
+  function renderUploadTile(ctx, tile, fileInput, body) {
+    tile.classList.remove("wp-desktop-os-settings__upload-tile--filled");
+    tile.classList.remove("wp-desktop-os-settings__upload-tile--dragover");
+    tile.classList.remove("wp-desktop-os-settings__upload-tile--busy");
+    tile.removeAttribute("aria-label");
+    const hasImage = !!ctx.state.customImage;
+    if (hasImage) {
+      tile.classList.add("wp-desktop-os-settings__upload-tile--filled");
+      tile.setAttribute("aria-label", __("Custom image wallpaper"));
+      tile.style.backgroundImage = `url("${encodeURI(ctx.state.customImage.url)}")`;
+    } else {
+      tile.style.backgroundImage = "";
+      tile.setAttribute("aria-label", __("Upload a wallpaper image"));
+    }
+    const onRemove = (e) => {
+      e.stopPropagation();
+      ctx.state.customImage = null;
+      if (ctx.state.wallpaper === CUSTOM_IMAGE_ID) {
+        ctx.state.wallpaper = DEFAULT_WALLPAPER_ID;
+      }
+      registerCustomImageIfPresent(ctx.state);
+      ctx.save();
+      ctx.apply();
+      renderUploadTile(ctx, tile, fileInput, body);
+      refreshWallpaperPressedState(ctx, body);
+    };
+    render(
+      hasImage ? html`
+					<wpd-button
+						variant="danger"
+						class="wp-desktop-os-settings__upload-remove"
+						aria-label=${__("Remove custom image")}
+						@click=${onRemove}
+						>${__("Remove")}</wpd-button
+					>
+				` : html`
+					<div class="wp-desktop-os-settings__upload-inner">
+						<span
+							class="wp-desktop-os-settings__upload-plus"
+							aria-hidden="true"
+							>+</span
+						>
+						<span class="wp-desktop-os-settings__upload-prompt"
+							>${__("Drop an image here, or click to upload")}</span
+						>
+						<span class="wp-desktop-os-settings__upload-hint"
+							>${__(
+        "JPEG, PNG, or WebP · goes straight to your Media Library"
+      )}</span
+						>
+					</div>
+				`,
+      tile
+    );
+    tile.onclick = () => {
+      if (tile.classList.contains("wp-desktop-os-settings__upload-tile--busy")) {
+        return;
+      }
+      if (ctx.state.customImage) {
+        selectWallpaper(ctx, CUSTOM_IMAGE_ID, body);
+        return;
+      }
+      fileInput.click();
+    };
+    tile.ondragover = (e) => {
+      e.preventDefault();
+      tile.classList.add("wp-desktop-os-settings__upload-tile--dragover");
+    };
+    tile.ondragleave = () => {
+      tile.classList.remove("wp-desktop-os-settings__upload-tile--dragover");
+    };
+    tile.ondrop = (e) => {
+      e.preventDefault();
+      tile.classList.remove("wp-desktop-os-settings__upload-tile--dragover");
+      const file = e.dataTransfer?.files?.[0];
+      if (file) {
+        void handleImageFile(ctx, file, tile, body);
+      }
+    };
+  }
+  async function handleImageFile(ctx, file, tile, body) {
+    if (!file.type.startsWith("image/")) {
+      showUploadError(tile, __("That file isn’t an image."));
+      return;
+    }
+    tile.classList.add("wp-desktop-os-settings__upload-tile--busy");
+    render(
+      html`<span class="wp-desktop-os-settings__upload-status"
+			>${__("Uploading…")}</span
+		>`,
+      tile
+    );
+    const fileInput = tile.parentElement?.querySelector(
+      ".wp-desktop-os-settings__file-input"
+    );
+    try {
+      const media = await uploadImage(ctx.config, file);
+      ctx.state.customImage = { id: media.id, url: media.url };
+      ctx.state.wallpaper = CUSTOM_IMAGE_ID;
+      registerCustomImageIfPresent(ctx.state);
+      ctx.save();
+      ctx.apply();
+      if (fileInput) {
+        renderUploadTile(ctx, tile, fileInput, body);
+      }
+      refreshWallpaperPressedState(ctx, body);
+    } catch (err) {
+      tile.classList.remove("wp-desktop-os-settings__upload-tile--busy");
+      if (fileInput) {
+        renderUploadTile(ctx, tile, fileInput, body);
+      }
+      const message = err instanceof Error ? err.message : __("Upload failed.");
+      showUploadError(tile, message);
+    }
+  }
+  function showUploadError(tile, message) {
+    let err = tile.querySelector(".wp-desktop-os-settings__upload-error");
+    if (!err) {
+      err = document.createElement("span");
+      err.className = "wp-desktop-os-settings__upload-error";
+      err.setAttribute("role", "status");
+      tile.appendChild(err);
+    }
+    err.textContent = message;
+    window.setTimeout(() => {
+      err?.remove();
+    }, 4e3);
+  }
+  function renderLibraryPane(ctx, pane, body) {
+    const search = document.createElement("input");
+    search.type = "search";
+    search.placeholder = __("Search your media");
+    search.className = "wp-desktop-os-settings__library-search";
+    search.setAttribute("aria-label", __("Search media"));
+    const grid = document.createElement("div");
+    grid.className = "wp-desktop-os-settings__library-grid";
+    const meta = document.createElement("span");
+    meta.className = "wp-desktop-os-settings__library-meta";
+    const loadMore = document.createElement("wpd-button");
+    loadMore.setAttribute("variant", "ghost");
+    loadMore.textContent = __("Load more");
+    let query = "";
+    let page = 0;
+    let totalPages = 0;
+    let loaded = [];
+    let hiddenByHd = 0;
+    let loading = false;
+    const onHdToggle = (e) => {
+      ctx.state.libraryHdOnly = e.detail.checked;
+      ctx.save();
+      resetAndReload();
+    };
+    render(
+      html`
+			<div class="wp-desktop-os-settings__library">
+				<div class="wp-desktop-os-settings__library-toolbar">
+					${search}
+					<wpd-checkbox-label
+						label=${sprintf(
+        // translators: %1$d is the HD minimum width in px, %2$d is the minimum height.
+        __("Only HD (≥%1$d×%2$d)"),
+        HD_MIN_WIDTH,
+        HD_MIN_HEIGHT
+      )}
+						?checked=${ctx.state.libraryHdOnly}
+						@wpd-checkbox-change=${onHdToggle}
+					></wpd-checkbox-label>
+				</div>
+				${grid}
+				<div class="wp-desktop-os-settings__library-footer">
+					${meta}${loadMore}
+				</div>
+			</div>
+		`,
+      pane
+    );
+    const updateMeta = () => {
+      const visible = visibleLibraryItems(ctx.state, loaded).length;
+      const parts = [
+        // translators: %d is the number of media items currently visible.
+        sprintf(__("Showing %d"), visible)
+      ];
+      if (ctx.state.libraryHdOnly && hiddenByHd > 0) {
+        parts.push(
+          // translators: %d is the number of images filtered out by the HD toggle.
+          sprintf(__("%d hidden by HD filter"), hiddenByHd)
+        );
+      }
+      meta.textContent = parts.join(" · ");
+      loadMore.hidden = page >= totalPages;
+      if (loading) {
+        loadMore.setAttribute("disabled", "");
+      } else {
+        loadMore.removeAttribute("disabled");
+      }
+    };
+    const renderGrid = () => {
+      const visible = visibleLibraryItems(ctx.state, loaded);
+      hiddenByHd = loaded.length - visible.length;
+      if (visible.length === 0 && !loading) {
+        render(
+          html`<p class="wp-desktop-os-settings__library-empty">
+					${ctx.state.libraryHdOnly ? __(
+            "No HD images found. Try unchecking the filter, or upload a larger image."
+          ) : __("No images in your Media Library yet.")}
+				</p>`,
+          grid
+        );
+      } else {
+        grid.innerHTML = "";
+        for (const item of visible) {
+          grid.appendChild(buildLibraryTile(ctx, item, body));
+        }
+      }
+      updateMeta();
+    };
+    const loadNextPage = async () => {
+      if (loading || totalPages > 0 && page >= totalPages) {
+        return;
+      }
+      loading = true;
+      updateMeta();
+      if (page === 0) {
+        render(
+          html`${Array.from(
+            { length: 8 },
+            () => html`<div
+						class="wp-desktop-os-settings__library-tile wp-desktop-os-settings__library-tile--skeleton"
+					></div>`
+          )}`,
+          grid
+        );
+      }
+      try {
+        const result = await fetchMediaPage(
+          ctx.config,
+          page + 1,
+          query,
+          ctx.state.libraryHdOnly
+        );
+        page = page + 1;
+        totalPages = result.totalPages;
+        loaded = loaded.concat(result.items);
+        renderGrid();
+      } catch (err) {
+        render(
+          html`<p class="wp-desktop-os-settings__library-error">
+					${err instanceof Error ? sprintf(
+            // translators: %s is the browser-supplied error message.
+            __("Couldn’t load your media: %s"),
+            err.message
+          ) : __("Couldn’t load your media.")}
+				</p>`,
+          grid
+        );
+      } finally {
+        loading = false;
+        updateMeta();
+      }
+    };
+    const resetAndReload = () => {
+      page = 0;
+      totalPages = 0;
+      loaded = [];
+      hiddenByHd = 0;
+      void loadNextPage();
+    };
+    let searchTimer = null;
+    search.addEventListener("input", () => {
+      if (searchTimer !== null) {
+        window.clearTimeout(searchTimer);
+      }
+      searchTimer = window.setTimeout(() => {
+        searchTimer = null;
+        query = search.value.trim();
+        resetAndReload();
+      }, SEARCH_DEBOUNCE_MS);
+    });
+    loadMore.addEventListener("click", () => {
+      void loadNextPage();
+    });
+    void loadNextPage();
+  }
+  function visibleLibraryItems(state, items) {
+    if (!state.libraryHdOnly) {
+      return items;
+    }
+    return items.filter(
+      (it) => it.media_details.width >= HD_MIN_WIDTH && it.media_details.height >= HD_MIN_HEIGHT
+    );
+  }
+  function buildLibraryTile(ctx, item, body) {
+    const isSelected = ctx.state.wallpaper === CUSTOM_IMAGE_ID && ctx.state.customImage?.id === item.id;
+    const sizes = item.media_details.sizes || {};
+    const thumbUrl = sizes.medium?.source_url || sizes.thumbnail?.source_url || sizes.large?.source_url || item.source_url;
+    const altOrTitle = item.alt_text || stripHtml(item.title?.rendered || "") || `Image #${item.id}`;
+    const onClick = () => {
+      ctx.state.customImage = { id: item.id, url: item.source_url };
+      ctx.state.wallpaper = CUSTOM_IMAGE_ID;
+      registerCustomImageIfPresent(ctx.state);
+      ctx.save();
+      ctx.apply();
+      refreshWallpaperPressedState(ctx, body);
+      const tileGrid = wrapper.firstElementChild?.parentElement;
+      if (tileGrid) {
+        tileGrid.querySelectorAll("[data-media-id]").forEach((el) => {
+          const selected = el.dataset.mediaId === String(item.id);
+          el.setAttribute("aria-pressed", selected ? "true" : "false");
+          el.classList.toggle(
+            "wp-desktop-os-settings__library-tile--selected",
+            selected
+          );
+        });
+      }
+    };
+    const wrapper = document.createElement("div");
+    render(
+      html`
+			<button
+				type="button"
+				class=${isSelected ? "wp-desktop-os-settings__library-tile wp-desktop-os-settings__library-tile--selected" : "wp-desktop-os-settings__library-tile"}
+				data-media-id=${String(item.id)}
+				aria-pressed=${isSelected ? "true" : "false"}
+				aria-label=${altOrTitle}
+				title=${altOrTitle}
+				style=${`background-image: url("${encodeURI(thumbUrl)}")`}
+				@click=${onClick}
+			>
+				<span class="wp-desktop-os-settings__library-tile-dims"
+					>${item.media_details.width}×${item.media_details.height}</span
+				>
+			</button>
+		`,
+      wrapper
+    );
+    return wrapper.firstElementChild;
+  }
+  function customGradientCss(state) {
+    const { from, to, angle } = state.customGradient;
+    return `linear-gradient(${angle}deg, ${from}, ${to})`;
+  }
+  function registerCustomGradient(ctx) {
+    register$1({
+      id: CUSTOM_GRADIENT_ID,
+      label: __("Custom gradient"),
+      type: "css",
+      preview: customGradientCss(ctx.state),
+      resolveValue: () => customGradientCss(ctx.state),
+      renderEditor: (container) => renderCustomGradientEditor(ctx, container)
+    });
+  }
+  function registerCustomImageIfPresent(state) {
+    if (!state.customImage) {
+      unregister(CUSTOM_IMAGE_ID);
+      return;
+    }
+    const safeUrl = encodeURI(state.customImage.url);
+    const value = `url("${safeUrl}") center/cover no-repeat, #1d2327`;
+    register$1({
+      id: CUSTOM_IMAGE_ID,
+      label: __("Custom image"),
+      type: "css",
+      value,
+      preview: value
+    });
+  }
+  function selectWallpaper(ctx, id, body) {
+    ctx.state.wallpaper = id;
+    ctx.save();
+    ctx.apply();
+    refreshWallpaperPressedState(ctx, body);
+  }
+  function refreshWallpaperPressedState(ctx, body) {
+    body.querySelectorAll("[data-wallpaper-id]").forEach((el) => {
+      const selected = el.dataset.wallpaperId === ctx.state.wallpaper;
+      if (selected) {
+        el.setAttribute("selected", "");
+      } else {
+        el.removeAttribute("selected");
+      }
+      el.setAttribute("aria-pressed", selected ? "true" : "false");
+    });
+  }
+  function syncEditorSlot(ctx, slot, inner, def) {
+    teardownEditor(ctx);
+    inner.innerHTML = "";
+    if (!def.renderEditor) {
+      slot.dataset.expanded = "false";
+      return;
+    }
+    const editorCtx = {
+      id: def.id,
+      pluginUrl: "",
+      prefersReducedMotion: typeof window.matchMedia === "function" && window.matchMedia("( prefers-reduced-motion: reduce )").matches,
+      visible: !document.hidden
+    };
+    try {
+      const result = def.renderEditor(inner, editorCtx);
+      if (isPromise(result)) {
+        result.then((teardown) => {
+          ctx.activeEditorTeardown = teardown;
+        });
+      } else {
+        ctx.activeEditorTeardown = result;
+      }
+    } catch (err) {
+      if (typeof console !== "undefined") {
+        console.error(
+          `[wp-desktop-mode] Wallpaper "${def.id}" renderEditor threw:`,
+          err
+        );
+      }
+    }
+    slot.dataset.expanded = "true";
+  }
+  function teardownEditor(ctx) {
+    if (ctx.activeEditorTeardown) {
+      try {
+        ctx.activeEditorTeardown();
+      } catch (err) {
+        if (typeof console !== "undefined") {
+          console.error(
+            "[wp-desktop-mode] Wallpaper editor teardown threw:",
+            err
+          );
+        }
+      }
+      ctx.activeEditorTeardown = null;
+    }
+  }
+  function renderCustomGradientEditor(ctx, container) {
+    container.classList.add("wp-desktop-os-settings__gradient-editor-inner");
+    const onFrom = (e) => {
+      ctx.state.customGradient.from = e.detail.value;
+      onChange();
+    };
+    const onTo = (e) => {
+      ctx.state.customGradient.to = e.detail.value;
+      onChange();
+    };
+    const onAngle = (e) => {
+      ctx.state.customGradient.angle = e.detail.value;
+      onChange();
+    };
+    const onChange = () => {
+      ctx.save();
+      ctx.apply();
+      syncGradientPreviewSwatch(ctx, container);
+      paint();
+    };
+    const paint = () => render(
+      html`
+				<div class="wp-desktop-os-settings__gradient-row">
+					<wpd-color-field
+						variant="block"
+						label=${__("From")}
+						value=${ctx.state.customGradient.from}
+						@wpd-color-change=${onFrom}
+					></wpd-color-field>
+					<wpd-color-field
+						variant="block"
+						label=${__("To")}
+						value=${ctx.state.customGradient.to}
+						@wpd-color-change=${onTo}
+					></wpd-color-field>
+				</div>
+				<wpd-range-field
+					label=${__("Angle")}
+					min="0"
+					max="360"
+					step="1"
+					suffix="°"
+					value=${String(ctx.state.customGradient.angle)}
+					@wpd-range-change=${onAngle}
+				></wpd-range-field>
+			`,
+      container
+    );
+    paint();
+    return () => {
+    };
+  }
+  function syncGradientPreviewSwatch(ctx, editorEl) {
+    const section = editorEl.closest("wpd-section");
+    const preview = section?.querySelector(
+      `[data-wallpaper-id="${CUSTOM_GRADIENT_ID}"]`
+    );
+    if (preview) {
+      preview.style.background = customGradientCss(ctx.state);
+    }
+  }
+  function buildWallpaperSection(ctx, body) {
+    const editorSlot = document.createElement("div");
+    editorSlot.className = "wp-desktop-os-settings__editor-slot";
+    editorSlot.dataset.expanded = "false";
+    const editorInner = document.createElement("div");
+    editorInner.className = "wp-desktop-os-settings__editor-slot-inner";
+    editorSlot.appendChild(editorInner);
+    const onPick = (e) => {
+      const id = e.detail?.value ?? "";
+      const def = get$1(id);
+      if (!def || def.id === CUSTOM_IMAGE_ID) {
+        return;
+      }
+      selectWallpaper(ctx, def.id, body);
+      syncEditorSlot(ctx, editorSlot, editorInner, def);
+      paint();
+    };
+    const customImageSection = buildCustomImageSection(ctx, body);
+    const wrapper = document.createElement("div");
+    const paint = () => render(
+      html`
+				<wpd-section
+					heading=${__("Wallpaper")}
+					description=${__(
+        "The backdrop behind your windows. Pick a preset, mix your own gradient, or drop in an image."
+      )}
+				>
+					<div
+						class="wp-desktop-os-settings__grid wp-desktop-os-settings__grid--wallpapers"
+						@wpd-pick=${onPick}
+					>
+						${all$1().filter((def) => def.id !== CUSTOM_IMAGE_ID).map(
+        (def) => html`<wpd-swatch
+									value=${def.id}
+									label=${def.label}
+									preview=${def.preview}
+									variant="wallpaper"
+									data-wallpaper-id=${def.id}
+									?selected=${ctx.state.wallpaper === def.id}
+								>
+									<span class="wp-desktop-os-settings__swatch-label"
+										>${def.label}</span
+									>
+								</wpd-swatch>`
+      )}
+					</div>
+					${editorSlot} ${customImageSection}
+				</wpd-section>
+			`,
+      wrapper
+    );
+    paint();
+    const active2 = get$1(ctx.state.wallpaper);
+    if (active2) {
+      syncEditorSlot(ctx, editorSlot, editorInner, active2);
+    }
+    return wrapper;
+  }
+  class OsSettings {
+    constructor(config, layer) {
+      this.activeEditorTeardown = null;
+      this.config = config;
+      this.layer = layer;
+      this.state = loadState();
+      registerCustomGradient(this);
+      registerCustomImageIfPresent(this.state);
+    }
+    /**
+     * Apply the current state: wallpaper via the layer, accent + dock
+     * size as CSS custom properties on the shell.
+     *
+     * Safe to call repeatedly — calls into `layer.apply` dedupe via
+     * generation counter; CSS property writes are idempotent.
+     */
+    apply() {
+      const shell = document.getElementById("wp-desktop-shell");
+      if (!shell) {
+        return;
+      }
+      const def = get$1(this.state.wallpaper) || get$1(DEFAULT_WALLPAPER_ID) || all$1()[0];
+      if (def) {
+        this.layer.apply(def);
+      }
+      const accent = ACCENTS.find((a) => a.id === this.state.accent) ?? ACCENTS[0];
+      const dockSize = DOCK_SIZES.find((d) => d.id === this.state.dockSize) ?? DOCK_SIZES[1];
+      const root = document.documentElement;
+      root.style.setProperty("--wp-admin-theme-color", accent.value);
+      root.style.setProperty("--wp-desktop-dock-width", `${dockSize.width}px`);
+      root.style.setProperty("--wp-desktop-dock-icon-size", `${dockSize.icon}px`);
+    }
+    save() {
+      saveState(this.state);
+    }
+    /**
+     * Render the settings panel into the given native-window body.
+     *
+     * Builds three sections (wallpaper, accent, dock size) and wires
+     * each to save/apply on change. The panel is a one-shot build per
+     * window open — closing and re-opening renders a fresh tree.
+     */
+    renderPanel(body) {
+      teardownEditor(this);
+      body.classList.add("wp-desktop-os-settings");
+      const onReset = () => {
+        const preservedImage = this.state.customImage;
+        this.state = { ...DEFAULTS, customImage: preservedImage };
+        this.save();
+        this.apply();
+        this.renderPanel(body);
+      };
+      render(
+        html`
+				<p class="wp-desktop-os-settings__intro">
+					${__(
+          "Personalize your desktop. Changes apply instantly and are saved to this browser."
+        )}
+				</p>
+				${buildWallpaperSection(this, body)}
+				${buildAccentSection(this)}
+				${buildDockSizeSection(this)}
+				<div class="wp-desktop-os-settings__footer">
+					<wpd-button variant="ghost" @click=${onReset}
+						>${__("Reset to defaults")}</wpd-button
+					>
+				</div>
+			`,
+        body
+      );
+    }
   }
   const pending = /* @__PURE__ */ new Map();
   function loadVendorScript(url) {

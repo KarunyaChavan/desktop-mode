@@ -131,6 +131,187 @@ describe( 'wpd-ui html renderer', () => {
 		// re-emptied and re-parsed — different node instances.
 		expect( firstP ).not.toBe( secondP );
 	} );
+
+	// -------------------------------------------------------------
+	// Nested templates + arrays
+	// -------------------------------------------------------------
+
+	test( 'nested TemplateResult renders inside a text slot', () => {
+		const inner = ( name: string ) => html`<span>hi ${ name }</span>`;
+		render( html`<div>${ inner( 'world' ) }</div>`, host );
+		const div = host.querySelector( 'div' )!;
+		const span = div.querySelector( 'span' );
+		expect( span ).not.toBeNull();
+		expect( span!.textContent ).toBe( 'hi world' );
+	} );
+
+	test( 're-rendering a nested template with same strings updates in place', () => {
+		const outer = ( name: string ) =>
+			render( html`<div>${ ( ( n ) => html`<span>hi ${ n }</span>` )( name ) }</div>`, host );
+		outer( 'alice' );
+		const firstSpan = host.querySelector( 'span' );
+		outer( 'bob' );
+		const secondSpan = host.querySelector( 'span' );
+		expect( firstSpan ).toBe( secondSpan );
+		expect( secondSpan!.textContent ).toBe( 'hi bob' );
+	} );
+
+	test( 'array of TemplateResults renders all items', () => {
+		const list = ( items: string[] ) =>
+			html`<ul>${ items.map( ( i ) => html`<li>${ i }</li>` ) }</ul>`;
+		render( list( [ 'a', 'b', 'c' ] ), host );
+		const lis = host.querySelectorAll( 'li' );
+		expect( lis.length ).toBe( 3 );
+		expect( Array.from( lis ).map( ( n ) => n.textContent ) ).toEqual( [ 'a', 'b', 'c' ] );
+	} );
+
+	test( 'array of primitives renders as text nodes', () => {
+		render( html`<p>${ [ 'one ', 'two ', 'three' ] }</p>`, host );
+		expect( host.querySelector( 'p' )!.textContent ).toBe( 'one two three' );
+	} );
+
+	test( 'array shrinking disposes trailing entries', () => {
+		const list = ( items: string[] ) =>
+			render( html`<ul>${ items.map( ( i ) => html`<li>${ i }</li>` ) }</ul>`, host );
+		list( [ 'a', 'b', 'c' ] );
+		expect( host.querySelectorAll( 'li' ).length ).toBe( 3 );
+		list( [ 'a' ] );
+		expect( host.querySelectorAll( 'li' ).length ).toBe( 1 );
+		expect( host.querySelector( 'li' )!.textContent ).toBe( 'a' );
+	} );
+
+	test( 'array growth mounts new entries', () => {
+		const list = ( items: string[] ) =>
+			render( html`<ul>${ items.map( ( i ) => html`<li>${ i }</li>` ) }</ul>`, host );
+		list( [ 'a' ] );
+		list( [ 'a', 'b', 'c' ] );
+		expect( host.querySelectorAll( 'li' ).length ).toBe( 3 );
+	} );
+
+	test( 'array items keep node identity when length + shape match', () => {
+		const list = ( items: string[] ) =>
+			render( html`<ul>${ items.map( ( i ) => html`<li>${ i }</li>` ) }</ul>`, host );
+		list( [ 'a', 'b' ] );
+		const firstLis = Array.from( host.querySelectorAll( 'li' ) );
+		list( [ 'x', 'y' ] );
+		const secondLis = Array.from( host.querySelectorAll( 'li' ) );
+		// Same DOM nodes, text updated in place — proves the array
+		// diffed positionally instead of remounting.
+		expect( firstLis[ 0 ] ).toBe( secondLis[ 0 ] );
+		expect( firstLis[ 1 ] ).toBe( secondLis[ 1 ] );
+		expect( secondLis[ 0 ].textContent ).toBe( 'x' );
+		expect( secondLis[ 1 ].textContent ).toBe( 'y' );
+	} );
+
+	test( 'nested event bindings fire + swap on re-render', () => {
+		let counter = 0;
+		const bump = () => {
+			counter++;
+		};
+		const outer = ( handler: () => void ) =>
+			render(
+				html`<div>${ ( ( h ) => html`<button @click=${ h }>go</button>` )( handler ) }</div>`,
+				host,
+			);
+		outer( bump );
+		host.querySelector( 'button' )!.click();
+		expect( counter ).toBe( 1 );
+
+		const noop = (): void => {};
+		outer( noop );
+		host.querySelector( 'button' )!.click();
+		// Second listener was swapped in; old handler no longer fires.
+		expect( counter ).toBe( 1 );
+	} );
+
+	test( 'mixed array: primitive + template + null', () => {
+		render(
+			html`<p>${ [
+				'plain ',
+				html`<em>italic</em>`,
+				null,
+				' tail',
+			] }</p>`,
+			host,
+		);
+		const p = host.querySelector( 'p' )!;
+		expect( p.textContent ).toBe( 'plain italic tail' );
+		expect( p.querySelector( 'em' ) ).not.toBeNull();
+	} );
+
+	test( 'switching slot shape from text to template tears down the text', () => {
+		const variant = ( v: string | ReturnType<typeof html> ) =>
+			render( html`<div>${ v }</div>`, host );
+		variant( 'plain' );
+		expect( host.querySelector( 'span' ) ).toBeNull();
+		variant( html`<span>rich</span>` );
+		expect( host.querySelector( 'span' )!.textContent ).toBe( 'rich' );
+		// textContent of the div now reflects only the span's content
+		// — the stale 'plain' text was cleaned up.
+		expect( host.querySelector( 'div' )!.textContent ).toBe( 'rich' );
+	} );
+
+	test( 'DOM node threaded through a text slot is inserted, not stringified', () => {
+		const pre = document.createElement( 'input' );
+		pre.type = 'search';
+		pre.value = 'hello';
+		render( html`<div>${ pre }</div>`, host );
+		const live = host.querySelector( 'input' );
+		expect( live ).toBe( pre );
+		expect( live!.value ).toBe( 'hello' );
+		// No accidental stringification.
+		expect( host.innerHTML ).not.toContain( '[object' );
+	} );
+
+	test( 'DOM node re-render with same node keeps identity; different node swaps', () => {
+		const a = document.createElement( 'div' );
+		a.id = 'a';
+		const b = document.createElement( 'div' );
+		b.id = 'b';
+		const go = ( n: Node ) =>
+			render( html`<section>${ n }</section>`, host );
+
+		go( a );
+		expect( host.querySelector( '#a' ) ).toBe( a );
+
+		go( a );
+		// Same node — stayed in place, no remount.
+		expect( host.querySelector( '#a' ) ).toBe( a );
+
+		go( b );
+		expect( host.querySelector( '#a' ) ).toBeNull();
+		expect( host.querySelector( '#b' ) ).toBe( b );
+	} );
+
+	test( 'siblings after a text-node with multiple markers are still processed', () => {
+		// Regression: the walker iterated a snapshot of childNodes but
+		// incorrectly advanced `i` past siblings after splitting a text
+		// node that contained multiple markers — so any element following
+		// such a text node was never walked, leaving its own markers (and
+		// attribute bindings) unresolved.
+		const onClick = vi.fn();
+		render(
+			html`
+				<header>top</header>
+				${ 'a' } ${ 'b' } ${ 'c' }
+				<footer>
+					<button @click=${ onClick }>${ 'go' }</button>
+				</footer>
+			`,
+			host,
+		);
+		// All three text markers rendered.
+		expect( host.textContent ).toContain( 'a' );
+		expect( host.textContent ).toContain( 'b' );
+		expect( host.textContent ).toContain( 'c' );
+		// Footer's button was walked — event bound, text slot filled,
+		// no marker literals leaked into the output.
+		const btn = host.querySelector( 'button' )!;
+		expect( btn.textContent ).toBe( 'go' );
+		expect( host.innerHTML ).not.toContain( '$$wpd$$' );
+		btn.click();
+		expect( onClick ).toHaveBeenCalledTimes( 1 );
+	} );
 } );
 
 describe( 'wpd-ui css', () => {

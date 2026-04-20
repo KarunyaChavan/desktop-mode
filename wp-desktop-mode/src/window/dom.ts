@@ -224,9 +224,19 @@ export function createWindowElement( config: WindowConfig ): HTMLElement {
 		body.classList.add( 'wp-desktop-window__body--native' );
 	}
 
-	// Resize handle.
-	const resizeHandle = document.createElement( 'div' );
-	resizeHandle.className = 'wp-desktop-window__resize-handle';
+	// Resize handles — 4 corners, each independently hit-testable.
+	// The SE corner keeps the legacy class so existing CSS selectors
+	// (and any third-party rule that styles it) continue to match.
+	// Each handle carries `data-dir` so the pointer layer knows which
+	// axes to move.
+	const resizeHandles: HTMLElement[] = [];
+	for ( const dir of [ 'ne', 'nw', 'se', 'sw' ] as const ) {
+		const h = document.createElement( 'div' );
+		h.className = `wp-desktop-window__resize-handle wp-desktop-window__resize-handle--${ dir }`;
+		h.dataset.dir = dir;
+		h.setAttribute( 'aria-hidden', 'true' );
+		resizeHandles.push( h );
+	}
 
 	el.appendChild( titleBar );
 
@@ -267,7 +277,9 @@ export function createWindowElement( config: WindowConfig ): HTMLElement {
 	}
 
 	el.appendChild( body );
-	el.appendChild( resizeHandle );
+	for ( const h of resizeHandles ) {
+		el.appendChild( h );
+	}
 
 	return el;
 }

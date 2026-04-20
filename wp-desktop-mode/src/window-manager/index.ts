@@ -42,6 +42,11 @@ import {
 	loadSnapEnabled,
 	setSnapEnabled,
 } from './snap';
+import {
+	abortSnapIfPending,
+	commitSnapIfPending,
+	updateSnapZoneForDrag,
+} from './snap-zones';
 import { enterOverview, exitOverview } from './overview';
 
 /** Base z-index for desktop windows. */
@@ -110,6 +115,15 @@ export class WindowManager {
 	private desktopResizeObserver: ResizeObserver | null = null;
 
 	/**
+	 * Debounce timer that clears `--reflowing` from stateful windows
+	 * once the user stops resizing the viewport. Null when no resize
+	 * is in flight.
+	 *
+	 * @internal
+	 */
+	private _reflowRestoreTimer: number | null = null;
+
+	/**
 	 * Whether drag/resize movements snap to the desktop-area grid.
 	 * @internal
 	 */
@@ -153,11 +167,53 @@ export class WindowManager {
 	/** @internal */
 	public _lastOverviewHoverId: string | null = null;
 
+	// ---- Snap-zone state (edge-snap + split overview) ----
+
+	/**
+	 * Zone the cursor is currently hovering inside during a drag.
+	 * Null when no snap is armed.
+	 * @internal
+	 */
+	public _snapPendingZone: 'left' | 'right' | null = null;
+
+	/**
+	 * The translucent preview rectangle shown while a snap is armed.
+	 * Lives inside `.wp-desktop-area`.
+	 * @internal
+	 */
+	public _snapPreviewEl: HTMLElement | null = null;
+
+	/**
+	 * True while the split overview (partner picker) is up. Blocks
+	 * snap-zone detection on subsequent drags.
+	 * @internal
+	 */
+	public _splitOverviewActive = false;
+
+	/** @internal */
+	public _splitOverviewAnchor: Window | null = null;
+	/** @internal */
+	public _splitOverviewZone: 'left' | 'right' | null = null;
+	/** @internal */
+	public _splitOverviewSnapshot: Map< string, { transform: string; transition: string } > = new Map();
+	/** @internal */
+	public _splitOverviewLabels: Map< string, HTMLElement > = new Map();
+	/** @internal */
+	public _splitOverviewPointerDown: ( ( e: PointerEvent ) => void ) | null = null;
+	/** @internal */
+	public _splitOverviewPointerUp: ( ( e: PointerEvent ) => void ) | null = null;
+	/** @internal */
+	public _splitOverviewPressTarget: { id: string; element: HTMLElement } | null = null;
+	/** @internal */
+	public _splitOverviewClickBlocker: ( ( e: MouseEvent ) => void ) | null = null;
+	/** @internal */
+	public _splitOverviewKey: ( ( e: KeyboardEvent ) => void ) | null = null;
+
 	constructor( desktop: HTMLElement ) {
 		this._desktop = desktop;
 		if ( typeof ResizeObserver !== 'undefined' ) {
 			this.desktopResizeObserver = new ResizeObserver( () =>
-				this.reflowMaximizedWindows(),
+				this.reflowStatefulWindows(),
 			);
 			this.desktopResizeObserver.observe( desktop );
 		}
@@ -216,28 +272,69 @@ export class WindowManager {
 	}
 
 	/**
-	 * Re-apply maximize bounds to any window currently in
-	 * `state === 'maximized'`. Called from the desktop-area
-	 * ResizeObserver so the user can shrink the browser window
-	 * without the maximized content refusing to follow.
+	 * Re-apply state-driven bounds to any window whose geometry is
+	 * derived from the desktop area's dimensions: maximized (full
+	 * area) and snapped-left / snapped-right (half area). Called from
+	 * the desktop-area ResizeObserver so shrinking the browser window
+	 * drags the stateful windows along with it.
+	 *
+	 * Inlines the geometry writes instead of calling `applySnap` —
+	 * that method emits `_emitChange('state')` which would spam the
+	 * session saver on every resize tick. Viewport resize is an
+	 * INCOMING shape change (the shell reshaped us), not an outgoing
+	 * user action worth persisting.
+	 *
+	 * Also toggles `wp-desktop-window--reflowing` so the base
+	 * left/top/width/height transition doesn't interpolate between
+	 * every ResizeObserver tick — without that, the windows would
+	 * always lag ~250 ms behind a browser edge-drag.
+	 *
+	 * Skipped while overview is active — windows are mid-transform
+	 * and touching their inline geometry would desync the live
+	 * transform math; overview exit re-applies state correctly via
+	 * its own path.
 	 */
-	private reflowMaximizedWindows(): void {
+	private reflowStatefulWindows(): void {
 		if ( this._overviewActive ) {
 			return;
 		}
 		for ( const w of this._stack ) {
-			if ( w.state !== 'maximized' ) {
-				continue;
-			}
 			const parent = w.element.parentElement;
 			if ( ! parent ) {
 				continue;
 			}
-			// left/top stay at 0 for maximize; only width/height
-			// change with viewport.
-			w.element.style.width = `${ parent.clientWidth }px`;
-			w.element.style.height = `${ parent.clientHeight }px`;
+			if ( w.state === 'maximized' ) {
+				w.element.classList.add( 'wp-desktop-window--reflowing' );
+				w.element.style.width = `${ parent.clientWidth }px`;
+				w.element.style.height = `${ parent.clientHeight }px`;
+			} else if (
+				w.state === 'snapped-left' ||
+				w.state === 'snapped-right'
+			) {
+				w.element.classList.add( 'wp-desktop-window--reflowing' );
+				const halfW = Math.floor( parent.clientWidth / 2 );
+				const height = parent.clientHeight;
+				const left = w.state === 'snapped-left' ? 0 : halfW;
+				w.element.style.left = `${ left }px`;
+				w.element.style.top = '0px';
+				w.element.style.width = `${ halfW }px`;
+				w.element.style.height = `${ height }px`;
+			}
 		}
+
+		// Schedule the transition re-enable for after the browser
+		// has stopped firing resize events. Cleared + re-set on
+		// every tick so a sustained resize drag keeps transitions
+		// off until the user lets go.
+		if ( this._reflowRestoreTimer !== null ) {
+			window.clearTimeout( this._reflowRestoreTimer );
+		}
+		this._reflowRestoreTimer = window.setTimeout( () => {
+			this._reflowRestoreTimer = null;
+			for ( const w of this._stack ) {
+				w.element.classList.remove( 'wp-desktop-window--reflowing' );
+			}
+		}, 140 ) as unknown as number;
 	}
 
 	/**
@@ -354,6 +451,20 @@ export class WindowManager {
 			this.onToggleStartupRequested?.( w );
 		};
 		win.snapConfigProvider = () => this.getSnapConfig();
+		// Edge-snap + split-overview flow. `onDragMove` updates the
+		// snap preview on every pointermove; `onDragEnd` commits the
+		// snap (and returns true, suppressing the pointer layer's
+		// default move-end hook firing).
+		win.onDragMove = ( w, clientX ) => {
+			updateSnapZoneForDrag( this, w, clientX );
+		};
+		win.onDragEnd = ( w ) => {
+			if ( this._snapPendingZone ) {
+				return commitSnapIfPending( this, w );
+			}
+			abortSnapIfPending( this );
+			return false;
+		};
 
 		this._stack.push( win );
 		this._desktop.appendChild( win.element );

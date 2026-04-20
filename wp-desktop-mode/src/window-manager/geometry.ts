@@ -114,6 +114,14 @@ export interface OverviewLayoutItem {
  * grid cell while preserving aspect ratio, centered in the cell.
  * Padding and inter-cell gaps keep thumbnails from crowding each other
  * and the viewport edges.
+ *
+ * **Coordinate system:** the returned `x` / `y` values are in the
+ * same coordinate space as the windows' `offsetLeft` / `offsetTop`
+ * — i.e. relative to the desktop area's origin. The `rect` argument
+ * carries `{ left, top, width, height }` in that same area-local
+ * space, so callers can target a sub-region (e.g. the right half
+ * during split-overview) simply by passing a rect with a non-zero
+ * `left`. For full overview the caller passes `{ left: 0, top: 0 }`.
  */
 export function computeOverviewLayout(
 	windows: Window[],
@@ -159,13 +167,17 @@ export function computeOverviewLayout(
 	return windows.map( ( win, i ) => {
 		const col = i % cols;
 		const row = Math.floor( i / cols );
-		const cellX = padding + col * ( cellWidth + gap );
+		// Cells are positioned relative to the rect's origin, not the
+		// area's — that's what lets the split-overview place thumbs
+		// in the right half (rect.left = areaWidth / 2) without
+		// colliding with a window anchored on the left.
+		const cellX = rect.left + padding + col * ( cellWidth + gap );
 		// cellY is the cell's top; the thumbnail anchors below the
 		// label reserve, so the label (positioned at `item.y - 34`)
 		// lands inside the reserve without overlapping the row above.
 		// `topInset` pushes the entire grid downward.
 		const cellY =
-			topInset + padding + row * ( cellHeight + gap ) + labelReserve;
+			rect.top + topInset + padding + row * ( cellHeight + gap ) + labelReserve;
 
 		// Preserve the window's aspect ratio, fit into the thumbnail
 		// area (not the full cell — the label took the top slice).

@@ -39,8 +39,10 @@
 	 * root has no data-wp-desktop-scheme attribute (e.g. tests). */
 	--wp-admin-theme-color: #2271b1;
 
-	/* Resize handle */
-	--wp-desktop-resize-size: 12px;
+	/* Resize handle — larger hit area than visual glyph; corners
+	   are transparent until hover so they don't compete with the
+	   window's own drop shadow.  */
+	--wp-desktop-resize-size: 20px;
 	--wp-desktop-resize-color: rgba(0, 0, 0, 0.15);
 
 	/* Dock */

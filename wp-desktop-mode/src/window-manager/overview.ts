@@ -74,22 +74,19 @@ export function enterOverview( mgr: WindowManager ): void {
 		}
 	}
 
-	// Capture the desktop area's *target* rect BEFORE triggering the
-	// dock's collapse animation. The dock is a flex sibling about to
-	// shrink from its full width to 0 over ~280 ms — measuring after
-	// the class change would catch an in-transit width, making the
-	// overview grid lay out for a smaller area than it will actually
-	// occupy by the time the animation settles. We pre-measure the
-	// dock, compose a synthetic rect representing the *post-collapse*
-	// area, and pass THAT to `computeOverviewLayout`. Thumbnails then
-	// fly to fixed destinations while the dock glides out in
-	// parallel.
+	// Target rect for the layout. `computeOverviewLayout` expects
+	// area-relative coordinates (same space as `offsetLeft` /
+	// `offsetTop`), so left + top are 0. Width accounts for the
+	// dock's imminent collapse: the area is about to grow by
+	// `dockWidth` as the dock shrinks over the next ~280 ms, and we
+	// lay out as if that animation has already settled so thumbnails
+	// land at their final positions in a single pass.
 	const dockEl = document.getElementById( 'wp-desktop-dock' );
 	const dockWidth = dockEl ? dockEl.offsetWidth : 0;
 	const currentRect = mgr._desktop.getBoundingClientRect();
 	const targetRect = new DOMRect(
-		currentRect.left - dockWidth,
-		currentRect.top,
+		0,
+		0,
 		currentRect.width + dockWidth,
 		currentRect.height,
 	);

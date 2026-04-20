@@ -434,14 +434,25 @@ describe( 'Window — drag of a maximized window auto-unmaximizes', () => {
 		// jsdom 25 doesn't ship `PointerEvent` either — synthesize a
 		// MouseEvent with the pointer fields the handler reads
 		// (`pointerId` is the only PointerEvent-specific bit).
-		const ev = new MouseEvent( 'pointerdown', {
+		const down = new MouseEvent( 'pointerdown', {
 			bubbles: true,
 			clientX: 400,
 			clientY: 16,
 			button: 0,
 		} );
-		Object.defineProperty( ev, 'pointerId', { value: 1 } );
-		titleBar.dispatchEvent( ev );
+		Object.defineProperty( down, 'pointerId', { value: 1 } );
+		titleBar.dispatchEvent( down );
+		// Un-state is threshold-gated (DRAG_THRESHOLD_PX = 5) so a
+		// stationary pointerdown doesn't un-max a window. Simulate a
+		// 20 px right-move on the title bar so the deferred un-state
+		// commits.
+		const move = new MouseEvent( 'pointermove', {
+			bubbles: true,
+			clientX: 420,
+			clientY: 16,
+		} );
+		Object.defineProperty( move, 'pointerId', { value: 1 } );
+		titleBar.dispatchEvent( move );
 
 		expect( win.state ).toBe( 'normal' );
 		expect(

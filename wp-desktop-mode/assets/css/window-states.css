@@ -13,14 +13,30 @@
  * @since 6.9.0
  */
 
-/* Resize handle (bottom-right corner). */
+/*
+ * Resize handles — one per corner (NE / NW / SE / SW). Each is an
+ * invisible square hit-target whose cursor telegraphs the resize
+ * axis. SE keeps the legacy grip-lines glyph so the affordance is
+ * visible even without hover; the other three remain transparent
+ * (discoverable by cursor change only) to keep the window chrome
+ * clean.
+ *
+ * Hit-area is `--wp-desktop-resize-size` (20 px by default). The
+ * handles extend a few pixels OUTSIDE the window edge so a cursor
+ * landing just past the border still activates them — matches how
+ * native OS windows forgive edge-grabs.
+ */
 .wp-desktop-window__resize-handle {
 	position: absolute;
-	inset-inline-end: 0;
-	bottom: 0;
 	width: var(--wp-desktop-resize-size);
 	height: var(--wp-desktop-resize-size);
-	cursor: nwse-resize; /* RTL override below. */
+	z-index: 1;
+}
+
+.wp-desktop-window__resize-handle--se {
+	right: -3px;
+	bottom: -3px;
+	cursor: nwse-resize;
 	background: linear-gradient(
 		135deg,
 		transparent 30%,
@@ -34,7 +50,24 @@
 		transparent 80%,
 		var(--wp-desktop-resize-color) 80%
 	);
-	z-index: 1;
+}
+
+.wp-desktop-window__resize-handle--sw {
+	left: -3px;
+	bottom: -3px;
+	cursor: nesw-resize;
+}
+
+.wp-desktop-window__resize-handle--ne {
+	right: -3px;
+	top: -3px;
+	cursor: nesw-resize;
+}
+
+.wp-desktop-window__resize-handle--nw {
+	left: -3px;
+	top: -3px;
+	cursor: nwse-resize;
 }
 
 /*
@@ -142,9 +175,103 @@
 	}
 }
 
-/* RTL: flip the resize cursor direction. */
-[dir="rtl"] .wp-desktop-window__resize-handle {
-	cursor: nesw-resize;
+/*
+ * RTL note: resize handles use physical `left` / `right` anchors
+ * (not logical `inset-inline-*`) so the four corners stay in the
+ * same physical positions under RTL. Each handle already has the
+ * correct cursor for its physical diagonal (SE + NW use
+ * `nwse-resize`, NE + SW use `nesw-resize`); no RTL override
+ * needed.
+ */
+
+/* ---------------------------------------------------------------
+ * Snap zones — edge-snap preview rectangle + snapped-state chrome.
+ *
+ * Preview appears while the drag cursor is within SNAP_EDGE_THRESHOLD
+ * of the left/right edge (see window-manager/snap-zones.ts). It's a
+ * translucent accent-colored rectangle covering the target half, with
+ * a bright border so the user sees exactly where the window will land.
+ * --------------------------------------------------------------- */
+.wp-desktop-snap-preview {
+	position: absolute;
+	background: color-mix(
+		in srgb,
+		var( --wp-admin-theme-color, #2271b1 ) 14%,
+		transparent
+	);
+	border: 2px solid var( --wp-admin-theme-color, #2271b1 );
+	border-radius: 12px;
+	box-shadow:
+		0 0 0 1px rgba( 255, 255, 255, 0.15 ) inset,
+		0 12px 36px rgba( 0, 0, 0, 0.22 );
+	pointer-events: none;
+	z-index: 99; /* Just under windows (which start at 100) so a */
+	             /* still-dragging window renders on top. */
+	opacity: 0;
+	transition:
+		opacity 0.15s ease,
+		left 0.18s cubic-bezier( 0.2, 0, 0.2, 1 ),
+		top 0.18s cubic-bezier( 0.2, 0, 0.2, 1 ),
+		width 0.18s cubic-bezier( 0.2, 0, 0.2, 1 ),
+		height 0.18s cubic-bezier( 0.2, 0, 0.2, 1 );
+}
+
+.wp-desktop-snap-preview--visible {
+	opacity: 1;
+}
+
+/*
+ * Snapped window state — `--snapped-left` / `--snapped-right` carry
+ * cosmetic tweaks only. Resize handles stay visible and functional:
+ * the user can grab any corner to shrink the window back to floating
+ * (the pointer layer drops the snapped-* class on first resize so
+ * geometry stops pretending to be half-screen).
+ *
+ * Rounded-corner profile flattens the INNER edges (the ones that
+ * butt against the partner window) to match macOS split-view
+ * aesthetic.
+ *
+ * Shadows are dropped on both snapped variants. The default window
+ * drop shadow would render inside the opposite half — a dark vertical
+ * ghost line at the seam — and compete visually with the partner
+ * window. Flat edges + no shadow gives the two-up feel of a native
+ * split view: windows adjacent, no separator.
+ */
+.wp-desktop-window--snapped-left,
+.wp-desktop-window--snapped-right {
+	box-shadow: none;
+}
+
+/* Override the elevated shadow applied to `--focused` windows too —
+   the focused selector runs at equal specificity, so without this
+   rule the focus shadow would re-introduce the seam once the snapped
+   window is active. */
+.wp-desktop-window--focused.wp-desktop-window--snapped-left,
+.wp-desktop-window--focused.wp-desktop-window--snapped-right {
+	box-shadow: none;
+}
+
+.wp-desktop-window--snapped-left {
+	/* Inner (right) edge flush; outer corners keep the radius. */
+	border-top-right-radius: 0;
+	border-bottom-right-radius: 0;
+}
+
+.wp-desktop-window--snapped-right {
+	border-top-left-radius: 0;
+	border-bottom-left-radius: 0;
+}
+
+/*
+ * Split overview — a constrained variant of the full overview,
+ * scoped to the half opposite a just-snapped window. Uses the same
+ * thumbnail visuals as the main overview; only the backdrop tint is
+ * lighter (the anchor window still takes the other half, so we want
+ * the picker to feel "peripheral" not "modal").
+ */
+.wp-desktop-area--split-overview {
+	background-color: rgba( 0, 0, 0, 0.28 );
+	transition: background-color 0.24s ease;
 }
 
 /* Toast styling moved into `<wpd-toast-container>` and `<wpd-toast>`

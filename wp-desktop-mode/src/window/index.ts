@@ -162,6 +162,22 @@ export class Window {
 		| null = null;
 
 	/**
+	 * Called by the drag pointer-move handler on every frame with
+	 * the current cursor position. The window-manager uses this to
+	 * power edge-snap detection + preview.
+	 */
+	public onDragMove: ( ( win: Window, clientX: number, clientY: number ) => void ) | null = null;
+
+	/**
+	 * Called by the drag pointer-up handler when the drag ends.
+	 * Returns `true` if the manager consumed the drop (e.g., snapped
+	 * the window into a zone) and the pointer layer should SKIP
+	 * emitting the usual `moved` / `drag-end` actions. Returns
+	 * `false` to let the default flow run.
+	 */
+	public onDragEnd: ( ( win: Window ) => boolean ) | null = null;
+
+	/**
 	 * Bound handler used to close the actions menu on outside clicks.
 	 * @internal
 	 */
@@ -209,6 +225,23 @@ export class Window {
 			return;
 		}
 
+		// Session-restored snapped windows need their class from
+		// frame 1 so the flat inner corner paints correctly during
+		// the opening animation — otherwise the window briefly shows
+		// its full border-radius on all 4 corners, producing a
+		// visible seam between two partner-snapped windows. Geometry
+		// re-snap happens in `applyInitialState` so the current
+		// viewport's `halfW` always wins (defending against viewport
+		// changes between save + restore).
+		if (
+			config.initialState === 'snapped-left' ||
+			config.initialState === 'snapped-right'
+		) {
+			this.element.classList.add(
+				`wp-desktop-window--${ config.initialState }`,
+			);
+		}
+
 		// Fresh open (or restored to a visible state). Play the opening
 		// animation, then remove the class.
 		this.element.classList.add( 'wp-desktop-window--opening' );
@@ -236,6 +269,10 @@ export class Window {
 			this.toggleMaximize();
 		} else if ( state === 'fullscreen' ) {
 			this.toggleFullscreen();
+		} else if ( state === 'snapped-left' ) {
+			this.applySnap( 'left' );
+		} else if ( state === 'snapped-right' ) {
+			this.applySnap( 'right' );
 		}
 	}
 
@@ -351,10 +388,17 @@ export class Window {
 		);
 
 		// Resize handle.
-		const resizeHandle = this.element.querySelector( '.wp-desktop-window__resize-handle' ) as HTMLElement;
-		resizeHandle.addEventListener( 'pointerdown', ( e: PointerEvent ) =>
-			handleResizeStart( this, e ),
+		// Each corner handle gets its own pointerdown listener. The
+		// handler reads `data-dir` off the target to know which axes
+		// to move during the drag.
+		const resizeHandles = this.element.querySelectorAll<HTMLElement>(
+			'.wp-desktop-window__resize-handle',
 		);
+		resizeHandles.forEach( ( handle ) => {
+			handle.addEventListener( 'pointerdown', ( e: PointerEvent ) =>
+				handleResizeStart( this, e ),
+			);
+		} );
 
 		// Window control buttons.
 		const btnMin = this.element.querySelector( '.wp-desktop-window__btn--minimize' ) as HTMLElement;
@@ -524,6 +568,35 @@ export class Window {
 	}
 
 	/** Minimize the window. */
+	/**
+	 * Write the half-screen snap geometry for `zone` and apply the
+	 * corresponding state class. Shared by session-restore (which
+	 * calls it from `applyInitialState`) and the manager's live-snap
+	 * commit path so both enter the "snapped" state via identical
+	 * geometry math — and the ResizeObserver that reflows stateful
+	 * windows on desktop-area size changes.
+	 */
+	public applySnap( zone: 'left' | 'right' ): void {
+		const parent = this.element.parentElement;
+		if ( ! parent ) {
+			return;
+		}
+		const halfW = Math.floor( parent.clientWidth / 2 );
+		const height = parent.clientHeight;
+		this.element.classList.remove(
+			'wp-desktop-window--maximized',
+			'wp-desktop-window--snapped-left',
+			'wp-desktop-window--snapped-right',
+		);
+		this.element.classList.add( `wp-desktop-window--snapped-${ zone }` );
+		this.element.style.left = zone === 'left' ? '0px' : `${ halfW }px`;
+		this.element.style.top = '0px';
+		this.element.style.width = `${ halfW }px`;
+		this.element.style.height = `${ height }px`;
+		this.state = zone === 'left' ? 'snapped-left' : 'snapped-right';
+		this._emitChange( 'state' );
+	}
+
 	public minimize(): void {
 		this.state = 'minimized';
 		this.element.classList.add( 'wp-desktop-window--minimized' );

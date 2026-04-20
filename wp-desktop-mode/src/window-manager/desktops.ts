@@ -239,8 +239,11 @@ export function relayoutOverviewForActiveDesktop( mgr: WindowManager ): void {
 
 	// At this point the dock has already collapsed (we're mid-
 	// overview), so the desktop area's bounding rect already reflects
-	// the post-collapse width. No need to add the dock width back.
-	const targetRect = mgr._desktop.getBoundingClientRect();
+	// the post-collapse width. `computeOverviewLayout` takes an
+	// area-relative rect — left/top = 0, dimensions straight from
+	// the live bounding rect.
+	const live = mgr._desktop.getBoundingClientRect();
+	const targetRect = new DOMRect( 0, 0, live.width, live.height );
 	const layout = computeOverviewLayout(
 		eligible,
 		targetRect,

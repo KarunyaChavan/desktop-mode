@@ -56,9 +56,17 @@
 /*
  * Suppress the left/top/width/height transition during drag or resize —
  * otherwise every pointer move lerps and the window lags the cursor.
+ *
+ * Also during a viewport reflow (`--reflowing`) — when the browser
+ * window is being dragged smaller, the ResizeObserver fires many
+ * times per second and each style write would restart the 250 ms
+ * transition, leaving maximized / snapped windows ~250 ms behind the
+ * viewport the whole time. The class is added by
+ * `reflowStatefulWindows` and cleared ~140 ms after the last tick.
  */
 .wp-desktop-window--dragging,
-.wp-desktop-window--resizing {
+.wp-desktop-window--resizing,
+.wp-desktop-window--reflowing {
 	transition: none;
 }
 

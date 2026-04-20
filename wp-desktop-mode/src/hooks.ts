@@ -275,6 +275,33 @@ export const HOOKS = {
 	ARRANGE_CUSTOM_ACTION: 'wp-desktop.arrange.custom-action',
 
 	// ------------------------------------------------------------------
+	// Snap-zones — Windows-style edge snapping with a split-overview
+	// picker to fill the opposite half after commit.
+	// ------------------------------------------------------------------
+	/**
+	 * Action, fires when the drag cursor enters a snap zone and the
+	 * shell shows the target-position preview. Payload
+	 * `{ windowId, zone: 'left' | 'right' }`.
+	 */
+	SNAP_ZONE_PENDING: 'wp-desktop.snap.zone-pending',
+	/**
+	 * Action, fires when the drag cursor leaves the snap zone without
+	 * releasing — the preview disappears. Payload `{ windowId }`.
+	 */
+	SNAP_ZONE_CANCELED: 'wp-desktop.snap.zone-canceled',
+	/**
+	 * Action, fires once the window has animated into its snapped
+	 * bounds. Payload `{ windowId, zone: 'left' | 'right' }`.
+	 */
+	SNAP_ZONE_COMMITTED: 'wp-desktop.snap.zone-committed',
+	/**
+	 * Action, fires when a user picks a thumbnail from the split
+	 * overview to fill the opposite half. Payload
+	 * `{ windowId, zone: 'left' | 'right' }`.
+	 */
+	SNAP_SPLIT_FILLED: 'wp-desktop.snap.split-filled',
+
+	// ------------------------------------------------------------------
 	// Widgets — the right-side column. Widgets paint above the
 	// wallpaper but beneath windows. Lifecycle mirrors canvas
 	// wallpapers: register via filter, mount/unmount actions bracket

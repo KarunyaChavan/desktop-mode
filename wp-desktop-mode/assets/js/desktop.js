@@ -155,6 +155,32 @@ var wpDesktop = function(exports) {
      */
     ARRANGE_CUSTOM_ACTION: "wp-desktop.arrange.custom-action",
     // ------------------------------------------------------------------
+    // Snap-zones — Windows-style edge snapping with a split-overview
+    // picker to fill the opposite half after commit.
+    // ------------------------------------------------------------------
+    /**
+     * Action, fires when the drag cursor enters a snap zone and the
+     * shell shows the target-position preview. Payload
+     * `{ windowId, zone: 'left' | 'right' }`.
+     */
+    SNAP_ZONE_PENDING: "wp-desktop.snap.zone-pending",
+    /**
+     * Action, fires when the drag cursor leaves the snap zone without
+     * releasing — the preview disappears. Payload `{ windowId }`.
+     */
+    SNAP_ZONE_CANCELED: "wp-desktop.snap.zone-canceled",
+    /**
+     * Action, fires once the window has animated into its snapped
+     * bounds. Payload `{ windowId, zone: 'left' | 'right' }`.
+     */
+    SNAP_ZONE_COMMITTED: "wp-desktop.snap.zone-committed",
+    /**
+     * Action, fires when a user picks a thumbnail from the split
+     * overview to fill the opposite half. Payload
+     * `{ windowId, zone: 'left' | 'right' }`.
+     */
+    SNAP_SPLIT_FILLED: "wp-desktop.snap.split-filled",
+    // ------------------------------------------------------------------
     // Widgets — the right-side column. Widgets paint above the
     // wallpaper but beneath windows. Lifecycle mirrors canvas
     // wallpapers: register via filter, mount/unmount actions bracket
@@ -1326,8 +1352,14 @@ var wpDesktop = function(exports) {
     } else {
       body.classList.add("wp-desktop-window__body--native");
     }
-    const resizeHandle = document.createElement("div");
-    resizeHandle.className = "wp-desktop-window__resize-handle";
+    const resizeHandles = [];
+    for (const dir of ["ne", "nw", "se", "sw"]) {
+      const h = document.createElement("div");
+      h.className = `wp-desktop-window__resize-handle wp-desktop-window__resize-handle--${dir}`;
+      h.dataset.dir = dir;
+      h.setAttribute("aria-hidden", "true");
+      resizeHandles.push(h);
+    }
     el.appendChild(titleBar);
     if (!config.native) {
       const tabs = document.createElement("nav");
@@ -1356,7 +1388,9 @@ var wpDesktop = function(exports) {
       el.appendChild(tabs);
     }
     el.appendChild(body);
-    el.appendChild(resizeHandle);
+    for (const h of resizeHandles) {
+      el.appendChild(h);
+    }
     return el;
   }
   const containerStyles = css`
@@ -1520,7 +1554,9 @@ var wpDesktop = function(exports) {
     document.body.appendChild(el);
     return el;
   }
-  const EDGE_MARGIN = 8;
+  const EDGE_MARGIN = 0;
+  const DRAG_THRESHOLD_PX = 5;
+  const DRAG_THRESHOLD_SQUARED = DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX;
   const EXTERNAL_IFRAME_READY_TIMEOUT_MS = 3e3;
   function syncActiveTab(win, currentUrl) {
     const submenuTabs = win.element.querySelectorAll(
@@ -1963,33 +1999,52 @@ var wpDesktop = function(exports) {
     if (target.closest(".wp-desktop-window__controls") || target.closest(".wp-desktop-window__screen-meta") || target.closest(".wp-desktop-window__menu-btn") || target.closest(".wp-desktop-window__menu-panel")) {
       return;
     }
-    if (win.state === "maximized") {
-      const titleRect = win._titleBar.getBoundingClientRect();
-      const cursorRatioX = titleRect.width > 0 ? (e.clientX - titleRect.left) / titleRect.width : 0.5;
-      win.element.classList.remove("wp-desktop-window--maximized");
-      const w = win._savedGeometry?.width ?? win.element.offsetWidth;
-      const h = win._savedGeometry?.height ?? win.element.offsetHeight;
-      win.element.style.width = `${w}px`;
-      win.element.style.height = `${h}px`;
-      const left = Math.round(e.clientX - w * cursorRatioX);
-      const top = Math.round(e.clientY - titleRect.height / 2);
-      win.element.style.left = `${left}px`;
-      win.element.style.top = `${top}px`;
-      win.state = "normal";
-      win._emitChange("state");
-      doAction(HOOKS.WINDOW_UNMAXIMIZED, { windowId: win.id });
-    }
-    win._isDragging = true;
-    win._dragOffsetX = e.clientX - win.element.offsetLeft;
-    win._dragOffsetY = e.clientY - win.element.offsetTop;
-    win._titleBar.setPointerCapture(e.pointerId);
-    win.element.classList.add("wp-desktop-window--dragging");
-    doAction(HOOKS.WINDOW_DRAG_START, { windowId: win.id });
+    const isMaximized = win.state === "maximized";
+    const isSnapped = win.state === "snapped-left" || win.state === "snapped-right";
+    const needsUnstate = isMaximized || isSnapped;
+    const startClientX = e.clientX;
+    const startClientY = e.clientY;
+    const pointerId = e.pointerId;
+    const unstateParams = needsUnstate ? captureUnstateParams(win, e) : null;
+    win._titleBar.setPointerCapture(pointerId);
     const snap = win.snapConfigProvider?.() ?? { enabled: false, cellWidth: 0, cellHeight: 0 };
-    if (snap.enabled) {
-      win.element.classList.add("wp-desktop-window--snap-drag");
+    let started = false;
+    const beginDrag = (cursorX, cursorY) => {
+      if (started) {
+        return;
+      }
+      started = true;
+      let newLeft;
+      let newTop;
+      if (unstateParams) {
+        const placed = commitUnstate(win, unstateParams, cursorX, cursorY);
+        newLeft = placed.left;
+        newTop = placed.top;
+      } else {
+        newLeft = win.element.offsetLeft;
+        newTop = win.element.offsetTop;
+      }
+      win.element.classList.add("wp-desktop-window--dragging");
+      if (snap.enabled) {
+        win.element.classList.add("wp-desktop-window--snap-drag");
+      }
+      win._isDragging = true;
+      win._dragOffsetX = cursorX - newLeft;
+      win._dragOffsetY = cursorY - newTop;
+      doAction(HOOKS.WINDOW_DRAG_START, { windowId: win.id });
+    };
+    if (!needsUnstate) {
+      beginDrag(startClientX, startClientY);
     }
     const onDragMove = (ev) => {
+      if (!started) {
+        const dx = ev.clientX - startClientX;
+        const dy = ev.clientY - startClientY;
+        if (dx * dx + dy * dy < DRAG_THRESHOLD_SQUARED) {
+          return;
+        }
+        beginDrag(ev.clientX, ev.clientY);
+      }
       if (!win._isDragging) {
         return;
       }
@@ -2006,18 +2061,38 @@ var wpDesktop = function(exports) {
       }
       win.element.style.left = `${x}px`;
       win.element.style.top = `${y}px`;
+      win.onDragMove?.(win, ev.clientX, ev.clientY);
+    };
+    const releaseCapture = () => {
+      try {
+        win._titleBar.releasePointerCapture(pointerId);
+      } catch {
+      }
+    };
+    const detachListeners = () => {
+      win._titleBar.removeEventListener("pointermove", onDragMove);
+      win._titleBar.removeEventListener("pointerup", onDragEnd);
+      win._titleBar.removeEventListener("pointercancel", onDragEnd);
+      win._titleBar.removeEventListener("lostpointercapture", onDragEnd);
     };
     const onDragEnd = () => {
+      if (!started) {
+        releaseCapture();
+        detachListeners();
+        return;
+      }
       if (!win._isDragging) {
         return;
       }
       win._isDragging = false;
       win.element.classList.remove("wp-desktop-window--dragging");
       win.element.classList.remove("wp-desktop-window--snap-drag");
-      win._titleBar.removeEventListener("pointermove", onDragMove);
-      win._titleBar.removeEventListener("pointerup", onDragEnd);
-      win._titleBar.removeEventListener("pointercancel", onDragEnd);
-      win._titleBar.removeEventListener("lostpointercapture", onDragEnd);
+      releaseCapture();
+      detachListeners();
+      const consumed = win.onDragEnd?.(win) ?? false;
+      if (consumed) {
+        return;
+      }
       win._emitChange("moved");
       const payload = {
         windowId: win.id,
@@ -2032,42 +2107,105 @@ var wpDesktop = function(exports) {
     win._titleBar.addEventListener("pointercancel", onDragEnd);
     win._titleBar.addEventListener("lostpointercapture", onDragEnd);
   }
+  function captureUnstateParams(win, e) {
+    const titleRect = win._titleBar.getBoundingClientRect();
+    const cursorRatioX = titleRect.width > 0 ? (e.clientX - titleRect.left) / titleRect.width : 0.5;
+    const parent = win.element.parentElement;
+    const fallbackW = parent ? Math.min(960, Math.round(parent.clientWidth * 0.6)) : 640;
+    const fallbackH = parent ? Math.min(640, Math.round(parent.clientHeight * 0.7)) : 480;
+    const w = win._savedGeometry?.width ?? fallbackW;
+    const h = win._savedGeometry?.height ?? fallbackH;
+    const parentRect = parent?.getBoundingClientRect();
+    return {
+      isMaximized: win.state === "maximized",
+      cursorRatioX,
+      titleBarHeight: titleRect.height,
+      // `clientX` / `clientY` are viewport-relative but
+      // `style.left` / `.top` resolve against the window's
+      // offsetParent (the desktop area). Subtract the area's own
+      // viewport origin so the re-anchor math lands in the right
+      // space — otherwise an admin bar above + a dock on the left
+      // would shift the window below + right of the cursor.
+      areaLeft: parentRect?.left ?? 0,
+      areaTop: parentRect?.top ?? 0,
+      targetW: w,
+      targetH: h
+    };
+  }
+  function commitUnstate(win, params, cursorX, cursorY) {
+    win.element.classList.remove(
+      "wp-desktop-window--maximized",
+      "wp-desktop-window--snapped-left",
+      "wp-desktop-window--snapped-right"
+    );
+    win.element.style.width = `${params.targetW}px`;
+    win.element.style.height = `${params.targetH}px`;
+    const left = Math.round(
+      cursorX - params.areaLeft - params.targetW * params.cursorRatioX
+    );
+    const top = Math.round(
+      cursorY - params.areaTop - params.titleBarHeight / 2
+    );
+    win.element.style.left = `${left}px`;
+    win.element.style.top = `${top}px`;
+    win.state = "normal";
+    win._emitChange("state");
+    if (params.isMaximized) {
+      doAction(HOOKS.WINDOW_UNMAXIMIZED, { windowId: win.id });
+    }
+    return { left, top };
+  }
   function handleResizeStart(win, e) {
-    if (win.state === "maximized") {
+    if (win.state === "maximized" || win.state === "fullscreen") {
       return;
     }
     e.preventDefault();
     e.stopPropagation();
+    const handle = e.target;
+    const dir = handle.dataset.dir ?? "se";
     win._isResizing = true;
     win._resizeStartX = e.clientX;
     win._resizeStartY = e.clientY;
     win._resizeStartW = win.element.offsetWidth;
     win._resizeStartH = win.element.offsetHeight;
-    e.target.setPointerCapture(e.pointerId);
+    const startLeft = win.element.offsetLeft;
+    const startTop = win.element.offsetTop;
+    handle.setPointerCapture(e.pointerId);
     win.element.classList.add("wp-desktop-window--resizing");
     doAction(HOOKS.WINDOW_RESIZE_START, { windowId: win.id });
     const snap = win.snapConfigProvider?.() ?? { enabled: false, cellWidth: 0, cellHeight: 0 };
     if (snap.enabled) {
       win.element.classList.add("wp-desktop-window--snap-drag");
     }
+    if (win.state === "snapped-left" || win.state === "snapped-right") {
+      win.element.classList.remove(
+        "wp-desktop-window--snapped-left",
+        "wp-desktop-window--snapped-right"
+      );
+      win.state = "normal";
+    }
     const onResizeMove = (ev) => {
       if (!win._isResizing) {
         return;
       }
-      let newW = Math.max(win.config.minWidth, win._resizeStartW + (ev.clientX - win._resizeStartX));
-      let newH = Math.max(win.config.minHeight, win._resizeStartH + (ev.clientY - win._resizeStartY));
-      if (snap.enabled) {
-        newW = Math.max(
-          win.config.minWidth,
-          Math.round(newW / snap.cellWidth) * snap.cellWidth
-        );
-        newH = Math.max(
-          win.config.minHeight,
-          Math.round(newH / snap.cellHeight) * snap.cellHeight
-        );
-      }
-      win.element.style.width = `${newW}px`;
-      win.element.style.height = `${newH}px`;
+      const dx = ev.clientX - win._resizeStartX;
+      const dy = ev.clientY - win._resizeStartY;
+      const geom = computeResize$1(
+        dir,
+        dx,
+        dy,
+        startLeft,
+        startTop,
+        win._resizeStartW,
+        win._resizeStartH,
+        win.config.minWidth,
+        win.config.minHeight,
+        snap
+      );
+      win.element.style.left = `${geom.x}px`;
+      win.element.style.top = `${geom.y}px`;
+      win.element.style.width = `${geom.width}px`;
+      win.element.style.height = `${geom.height}px`;
     };
     const onResizeEnd = () => {
       if (!win._isResizing) {
@@ -2076,11 +2214,10 @@ var wpDesktop = function(exports) {
       win._isResizing = false;
       win.element.classList.remove("wp-desktop-window--resizing");
       win.element.classList.remove("wp-desktop-window--snap-drag");
-      const handle2 = win.element.querySelector(".wp-desktop-window__resize-handle");
-      handle2.removeEventListener("pointermove", onResizeMove);
-      handle2.removeEventListener("pointerup", onResizeEnd);
-      handle2.removeEventListener("pointercancel", onResizeEnd);
-      handle2.removeEventListener("lostpointercapture", onResizeEnd);
+      handle.removeEventListener("pointermove", onResizeMove);
+      handle.removeEventListener("pointerup", onResizeEnd);
+      handle.removeEventListener("pointercancel", onResizeEnd);
+      handle.removeEventListener("lostpointercapture", onResizeEnd);
       win._emitChange("resized");
       const payload = {
         windowId: win.id,
@@ -2090,11 +2227,51 @@ var wpDesktop = function(exports) {
       doAction(HOOKS.WINDOW_RESIZE_END, payload);
       doAction(HOOKS.WINDOW_RESIZED, payload);
     };
-    const handle = e.target;
     handle.addEventListener("pointermove", onResizeMove);
     handle.addEventListener("pointerup", onResizeEnd);
     handle.addEventListener("pointercancel", onResizeEnd);
     handle.addEventListener("lostpointercapture", onResizeEnd);
+  }
+  function computeResize$1(dir, dx, dy, startLeft, startTop, startW, startH, minWidth, minHeight, snap) {
+    let width = startW;
+    let height = startH;
+    let x = startLeft;
+    let y = startTop;
+    if (dir === "ne" || dir === "se") {
+      width = Math.max(minWidth, startW + dx);
+    }
+    if (dir === "nw" || dir === "sw") {
+      const nextWidth = Math.max(minWidth, startW - dx);
+      x = startLeft + (startW - nextWidth);
+      width = nextWidth;
+    }
+    if (dir === "se" || dir === "sw") {
+      height = Math.max(minHeight, startH + dy);
+    }
+    if (dir === "ne" || dir === "nw") {
+      const nextHeight = Math.max(minHeight, startH - dy);
+      y = startTop + (startH - nextHeight);
+      height = nextHeight;
+    }
+    if (snap.enabled) {
+      const nextWidth = Math.max(
+        minWidth,
+        Math.round(width / snap.cellWidth) * snap.cellWidth
+      );
+      const nextHeight = Math.max(
+        minHeight,
+        Math.round(height / snap.cellHeight) * snap.cellHeight
+      );
+      if (dir === "nw" || dir === "sw") {
+        x = startLeft + (width - nextWidth);
+      }
+      if (dir === "nw" || dir === "ne") {
+        y = startTop + (height - nextHeight);
+      }
+      width = nextWidth;
+      height = nextHeight;
+    }
+    return { x, y, width, height };
   }
   class Window {
     constructor(config) {
@@ -2119,6 +2296,8 @@ var wpDesktop = function(exports) {
       this.onOpenAnother = null;
       this.onToggleStartup = null;
       this.snapConfigProvider = null;
+      this.onDragMove = null;
+      this.onDragEnd = null;
       this._boundOnDocumentPointerDown = null;
       this.id = config.id;
       this.config = config;
@@ -2144,6 +2323,11 @@ var wpDesktop = function(exports) {
         }
         return;
       }
+      if (config.initialState === "snapped-left" || config.initialState === "snapped-right") {
+        this.element.classList.add(
+          `wp-desktop-window--${config.initialState}`
+        );
+      }
       this.element.classList.add("wp-desktop-window--opening");
       this.element.addEventListener("animationend", () => {
         this.element.classList.remove("wp-desktop-window--opening");
@@ -2163,6 +2347,10 @@ var wpDesktop = function(exports) {
         this.toggleMaximize();
       } else if (state === "fullscreen") {
         this.toggleFullscreen();
+      } else if (state === "snapped-left") {
+        this.applySnap("left");
+      } else if (state === "snapped-right") {
+        this.applySnap("right");
       }
     }
     /**
@@ -2251,11 +2439,15 @@ var wpDesktop = function(exports) {
         "pointerdown",
         (e) => handleDragStart(this, e)
       );
-      const resizeHandle = this.element.querySelector(".wp-desktop-window__resize-handle");
-      resizeHandle.addEventListener(
-        "pointerdown",
-        (e) => handleResizeStart(this, e)
+      const resizeHandles = this.element.querySelectorAll(
+        ".wp-desktop-window__resize-handle"
       );
+      resizeHandles.forEach((handle) => {
+        handle.addEventListener(
+          "pointerdown",
+          (e) => handleResizeStart(this, e)
+        );
+      });
       const btnMin = this.element.querySelector(".wp-desktop-window__btn--minimize");
       const btnMax = this.element.querySelector(".wp-desktop-window__btn--maximize");
       const btnFocus = this.element.querySelector(".wp-desktop-window__btn--focus");
@@ -2372,6 +2564,34 @@ var wpDesktop = function(exports) {
       doAction(HOOKS.WINDOW_TITLE_CHANGED, { windowId: this.id, title });
     }
     /** Minimize the window. */
+    /**
+     * Write the half-screen snap geometry for `zone` and apply the
+     * corresponding state class. Shared by session-restore (which
+     * calls it from `applyInitialState`) and the manager's live-snap
+     * commit path so both enter the "snapped" state via identical
+     * geometry math — and the ResizeObserver that reflows stateful
+     * windows on desktop-area size changes.
+     */
+    applySnap(zone) {
+      const parent = this.element.parentElement;
+      if (!parent) {
+        return;
+      }
+      const halfW = Math.floor(parent.clientWidth / 2);
+      const height = parent.clientHeight;
+      this.element.classList.remove(
+        "wp-desktop-window--maximized",
+        "wp-desktop-window--snapped-left",
+        "wp-desktop-window--snapped-right"
+      );
+      this.element.classList.add(`wp-desktop-window--snapped-${zone}`);
+      this.element.style.left = zone === "left" ? "0px" : `${halfW}px`;
+      this.element.style.top = "0px";
+      this.element.style.width = `${halfW}px`;
+      this.element.style.height = `${height}px`;
+      this.state = zone === "left" ? "snapped-left" : "snapped-right";
+      this._emitChange("state");
+    }
     minimize() {
       this.state = "minimized";
       this.element.classList.add("wp-desktop-window--minimized");
@@ -2729,8 +2949,8 @@ var wpDesktop = function(exports) {
     return windows.map((win, i) => {
       const col = i % cols;
       const row = Math.floor(i / cols);
-      const cellX = padding + col * (cellWidth + gap);
-      const cellY = topInset + padding + row * (cellHeight + gap) + labelReserve;
+      const cellX = rect.left + padding + col * (cellWidth + gap);
+      const cellY = rect.top + topInset + padding + row * (cellHeight + gap) + labelReserve;
       const sourceW = win.element.offsetWidth;
       const sourceH = win.element.offsetHeight;
       const scale = Math.min(
@@ -2773,8 +2993,8 @@ var wpDesktop = function(exports) {
     const dockWidth = dockEl ? dockEl.offsetWidth : 0;
     const currentRect = mgr._desktop.getBoundingClientRect();
     const targetRect = new DOMRect(
-      currentRect.left - dockWidth,
-      currentRect.top,
+      0,
+      0,
       currentRect.width + dockWidth,
       currentRect.height
     );
@@ -3217,7 +3437,8 @@ var wpDesktop = function(exports) {
         transition: w.element.style.transition || ""
       });
     }
-    const targetRect = mgr._desktop.getBoundingClientRect();
+    const live = mgr._desktop.getBoundingClientRect();
+    const targetRect = new DOMRect(0, 0, live.width, live.height);
     const layout = computeOverviewLayout(
       eligible,
       targetRect,
@@ -3417,6 +3638,319 @@ var wpDesktop = function(exports) {
     const { cellWidth, cellHeight } = isValidCellSize(filtered) ? filtered : auto;
     return { enabled: true, cellWidth, cellHeight };
   }
+  function enterSplitOverview(mgr, anchor, zone) {
+    if (mgr._splitOverviewActive) {
+      return;
+    }
+    mgr._splitOverviewActive = true;
+    mgr._splitOverviewAnchor = anchor;
+    mgr._splitOverviewZone = zone;
+    const eligible = mgr._stack.filter(
+      (w) => w !== anchor && w.state !== "minimized" && w.config.desktopId === mgr._activeDesktopId
+    );
+    if (eligible.length === 0) {
+      cleanupSplitOverviewState(mgr);
+      return;
+    }
+    mgr._splitOverviewSnapshot.clear();
+    for (const w of eligible) {
+      mgr._splitOverviewSnapshot.set(w.id, {
+        transform: w.element.style.transform || "",
+        transition: w.element.style.transition || ""
+      });
+    }
+    mgr._desktop.classList.add("wp-desktop-area--split-overview");
+    const rect = oppositeHalfRect(mgr, zone);
+    const layout = computeOverviewLayout(eligible, rect, 0);
+    mgr._splitOverviewLabels.clear();
+    for (const item of layout) {
+      const el = item.win.element;
+      el.classList.add("wp-desktop-window--overview");
+      const dx = item.x - el.offsetLeft;
+      const dy = item.y - el.offsetTop;
+      el.style.transform = `translate(${dx}px, ${dy}px) scale(${item.scale})`;
+      const label = createOverviewLabel(item);
+      el.insertAdjacentElement("afterend", label);
+      mgr._splitOverviewLabels.set(item.win.id, label);
+    }
+    const pressTargetForEvent = (e) => {
+      const target = e.target;
+      const winEl = target?.closest(
+        ".wp-desktop-window--overview"
+      );
+      if (winEl) {
+        return {
+          id: winEl.id.replace(/^wp-window-/, ""),
+          element: winEl
+        };
+      }
+      if (target) {
+        return { id: "dismiss", element: mgr._desktop };
+      }
+      return null;
+    };
+    mgr._splitOverviewPointerDown = (e) => {
+      if (e.button !== 0) {
+        mgr._splitOverviewPressTarget = null;
+        return;
+      }
+      mgr._splitOverviewPressTarget = pressTargetForEvent(e);
+      if (mgr._splitOverviewPressTarget) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+    mgr._splitOverviewPointerUp = (e) => {
+      if (e.button !== 0) {
+        return;
+      }
+      const pressed = mgr._splitOverviewPressTarget;
+      mgr._splitOverviewPressTarget = null;
+      if (!pressed) {
+        return;
+      }
+      const r = pressed.element.getBoundingClientRect();
+      const inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+      if (!inside) {
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      if (pressed.id === "dismiss") {
+        exitSplitOverview(mgr);
+        return;
+      }
+      const selected = mgr.getById(pressed.id);
+      if (!selected) {
+        exitSplitOverview(mgr);
+        return;
+      }
+      fillOppositeHalfAndExit(mgr, selected);
+    };
+    mgr._splitOverviewKey = (e) => {
+      if (e.key === "Escape") {
+        exitSplitOverview(mgr);
+      }
+    };
+    mgr._splitOverviewClickBlocker = (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+    };
+    mgr._desktop.addEventListener(
+      "pointerdown",
+      mgr._splitOverviewPointerDown,
+      true
+    );
+    mgr._desktop.addEventListener(
+      "pointerup",
+      mgr._splitOverviewPointerUp,
+      true
+    );
+    mgr._desktop.addEventListener(
+      "click",
+      mgr._splitOverviewClickBlocker,
+      true
+    );
+    document.addEventListener("keydown", mgr._splitOverviewKey);
+  }
+  function fillOppositeHalfAndExit(mgr, selected) {
+    const anchorZone = mgr._splitOverviewZone;
+    if (!anchorZone) {
+      exitSplitOverview(mgr);
+      return;
+    }
+    const partnerZone = anchorZone === "left" ? "right" : "left";
+    selected.element.style.transform = "";
+    selected.element.classList.remove("wp-desktop-window--overview");
+    selected.applySnap(partnerZone);
+    mgr._splitOverviewSnapshot.delete(selected.id);
+    mgr.focus(selected);
+    doAction(HOOKS.SNAP_SPLIT_FILLED, {
+      windowId: selected.id,
+      zone: partnerZone
+    });
+    exitSplitOverview(mgr);
+  }
+  function exitSplitOverview(mgr) {
+    if (!mgr._splitOverviewActive) {
+      return;
+    }
+    mgr._splitOverviewActive = false;
+    for (const [id, snap] of mgr._splitOverviewSnapshot) {
+      const w = mgr.getById(id);
+      if (!w) {
+        continue;
+      }
+      w.element.style.transform = snap.transform;
+    }
+    for (const label of mgr._splitOverviewLabels.values()) {
+      label.classList.add("wp-desktop-overview-label--out");
+    }
+    mgr._desktop.classList.remove("wp-desktop-area--split-overview");
+    const ANIMATION_MS = 260;
+    window.setTimeout(() => {
+      for (const w of mgr._stack) {
+        if (mgr._splitOverviewSnapshot.has(w.id)) {
+          w.element.classList.remove("wp-desktop-window--overview");
+        }
+      }
+      for (const label of mgr._splitOverviewLabels.values()) {
+        label.remove();
+      }
+      cleanupSplitOverviewState(mgr);
+    }, ANIMATION_MS);
+    if (mgr._splitOverviewPointerDown) {
+      mgr._desktop.removeEventListener(
+        "pointerdown",
+        mgr._splitOverviewPointerDown,
+        true
+      );
+      mgr._splitOverviewPointerDown = null;
+    }
+    if (mgr._splitOverviewPointerUp) {
+      mgr._desktop.removeEventListener(
+        "pointerup",
+        mgr._splitOverviewPointerUp,
+        true
+      );
+      mgr._splitOverviewPointerUp = null;
+    }
+    if (mgr._splitOverviewClickBlocker) {
+      mgr._desktop.removeEventListener(
+        "click",
+        mgr._splitOverviewClickBlocker,
+        true
+      );
+      mgr._splitOverviewClickBlocker = null;
+    }
+    if (mgr._splitOverviewKey) {
+      document.removeEventListener("keydown", mgr._splitOverviewKey);
+      mgr._splitOverviewKey = null;
+    }
+    mgr._splitOverviewPressTarget = null;
+  }
+  function cleanupSplitOverviewState(mgr) {
+    mgr._splitOverviewSnapshot.clear();
+    mgr._splitOverviewLabels.clear();
+    mgr._splitOverviewAnchor = null;
+    mgr._splitOverviewZone = null;
+    mgr._splitOverviewActive = false;
+  }
+  const SNAP_EDGE_THRESHOLD = 30;
+  const SNAP_COMMIT_MS = 260;
+  function detectSnapZone(clientX, desktopRect) {
+    if (clientX <= desktopRect.left + SNAP_EDGE_THRESHOLD) {
+      return "left";
+    }
+    if (clientX >= desktopRect.right - SNAP_EDGE_THRESHOLD) {
+      return "right";
+    }
+    return null;
+  }
+  function snapZoneBounds(mgr, zone) {
+    const rect = mgr._desktop.getBoundingClientRect();
+    const halfW = Math.floor(rect.width / 2);
+    const height = Math.floor(rect.height);
+    return {
+      x: zone === "left" ? 0 : rect.width - halfW,
+      y: 0,
+      width: halfW,
+      height
+    };
+  }
+  function oppositeHalfRect(mgr, zone) {
+    const rect = mgr._desktop.getBoundingClientRect();
+    const halfW = Math.floor(rect.width / 2);
+    const height = Math.floor(rect.height);
+    if (zone === "left") {
+      return new DOMRect(halfW, 0, halfW, height);
+    }
+    return new DOMRect(0, 0, halfW, height);
+  }
+  function showSnapPreview(mgr, zone) {
+    if (mgr._snapPendingZone === zone && mgr._snapPreviewEl) {
+      return;
+    }
+    mgr._snapPendingZone = zone;
+    if (!mgr._snapPreviewEl) {
+      const el = document.createElement("div");
+      el.className = "wp-desktop-snap-preview";
+      el.setAttribute("aria-hidden", "true");
+      mgr._desktop.appendChild(el);
+      mgr._snapPreviewEl = el;
+      Promise.resolve().then(() => {
+        el.classList.add("wp-desktop-snap-preview--visible");
+      });
+    }
+    const b = snapZoneBounds(mgr, zone);
+    mgr._snapPreviewEl.style.left = `${b.x}px`;
+    mgr._snapPreviewEl.style.top = `${b.y}px`;
+    mgr._snapPreviewEl.style.width = `${b.width}px`;
+    mgr._snapPreviewEl.style.height = `${b.height}px`;
+    mgr._snapPreviewEl.dataset.zone = zone;
+  }
+  function hideSnapPreview(mgr) {
+    if (!mgr._snapPreviewEl) {
+      mgr._snapPendingZone = null;
+      return;
+    }
+    const el = mgr._snapPreviewEl;
+    mgr._snapPreviewEl = null;
+    mgr._snapPendingZone = null;
+    el.classList.remove("wp-desktop-snap-preview--visible");
+    window.setTimeout(() => {
+      el.remove();
+    }, SNAP_COMMIT_MS);
+  }
+  function updateSnapZoneForDrag(mgr, win, clientX) {
+    if (mgr._splitOverviewActive) {
+      return;
+    }
+    const rect = mgr._desktop.getBoundingClientRect();
+    const zone = detectSnapZone(clientX, rect);
+    const previous = mgr._snapPendingZone;
+    if (zone) {
+      showSnapPreview(mgr, zone);
+      if (previous !== zone) {
+        doAction(HOOKS.SNAP_ZONE_PENDING, {
+          windowId: win.id,
+          zone
+        });
+      }
+    } else if (previous) {
+      hideSnapPreview(mgr);
+      doAction(HOOKS.SNAP_ZONE_CANCELED, { windowId: win.id });
+    }
+  }
+  function commitSnapIfPending(mgr, win) {
+    const zone = mgr._snapPendingZone;
+    if (!zone) {
+      return false;
+    }
+    hideSnapPreview(mgr);
+    if (win.state === "normal") {
+      win._savedGeometry = {
+        x: win.element.offsetLeft,
+        y: win.element.offsetTop,
+        width: win.element.offsetWidth,
+        height: win.element.offsetHeight
+      };
+    }
+    win.applySnap(zone);
+    doAction(HOOKS.SNAP_ZONE_COMMITTED, {
+      windowId: win.id,
+      zone
+    });
+    window.requestAnimationFrame(() => {
+      enterSplitOverview(mgr, win, zone);
+    });
+    return true;
+  }
+  function abortSnapIfPending(mgr) {
+    if (mgr._snapPendingZone) {
+      hideSnapPreview(mgr);
+    }
+  }
   const BASE_Z_INDEX = 100;
   const CASCADE_OFFSET = 30;
   class WindowManager {
@@ -3431,6 +3965,7 @@ var wpDesktop = function(exports) {
       this._desktopSeq = 1;
       this.onToggleStartupRequested = null;
       this.desktopResizeObserver = null;
+      this._reflowRestoreTimer = null;
       this._snapEnabled = loadSnapEnabled();
       this._overviewActive = false;
       this._overviewSnapshot = /* @__PURE__ */ new Map();
@@ -3443,10 +3978,22 @@ var wpDesktop = function(exports) {
       this._overviewTopBar = null;
       this._overviewMouseHandler = null;
       this._lastOverviewHoverId = null;
+      this._snapPendingZone = null;
+      this._snapPreviewEl = null;
+      this._splitOverviewActive = false;
+      this._splitOverviewAnchor = null;
+      this._splitOverviewZone = null;
+      this._splitOverviewSnapshot = /* @__PURE__ */ new Map();
+      this._splitOverviewLabels = /* @__PURE__ */ new Map();
+      this._splitOverviewPointerDown = null;
+      this._splitOverviewPointerUp = null;
+      this._splitOverviewPressTarget = null;
+      this._splitOverviewClickBlocker = null;
+      this._splitOverviewKey = null;
       this._desktop = desktop;
       if (typeof ResizeObserver !== "undefined") {
         this.desktopResizeObserver = new ResizeObserver(
-          () => this.reflowMaximizedWindows()
+          () => this.reflowStatefulWindows()
         );
         this.desktopResizeObserver.observe(desktop);
       }
@@ -3494,26 +4041,61 @@ var wpDesktop = function(exports) {
       });
     }
     /**
-     * Re-apply maximize bounds to any window currently in
-     * `state === 'maximized'`. Called from the desktop-area
-     * ResizeObserver so the user can shrink the browser window
-     * without the maximized content refusing to follow.
+     * Re-apply state-driven bounds to any window whose geometry is
+     * derived from the desktop area's dimensions: maximized (full
+     * area) and snapped-left / snapped-right (half area). Called from
+     * the desktop-area ResizeObserver so shrinking the browser window
+     * drags the stateful windows along with it.
+     *
+     * Inlines the geometry writes instead of calling `applySnap` —
+     * that method emits `_emitChange('state')` which would spam the
+     * session saver on every resize tick. Viewport resize is an
+     * INCOMING shape change (the shell reshaped us), not an outgoing
+     * user action worth persisting.
+     *
+     * Also toggles `wp-desktop-window--reflowing` so the base
+     * left/top/width/height transition doesn't interpolate between
+     * every ResizeObserver tick — without that, the windows would
+     * always lag ~250 ms behind a browser edge-drag.
+     *
+     * Skipped while overview is active — windows are mid-transform
+     * and touching their inline geometry would desync the live
+     * transform math; overview exit re-applies state correctly via
+     * its own path.
      */
-    reflowMaximizedWindows() {
+    reflowStatefulWindows() {
       if (this._overviewActive) {
         return;
       }
       for (const w of this._stack) {
-        if (w.state !== "maximized") {
-          continue;
-        }
         const parent = w.element.parentElement;
         if (!parent) {
           continue;
         }
-        w.element.style.width = `${parent.clientWidth}px`;
-        w.element.style.height = `${parent.clientHeight}px`;
+        if (w.state === "maximized") {
+          w.element.classList.add("wp-desktop-window--reflowing");
+          w.element.style.width = `${parent.clientWidth}px`;
+          w.element.style.height = `${parent.clientHeight}px`;
+        } else if (w.state === "snapped-left" || w.state === "snapped-right") {
+          w.element.classList.add("wp-desktop-window--reflowing");
+          const halfW = Math.floor(parent.clientWidth / 2);
+          const height = parent.clientHeight;
+          const left = w.state === "snapped-left" ? 0 : halfW;
+          w.element.style.left = `${left}px`;
+          w.element.style.top = "0px";
+          w.element.style.width = `${halfW}px`;
+          w.element.style.height = `${height}px`;
+        }
       }
+      if (this._reflowRestoreTimer !== null) {
+        window.clearTimeout(this._reflowRestoreTimer);
+      }
+      this._reflowRestoreTimer = window.setTimeout(() => {
+        this._reflowRestoreTimer = null;
+        for (const w of this._stack) {
+          w.element.classList.remove("wp-desktop-window--reflowing");
+        }
+      }, 140);
     }
     /**
      * Open a new window — or focus an existing one — for the given
@@ -3601,6 +4183,16 @@ var wpDesktop = function(exports) {
         this.onToggleStartupRequested?.(w);
       };
       win.snapConfigProvider = () => this.getSnapConfig();
+      win.onDragMove = (w, clientX) => {
+        updateSnapZoneForDrag(this, w, clientX);
+      };
+      win.onDragEnd = (w) => {
+        if (this._snapPendingZone) {
+          return commitSnapIfPending(this, w);
+        }
+        abortSnapIfPending(this);
+        return false;
+      };
       this._stack.push(win);
       this._desktop.appendChild(win.element);
       applyDesktopVisibility(this, win);

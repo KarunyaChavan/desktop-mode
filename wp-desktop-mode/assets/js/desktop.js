@@ -876,6 +876,363 @@ var wpDesktop = function(exports) {
     document.body.appendChild(el);
     return el;
   }
+  const styles$8 = css`
+	:host {
+		display: inline-flex;
+	}
+	button {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 30px;
+		height: 30px;
+		padding: 0;
+		border: none;
+		border-radius: 5px;
+		background: transparent;
+		color: var( --wpd-btn-color, currentColor );
+		cursor: pointer;
+		transition: background-color 0.15s ease, color 0.15s ease;
+	}
+	button:hover {
+		color: var( --wpd-btn-color-hover, currentColor );
+		background: var( --wpd-btn-bg-hover, rgba( 0, 0, 0, 0.06 ) );
+	}
+	button:focus-visible {
+		color: var( --wpd-btn-color-hover, currentColor );
+		background: var( --wpd-btn-bg-hover, rgba( 0, 0, 0, 0.06 ) );
+		outline: 2px solid var( --wpd-btn-outline, currentColor );
+		outline-offset: 1px;
+	}
+	:host( [ active ] ) button {
+		color: var( --wpd-btn-color-hover, currentColor );
+		background: var( --wpd-btn-bg-active, rgba( 0, 0, 0, 0.08 ) );
+	}
+	:host( [ danger ] ) button:hover {
+		color: #fff;
+		background: var( --wpd-btn-danger-hover, #d63638 );
+	}
+	svg {
+		display: block;
+		pointer-events: none;
+		flex-shrink: 0;
+	}
+`;
+  const ICONS$1 = {
+    minimize: '<path d="M3 6h6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>',
+    maximize: '<rect x="3" y="3" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.25" fill="none"/>',
+    fullscreen: '<path d="M4.5 2H2v2.5M10 4.5V2H7.5M4.5 10H2V7.5M10 7.5V10H7.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none"/>',
+    "fullscreen-exit": '<path d="M2 4.5H4.5V2M7.5 2V4.5H10M2 7.5H4.5V10M7.5 10V7.5H10" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none"/>',
+    detach: '<path d="M5 2H2.5v7.5H10V7M6.5 2H10v3.5M10 2L5.5 6.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none"/>',
+    close: '<path d="M3.25 3.25l5.5 5.5M3.25 8.75l5.5-5.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>',
+    menu: '<circle cx="3" cy="6" r="1.2" fill="currentColor"/><circle cx="6" cy="6" r="1.2" fill="currentColor"/><circle cx="9" cy="6" r="1.2" fill="currentColor"/>'
+  };
+  const _WpdWindowButton = class _WpdWindowButton extends Component {
+    render() {
+      const iconKey = this.icon || "";
+      const svgInner = ICONS$1[iconKey] || "";
+      return html`
+			<button type="button">
+				<svg
+					width="14"
+					height="14"
+					viewBox="0 0 12 12"
+					aria-hidden="true"
+					focusable="false"
+				></svg>
+				<slot></slot>
+			</button>
+			<span data-svg-buffer style="display:none">${svgInner}</span>
+		`;
+    }
+    /**
+     * After each render, copy the raw SVG markup into the actual
+     * `<svg>` element. The templater only writes text into slots,
+     * so we stash the intended markup in a hidden buffer and
+     * `innerHTML = ` the svg once here — a one-shot post-render
+     * hook that keeps the declarative template honest.
+     */
+    connectedCallback() {
+      super.connectedCallback();
+      queueMicrotask(() => this._paintSvg());
+    }
+    attributeChangedCallback(name, oldValue, newValue) {
+      super.attributeChangedCallback(name, oldValue, newValue);
+      queueMicrotask(() => this._paintSvg());
+    }
+    _paintSvg() {
+      const root = this.shadowRoot;
+      if (!root) {
+        return;
+      }
+      const svg = root.querySelector("svg");
+      const buffer = root.querySelector("[data-svg-buffer]");
+      if (svg && buffer) {
+        const markup = buffer.textContent || "";
+        if (svg.innerHTML !== markup) {
+          svg.innerHTML = markup;
+        }
+      }
+    }
+  };
+  _WpdWindowButton.props = ["icon", "active", "danger"];
+  _WpdWindowButton.styles = [styles$8];
+  let WpdWindowButton = _WpdWindowButton;
+  defineComponent("wpd-window-button", WpdWindowButton);
+  const menuStyles = css`
+	:host {
+		display: block;
+		min-width: 220px;
+		padding: 4px;
+		background: var( --wp-desktop-window-bg, #fff );
+		color: var( --wp-desktop-text, #1d2327 );
+		border: 1px solid var( --wp-desktop-window-border, #c3c4c7 );
+		border-radius: 8px;
+		box-shadow: 0 8px 24px rgba( 0, 0, 0, 0.18 ),
+			0 2px 6px rgba( 0, 0, 0, 0.08 );
+	}
+	:host( [ hidden ] ) {
+		display: none;
+	}
+`;
+  const menuItemStyles = css`
+	:host {
+		display: block;
+	}
+	button {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		width: 100%;
+		min-height: 32px;
+		padding: 6px 10px;
+		border: none;
+		border-radius: 6px;
+		background: transparent;
+		color: inherit;
+		font: inherit;
+		font-size: 13px;
+		line-height: 1.3;
+		text-align: start;
+		cursor: pointer;
+		transition: background-color 0.12s ease, color 0.12s ease;
+	}
+	button:hover,
+	button:focus-visible {
+		background: rgba( 0, 0, 0, 0.06 );
+		color: #000;
+		outline: none;
+	}
+	button:focus-visible {
+		outline: 2px solid var( --wp-admin-theme-color, #2271b1 );
+		outline-offset: -2px;
+	}
+	.wpd-menu-item__icon {
+		flex-shrink: 0;
+		width: 18px;
+		height: 18px;
+		font-size: 18px;
+		line-height: 1;
+		color: var( --wp-admin-theme-color, #2271b1 );
+	}
+	.wpd-menu-item__icon[ hidden ] {
+		display: none;
+	}
+	.wpd-menu-item__label {
+		flex: 1;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	/*
+	 * Check indicator for role="menuitemcheckbox" variants. Small
+	 * 16 px square so unchecked items align with icon-bearing items.
+	 */
+	.wpd-menu-item__check {
+		flex-shrink: 0;
+		width: 16px;
+		height: 16px;
+		border-radius: 3px;
+		border: 1.5px solid rgba( 0, 0, 0, 0.25 );
+		position: relative;
+		background: transparent;
+		transition: background-color 0.12s ease, border-color 0.12s ease;
+	}
+	.wpd-menu-item__check[ hidden ] {
+		display: none;
+	}
+	:host( [ checked ] ) .wpd-menu-item__check {
+		background: var( --wp-admin-theme-color, #2271b1 );
+		border-color: var( --wp-admin-theme-color, #2271b1 );
+	}
+	:host( [ checked ] ) .wpd-menu-item__check::after {
+		content: '';
+		position: absolute;
+		top: 1px;
+		left: 4px;
+		width: 4px;
+		height: 8px;
+		border: solid #fff;
+		border-width: 0 2px 2px 0;
+		transform: rotate( 45deg );
+	}
+`;
+  const _WpdMenu = class _WpdMenu extends Component {
+    connectedCallback() {
+      super.connectedCallback();
+      this.setAttribute("role", "menu");
+    }
+    render() {
+      return html`<slot></slot>`;
+    }
+  };
+  _WpdMenu.styles = [menuStyles];
+  let WpdMenu = _WpdMenu;
+  defineComponent("wpd-menu", WpdMenu);
+  const _WpdMenuItem = class _WpdMenuItem extends Component {
+    connectedCallback() {
+      super.connectedCallback();
+      if (!this.hasAttribute("role")) {
+        this.setAttribute("role", "menuitem");
+      }
+    }
+    render() {
+      const icon = this.icon || "";
+      const isCheckbox = this.getAttribute("role") === "menuitemcheckbox";
+      const checked = this.checked !== null;
+      if (isCheckbox) {
+        this.setAttribute("aria-checked", checked ? "true" : "false");
+      }
+      return html`
+			<button type="button" @click=${(e) => this._onPick(e)}>
+				<span
+					class="wpd-menu-item__check"
+					?hidden=${!isCheckbox}
+				></span>
+				<span
+					class="wpd-menu-item__icon dashicons ${icon}"
+					aria-hidden="true"
+					?hidden=${isCheckbox || !icon}
+				></span>
+				<span class="wpd-menu-item__label">
+					<slot></slot>
+				</span>
+			</button>
+		`;
+    }
+    _onPick(e) {
+      e.preventDefault();
+      this.emit("wpd-menu-item-click", {
+        value: this.value
+      });
+    }
+  };
+  _WpdMenuItem.props = ["icon", "value", "checked"];
+  _WpdMenuItem.styles = [menuItemStyles];
+  let WpdMenuItem = _WpdMenuItem;
+  defineComponent("wpd-menu-item", WpdMenuItem);
+  const styles$7 = css`
+	:host {
+		display: inline-flex;
+	}
+	button {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 24px;
+		height: 24px;
+		padding: 0;
+		border: none;
+		border-radius: 4px;
+		background: transparent;
+		color: rgba( 0, 0, 0, 0.45 );
+		cursor: pointer;
+		transition: background-color 0.15s ease, color 0.15s ease,
+			transform 0.12s ease;
+	}
+	/* Detach (lift + soft accent wash) */
+	:host( [ variant='detach' ] ) button:hover {
+		color: var( --wp-admin-theme-color, #2271b1 );
+		background: rgba( 34, 113, 177, 0.12 );
+		transform: translateY( -1px );
+	}
+	:host( [ variant='detach' ] ) button:focus-visible {
+		outline: 2px solid var( --wp-admin-theme-color, #2271b1 );
+		outline-offset: 1px;
+	}
+	/* Close (red destructive wash) */
+	:host( [ variant='close' ] ) button:hover {
+		color: #fff;
+		background: #d63638;
+	}
+	:host( [ variant='close' ] ) button:focus-visible {
+		color: #fff;
+		background: #d63638;
+		outline: 2px solid rgba( 214, 54, 56, 0.6 );
+		outline-offset: 1px;
+	}
+	svg {
+		display: block;
+		pointer-events: none;
+		width: 12px;
+		height: 12px;
+	}
+	@media ( prefers-reduced-motion: reduce ) {
+		button {
+			transition-duration: 0.01ms;
+		}
+		:host( [ variant='detach' ] ) button:hover {
+			transform: none;
+		}
+	}
+`;
+  const ICONS = {
+    detach: '<path d="M5 2H2.5v7.5H10V7M6.5 2H10v3.5M10 2L5.5 6.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none"/>',
+    close: '<path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>'
+  };
+  const _WpdTabChip = class _WpdTabChip extends Component {
+    render() {
+      const variant = this.variant || "";
+      const svgInner = ICONS[variant] || "";
+      return html`
+			<button type="button">
+				<svg
+					viewBox="0 0 12 12"
+					aria-hidden="true"
+					focusable="false"
+				></svg>
+				<slot></slot>
+			</button>
+			<span data-svg-buffer style="display:none">${svgInner}</span>
+		`;
+    }
+    connectedCallback() {
+      super.connectedCallback();
+      queueMicrotask(() => this._paintSvg());
+    }
+    attributeChangedCallback(name, oldValue, newValue) {
+      super.attributeChangedCallback(name, oldValue, newValue);
+      queueMicrotask(() => this._paintSvg());
+    }
+    _paintSvg() {
+      const root = this.shadowRoot;
+      if (!root) {
+        return;
+      }
+      const svg = root.querySelector("svg");
+      const buffer = root.querySelector("[data-svg-buffer]");
+      if (svg && buffer) {
+        const markup = buffer.textContent || "";
+        if (svg.innerHTML !== markup) {
+          svg.innerHTML = markup;
+        }
+      }
+    }
+  };
+  _WpdTabChip.props = ["variant"];
+  _WpdTabChip.styles = [styles$7];
+  let WpdTabChip = _WpdTabChip;
+  defineComponent("wpd-tab-chip", WpdTabChip);
   const EDGE_MARGIN = 8;
   const EXTERNAL_IFRAME_READY_TIMEOUT_MS = 3e3;
   function withChromelessParam(url) {
@@ -890,12 +1247,15 @@ var wpDesktop = function(exports) {
     const hasFullscreen = document.querySelectorAll(".wp-desktop-window--fullscreen").length > 0;
     document.body.classList.toggle("wp-desktop-has-fullscreen-window", hasFullscreen);
   }
-  function createControlButton(variant, label, svgInner) {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = `wp-desktop-window__btn wp-desktop-window__btn--${variant}`;
+  function createControlButton(variant, label, icon) {
+    const btn = document.createElement("wpd-window-button");
+    btn.setAttribute("icon", icon);
     btn.setAttribute("aria-label", label);
-    btn.innerHTML = `<svg class="wp-desktop-window__btn-icon" width="14" height="14" viewBox="0 0 12 12" aria-hidden="true" focusable="false">${svgInner}</svg>`;
+    btn.classList.add("wp-desktop-window__btn");
+    btn.classList.add(`wp-desktop-window__btn--${variant}`);
+    if (variant === "close") {
+      btn.setAttribute("danger", "");
+    }
     return btn;
   }
   function createWindowElement(config) {
@@ -916,48 +1276,37 @@ var wpDesktop = function(exports) {
     let menuBtn = null;
     let menuPanel = null;
     if (!config.native) {
-      menuBtn = document.createElement("button");
-      menuBtn.type = "button";
-      menuBtn.className = "wp-desktop-window__btn wp-desktop-window__menu-btn";
+      menuBtn = document.createElement("wpd-window-button");
+      menuBtn.setAttribute("icon", "menu");
       menuBtn.setAttribute("aria-label", __("Window actions"));
       menuBtn.setAttribute("aria-haspopup", "menu");
       menuBtn.setAttribute("aria-expanded", "false");
-      menuBtn.innerHTML = '<svg class="wp-desktop-window__btn-icon" width="14" height="14" viewBox="0 0 12 12" aria-hidden="true" focusable="false"><circle cx="3" cy="6" r="1.2" fill="currentColor"/><circle cx="6" cy="6" r="1.2" fill="currentColor"/><circle cx="9" cy="6" r="1.2" fill="currentColor"/></svg>';
-      menuPanel = document.createElement("div");
-      menuPanel.className = "wp-desktop-window__menu-panel";
-      menuPanel.setAttribute("role", "menu");
+      menuBtn.classList.add("wp-desktop-window__btn");
+      menuBtn.classList.add("wp-desktop-window__menu-btn");
+      menuPanel = document.createElement("wpd-menu");
+      menuPanel.classList.add("wp-desktop-window__menu-panel");
       menuPanel.hidden = true;
-      const startup = document.createElement("button");
-      startup.type = "button";
-      startup.className = "wp-desktop-window__menu-item wp-desktop-window__menu-item--startup";
+      const startup = document.createElement("wpd-menu-item");
       startup.setAttribute("role", "menuitemcheckbox");
-      startup.setAttribute("aria-checked", "false");
-      const startupCheck = document.createElement("span");
-      startupCheck.className = "wp-desktop-window__menu-check";
-      startupCheck.setAttribute("aria-hidden", "true");
-      const startupLabel = document.createElement("span");
-      startupLabel.className = "wp-desktop-window__menu-label";
-      startupLabel.textContent = __("Open on startup");
-      startup.appendChild(startupCheck);
-      startup.appendChild(startupLabel);
+      startup.setAttribute("value", "startup");
+      startup.classList.add("wp-desktop-window__menu-item");
+      startup.classList.add("wp-desktop-window__menu-item--startup");
+      startup.textContent = __("Open on startup");
       menuPanel.appendChild(startup);
       if (config.multi) {
-        const openAnother = document.createElement("button");
-        openAnother.type = "button";
-        openAnother.className = "wp-desktop-window__menu-item wp-desktop-window__menu-item--open-another";
+        const openAnother = document.createElement("wpd-menu-item");
         openAnother.setAttribute("role", "menuitem");
-        const oaIcon = document.createElement("span");
-        oaIcon.className = "wp-desktop-window__menu-icon dashicons dashicons-plus-alt2";
-        oaIcon.setAttribute("aria-hidden", "true");
-        const oaLabel = document.createElement("span");
-        oaLabel.className = "wp-desktop-window__menu-label";
-        oaLabel.textContent = sprintf(
+        openAnother.setAttribute("value", "open-another");
+        openAnother.setAttribute("icon", "dashicons-plus-alt2");
+        openAnother.classList.add("wp-desktop-window__menu-item");
+        openAnother.classList.add(
+          "wp-desktop-window__menu-item--open-another"
+        );
+        openAnother.textContent = sprintf(
           // translators: %s is the window's admin-page name (e.g., "Posts")
           __("Open another %s"),
           config.title
         );
-        openAnother.appendChild(oaIcon);
-        openAnother.appendChild(oaLabel);
         menuPanel.appendChild(openAnother);
       }
     }
@@ -970,31 +1319,11 @@ var wpDesktop = function(exports) {
     titleEl.textContent = config.title;
     const controls = document.createElement("div");
     controls.className = "wp-desktop-window__controls";
-    const btnMin = createControlButton(
-      "minimize",
-      __("Minimize"),
-      '<path d="M3 6h6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>'
-    );
-    const btnMax = createControlButton(
-      "maximize",
-      __("Maximize"),
-      '<rect x="3" y="3" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.25" fill="none"/>'
-    );
-    const btnFocus = createControlButton(
-      "focus",
-      __("Enter fullscreen"),
-      '<path d="M4.5 2H2v2.5M10 4.5V2H7.5M4.5 10H2V7.5M10 7.5V10H7.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none"/>'
-    );
-    const btnDetach = createControlButton(
-      "detach",
-      __("Detach to new tab"),
-      '<path d="M5 2H2.5v7.5H10V7M6.5 2H10v3.5M10 2L5.5 6.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none"/>'
-    );
-    const btnClose = createControlButton(
-      "close",
-      __("Close"),
-      '<path d="M3.25 3.25l5.5 5.5M3.25 8.75l5.5-5.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>'
-    );
+    const btnMin = createControlButton("minimize", __("Minimize"), "minimize");
+    const btnMax = createControlButton("maximize", __("Maximize"), "maximize");
+    const btnFocus = createControlButton("focus", __("Enter fullscreen"), "fullscreen");
+    const btnDetach = createControlButton("detach", __("Detach to new tab"), "detach");
+    const btnClose = createControlButton("close", __("Close"), "close");
     controls.appendChild(btnMin);
     controls.appendChild(btnMax);
     controls.appendChild(btnFocus);
@@ -1229,7 +1558,7 @@ var wpDesktop = function(exports) {
           ".wp-desktop-window__menu-item--open-another"
         );
         if (openAnother) {
-          openAnother.addEventListener("click", (e) => {
+          openAnother.addEventListener("wpd-menu-item-click", (e) => {
             e.stopPropagation();
             this.closeActionsMenu();
             this.onOpenAnother?.(this);
@@ -1240,7 +1569,7 @@ var wpDesktop = function(exports) {
         );
         if (startup) {
           this.refreshStartupCheckState(startup);
-          startup.addEventListener("click", (e) => {
+          startup.addEventListener("wpd-menu-item-click", (e) => {
             e.stopPropagation();
             this.flipStartupCheckOptimistically(startup);
             this.onToggleStartup?.(this);
@@ -1417,23 +1746,19 @@ var wpDesktop = function(exports) {
       labelEl.className = "wp-desktop-window__tab-label";
       labelEl.textContent = label;
       tabEl.appendChild(labelEl);
-      const detachBtn = document.createElement("span");
-      detachBtn.className = "wp-desktop-window__tab-chip wp-desktop-window__tab-chip--detach";
+      const detachBtn = document.createElement("wpd-tab-chip");
+      detachBtn.setAttribute("variant", "detach");
       detachBtn.dataset.tabAction = "detach";
       detachBtn.dataset.tabId = tabId;
-      detachBtn.setAttribute("role", "button");
       detachBtn.setAttribute("aria-label", __("Open in a new browser tab"));
       detachBtn.title = __("Open in a new browser tab");
-      detachBtn.innerHTML = '<svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M5 2H2.5v7.5H10V7M6.5 2H10v3.5M10 2L5.5 6.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>';
       tabEl.appendChild(detachBtn);
-      const closeBtn = document.createElement("span");
-      closeBtn.className = "wp-desktop-window__tab-chip wp-desktop-window__tab-chip--close";
+      const closeBtn = document.createElement("wpd-tab-chip");
+      closeBtn.setAttribute("variant", "close");
       closeBtn.dataset.tabAction = "close";
       closeBtn.dataset.tabId = tabId;
-      closeBtn.setAttribute("role", "button");
       closeBtn.setAttribute("aria-label", __("Close tab"));
       closeBtn.title = __("Close tab");
-      closeBtn.innerHTML = '<svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M3.25 3.25l5.5 5.5M3.25 8.75l5.5-5.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/></svg>';
       tabEl.appendChild(closeBtn);
       tabStrip.appendChild(tabEl);
       const iframe = document.createElement("iframe");
@@ -2067,11 +2392,13 @@ var wpDesktop = function(exports) {
      * If the REST fails the optimistic flip stays (wrong) until the
      * next menu open, where the canonical check takes over.
      */
-    flipStartupCheckOptimistically(button) {
-      const isChecked = button.getAttribute("aria-checked") === "true";
-      const next = !isChecked;
-      button.setAttribute("aria-checked", next ? "true" : "false");
-      button.classList.toggle("wp-desktop-window__menu-item--checked", next);
+    flipStartupCheckOptimistically(item) {
+      const isChecked = item.hasAttribute("checked");
+      if (isChecked) {
+        item.removeAttribute("checked");
+      } else {
+        item.setAttribute("checked", "");
+      }
     }
     /**
      * Compare this window's current URL against the user's saved
@@ -2079,7 +2406,7 @@ var wpDesktop = function(exports) {
      * item's checked state accordingly. Called when the menu is built
      * and every time the public preference changes.
      */
-    refreshStartupCheckState(button) {
+    refreshStartupCheckState(item) {
       const pref = window.wp?.desktop?.config?.defaultWindow;
       let isDefault = false;
       if (pref && pref.enabled && typeof pref.url === "string") {
@@ -2091,11 +2418,11 @@ var wpDesktop = function(exports) {
           isDefault = false;
         }
       }
-      button.setAttribute("aria-checked", isDefault ? "true" : "false");
-      button.classList.toggle(
-        "wp-desktop-window__menu-item--checked",
-        isDefault
-      );
+      if (isDefault) {
+        item.setAttribute("checked", "");
+      } else {
+        item.removeAttribute("checked");
+      }
     }
     toggleActionsMenu() {
       const panel = this.element.querySelector(
@@ -2768,7 +3095,7 @@ var wpDesktop = function(exports) {
       this.overviewSnapshot.clear();
       this.refreshDesktopVisibility();
       const eligible = this.stack.filter(
-        (w) => !w.config.native && w.state !== "minimized" && w.config.desktopId === this.activeDesktopId
+        (w) => w.state !== "minimized" && w.config.desktopId === this.activeDesktopId
       );
       if (eligible.length === 0) {
         return;
@@ -2817,7 +3144,7 @@ var wpDesktop = function(exports) {
      */
     cascade() {
       const eligible = this.stack.filter(
-        (w) => !w.config.native && w.config.desktopId === this.activeDesktopId
+        (w) => w.config.desktopId === this.activeDesktopId
       );
       if (eligible.length === 0) {
         return;
@@ -2858,7 +3185,7 @@ var wpDesktop = function(exports) {
         w.element.style.height = `${targetHeight}px`;
       });
       const focused = this.getFocused();
-      if (focused && !focused.config.native) {
+      if (focused) {
         this.focus(focused);
       }
       document.dispatchEvent(
@@ -2885,7 +3212,7 @@ var wpDesktop = function(exports) {
      */
     tile() {
       const eligible = this.stack.filter(
-        (w) => !w.config.native && w.config.desktopId === this.activeDesktopId
+        (w) => w.config.desktopId === this.activeDesktopId
       );
       if (eligible.length === 0) {
         return;
@@ -2939,7 +3266,7 @@ var wpDesktop = function(exports) {
         w.element.style.height = `${cellHeight}px`;
       });
       const focused = this.getFocused();
-      if (focused && !focused.config.native) {
+      if (focused) {
         this.focus(focused);
       }
       document.dispatchEvent(
@@ -3021,7 +3348,7 @@ var wpDesktop = function(exports) {
         return;
       }
       const eligible = this.stack.filter(
-        (w) => !w.config.native && w.state !== "minimized" && w.config.desktopId === this.activeDesktopId
+        (w) => w.state !== "minimized" && w.config.desktopId === this.activeDesktopId
       );
       this.overviewActive = true;
       doAction(HOOKS.OVERVIEW_ENTERING, {});
@@ -3238,7 +3565,7 @@ var wpDesktop = function(exports) {
       const preview = document.createElement("span");
       preview.className = "wp-desktop-overview-top-bar__tile-preview";
       const count = this.stack.filter(
-        (w) => w.config.desktopId === d.id && !w.config.native
+        (w) => w.config.desktopId === d.id
       ).length;
       if (count > 0) {
         const badge = document.createElement("span");

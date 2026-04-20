@@ -644,9 +644,12 @@ export class WindowManager {
 		this.refreshDesktopVisibility();
 
 		// 3. Lay out the new active desktop's windows in the grid.
+		//    Native windows (OS Settings, plugin-registered panels)
+		//    participate just like iframe windows — from overview's
+		//    point of view they're windows with content, nothing
+		//    special.
 		const eligible = this.stack.filter(
 			( w ) =>
-				! w.config.native &&
 				w.state !== 'minimized' &&
 				w.config.desktopId === this.activeDesktopId,
 		);
@@ -706,11 +709,11 @@ export class WindowManager {
 	public cascade(): void {
 		// Cascade only the active desktop's windows — windows belonging
 		// to other desktops are hidden and re-laying them out would
-		// invalidate the user's saved geometry there.
+		// invalidate the user's saved geometry there. Native windows
+		// participate: they're windows with content, same as iframes
+		// from cascade's point of view.
 		const eligible = this.stack.filter(
-			( w ) =>
-				! w.config.native &&
-				w.config.desktopId === this.activeDesktopId,
+			( w ) => w.config.desktopId === this.activeDesktopId,
 		);
 		if ( eligible.length === 0 ) {
 			return;
@@ -764,7 +767,7 @@ export class WindowManager {
 		// Bring focused window to the visual top (z-order) so after
 		// the cascade the user's prior focus target is still active.
 		const focused = this.getFocused();
-		if ( focused && ! focused.config.native ) {
+		if ( focused ) {
 			this.focus( focused );
 		}
 
@@ -795,9 +798,7 @@ export class WindowManager {
 	 */
 	public tile(): void {
 		const eligible = this.stack.filter(
-			( w ) =>
-				! w.config.native &&
-				w.config.desktopId === this.activeDesktopId,
+			( w ) => w.config.desktopId === this.activeDesktopId,
 		);
 		if ( eligible.length === 0 ) {
 			return;
@@ -869,7 +870,7 @@ export class WindowManager {
 		} );
 
 		const focused = this.getFocused();
-		if ( focused && ! focused.config.native ) {
+		if ( focused ) {
 			this.focus( focused );
 		}
 
@@ -1077,9 +1078,12 @@ export class WindowManager {
 		// Overview shows only the ACTIVE desktop's windows in the main
 		// grid; windows on other desktops stay hidden underneath. The
 		// top bar (rendered later) gives the user a way to switch.
+		// Native windows (OS Settings, Jorvy, etc.) participate as
+		// first-class citizens — clicking their thumbnail maximizes
+		// them, they lay out in the grid, they count toward the
+		// top-bar tile's window count.
 		const eligible = this.stack.filter(
 			( w ) =>
-				! w.config.native &&
 				w.state !== 'minimized' &&
 				w.config.desktopId === this.activeDesktopId,
 		);
@@ -1412,9 +1416,11 @@ export class WindowManager {
 		preview.className = 'wp-desktop-overview-top-bar__tile-preview';
 		// Window-count badge inside the preview area gives users a
 		// quick "what's on this desktop" hint without needing real
-		// per-window thumbnails (a follow-up enhancement).
+		// per-window thumbnails (a follow-up enhancement). Includes
+		// native windows — they're windows just like iframes from
+		// the user's count-what's-open perspective.
 		const count = this.stack.filter(
-			( w ) => w.config.desktopId === d.id && ! w.config.native,
+			( w ) => w.config.desktopId === d.id,
 		).length;
 		if ( count > 0 ) {
 			const badge = document.createElement( 'span' );

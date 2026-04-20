@@ -139,69 +139,29 @@
  * with, matching the WordPress admin's pattern of reserving color
  * for semantic signal.
  * --------------------------------------------------------------- */
-.wp-desktop-window__btn {
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	width: 30px;
-	height: 30px;
-	border: none;
-	border-radius: 5px;
-	cursor: pointer;
-	padding: 0;
-	background: transparent;
-	color: currentColor;
-	transition: background-color 0.15s ease, color 0.15s ease;
+/*
+ * Title-bar chrome buttons render as `<wpd-window-button>`.
+ * Shadow DOM can't reach across the window's focus class, so we
+ * drive the coloring via custom properties that inherit through
+ * the boundary. The component reads `--wpd-btn-color`,
+ * `--wpd-btn-bg-hover`, etc. and paints accordingly.
+ */
+.wp-desktop-window--focused {
+	--wpd-btn-color: rgba( 255, 255, 255, 0.7 );
+	--wpd-btn-color-hover: #fff;
+	--wpd-btn-bg-hover: rgba( 255, 255, 255, 0.18 );
+	--wpd-btn-bg-active: rgba( 255, 255, 255, 0.25 );
+	--wpd-btn-outline: rgba( 255, 255, 255, 0.65 );
+	--wpd-btn-danger-hover: #d63638;
 }
 
-.wp-desktop-window__btn-icon {
-	display: block;
-	pointer-events: none;
-	flex-shrink: 0;
-}
-
-/* Focused title bar (solid theme color): light icons. */
-.wp-desktop-window--focused .wp-desktop-window__btn {
-	color: rgba(255, 255, 255, 0.7);
-}
-.wp-desktop-window--focused .wp-desktop-window__btn:hover {
-	color: #fff;
-	background: rgba(255, 255, 255, 0.18);
-}
-.wp-desktop-window--focused .wp-desktop-window__btn:focus-visible {
-	color: #fff;
-	background: rgba(255, 255, 255, 0.18);
-	outline: 2px solid rgba(255, 255, 255, 0.65);
-	outline-offset: 1px;
-}
-.wp-desktop-window--focused .wp-desktop-window__btn--focus.wp-desktop-window__btn--active {
-	color: #fff;
-	background: rgba(255, 255, 255, 0.25);
-}
-.wp-desktop-window--focused .wp-desktop-window__btn--close:hover {
-	color: #fff;
-	background: #d63638;
-}
-
-/* Unfocused title bar (gray): dark icons. */
-.wp-desktop-window:not(.wp-desktop-window--focused) .wp-desktop-window__btn {
-	color: rgba(0, 0, 0, 0.45);
-}
-.wp-desktop-window:not(.wp-desktop-window--focused) .wp-desktop-window__btn:hover {
-	color: rgba(0, 0, 0, 0.85);
-	background: rgba(0, 0, 0, 0.08);
-}
-.wp-desktop-window:not(.wp-desktop-window--focused) .wp-desktop-window__btn:focus-visible {
-	outline: 2px solid var(--wp-admin-theme-color, #2271b1);
-	outline-offset: 1px;
-}
-.wp-desktop-window:not(.wp-desktop-window--focused) .wp-desktop-window__btn--focus.wp-desktop-window__btn--active {
-	color: rgba(0, 0, 0, 0.85);
-	background: rgba(0, 0, 0, 0.12);
-}
-.wp-desktop-window:not(.wp-desktop-window--focused) .wp-desktop-window__btn--close:hover {
-	color: #fff;
-	background: #d63638;
+.wp-desktop-window:not( .wp-desktop-window--focused ) {
+	--wpd-btn-color: rgba( 0, 0, 0, 0.45 );
+	--wpd-btn-color-hover: rgba( 0, 0, 0, 0.85 );
+	--wpd-btn-bg-hover: rgba( 0, 0, 0, 0.08 );
+	--wpd-btn-bg-active: rgba( 0, 0, 0, 0.12 );
+	--wpd-btn-outline: var( --wp-admin-theme-color, #2271b1 );
+	--wpd-btn-danger-hover: #d63638;
 }
 
 /* ---------------------------------------------------------------
@@ -241,103 +201,17 @@
 	border-inline-start-color: rgba(0, 0, 0, 0.1);
 }
 
+/*
+ * Menu popover lives inside the title bar's absolute-positioned
+ * coordinate system — positioning is caller-specific and stays
+ * outer. Background, border, items, checkbox styling all moved
+ * into `<wpd-menu>` / `<wpd-menu-item>`.
+ */
 .wp-desktop-window__menu-panel {
 	position: absolute;
-	top: calc(var(--wp-desktop-titlebar-height) + 2px);
+	top: calc( var( --wp-desktop-titlebar-height ) + 2px );
 	inset-inline-end: 60px;
-	min-width: 220px;
-	padding: 4px;
-	background: var(--wp-desktop-window-bg);
-	color: #1d2327;
-	border: 1px solid var(--wp-desktop-window-border);
-	border-radius: 8px;
-	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18), 0 2px 6px rgba(0, 0, 0, 0.08);
 	z-index: 2;
-}
-
-.wp-desktop-window__menu-panel[hidden] {
-	display: none;
-}
-
-.wp-desktop-window__menu-item {
-	display: flex;
-	align-items: center;
-	gap: 10px;
-	width: 100%;
-	min-height: 32px;
-	padding: 6px 10px;
-	border: none;
-	border-radius: 6px;
-	background: transparent;
-	color: inherit;
-	font: inherit;
-	font-size: 13px;
-	line-height: 1.3;
-	text-align: start;
-	cursor: pointer;
-	transition: background-color 0.12s ease, color 0.12s ease;
-}
-
-.wp-desktop-window__menu-item:hover,
-.wp-desktop-window__menu-item:focus-visible {
-	background: rgba(0, 0, 0, 0.06);
-	color: #000;
-	outline: none;
-}
-
-.wp-desktop-window__menu-item:focus-visible {
-	outline: 2px solid var(--wp-admin-theme-color, #2271b1);
-	outline-offset: -2px;
-}
-
-.wp-desktop-window__menu-icon {
-	flex-shrink: 0;
-	width: 18px;
-	height: 18px;
-	font-size: 18px;
-	line-height: 1;
-	color: var(--wp-admin-theme-color, #2271b1);
-}
-
-.wp-desktop-window__menu-label {
-	flex: 1;
-	white-space: nowrap;
-	overflow: hidden;
-	text-overflow: ellipsis;
-}
-
-/*
- * Check indicator for role="menuitemcheckbox" entries (currently
- * "Open on startup"). Uses a small 16px square slot so unchecked
- * items stay visually aligned with icon-bearing items like
- * "Open another".
- */
-.wp-desktop-window__menu-check {
-	flex-shrink: 0;
-	width: 16px;
-	height: 16px;
-	border-radius: 3px;
-	border: 1.5px solid rgba(0, 0, 0, 0.25);
-	position: relative;
-	background: transparent;
-	transition: background-color 0.12s ease, border-color 0.12s ease;
-}
-
-.wp-desktop-window__menu-item--checked .wp-desktop-window__menu-check {
-	background: var(--wp-admin-theme-color, #2271b1);
-	border-color: var(--wp-admin-theme-color, #2271b1);
-}
-
-.wp-desktop-window__menu-item--checked .wp-desktop-window__menu-check::after {
-	content: "";
-	position: absolute;
-	top: 1px;
-	left: 4px;
-	width: 4px;
-	height: 8px;
-	border: solid #fff;
-	border-width: 0 2px 2px 0;
-	transform: rotate(45deg);
 }
 
 /* ---------------------------------------------------------------
@@ -522,83 +396,11 @@
 	white-space: nowrap;
 }
 
-/*
- * Chips sized at 24×24 to match WCAG 2.2 interactive-target minimum.
- * Spacing via dedicated margin (not the parent's `gap`) so the two
- * chips sit as a visually-grouped pair with a tighter spacing than
- * either has with the label.
- */
-.wp-desktop-window__tab-chip {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	width: 24px;
-	height: 24px;
-	border-radius: 4px;
-	color: rgba( 0, 0, 0, 0.45 );
-	cursor: pointer;
-	transition: background-color 0.15s ease, color 0.15s ease, transform 0.12s ease;
-}
-
-.wp-desktop-window__tab-chip + .wp-desktop-window__tab-chip {
+/* External-tab action chips moved to `<wpd-tab-chip>`. Spacing
+ * between chips handled by a single host-level rule since the
+ * component doesn't know about its siblings. */
+wpd-tab-chip + wpd-tab-chip {
 	margin-inline-start: 4px;
-}
-
-/*
- * Detach hover — a soft accent-tinted wash, plus a subtle upward
- * nudge so it reads as "lifts off". Matches the window title-bar
- * detach button's visual language without being identical (the
- * title-bar variant lives in a colored title bar; these chips live
- * in the light tab strip).
- */
-.wp-desktop-window__tab-chip--detach:hover {
-	color: var( --wp-admin-theme-color, #2271b1 );
-	background: rgba( 34, 113, 177, 0.12 );
-	transform: translateY( -1px );
-}
-
-.wp-desktop-window__tab-chip--detach:focus-visible {
-	outline: 2px solid var( --wp-admin-theme-color, #2271b1 );
-	outline-offset: 1px;
-}
-
-/*
- * Close hover — destructive red wash matching the main-window close
- * button treatment. Reserves color for semantic signal: the chip is
- * neutral-gray at rest and only turns red under the cursor.
- */
-.wp-desktop-window__tab-chip--close:hover {
-	color: #fff;
-	background: #d63638;
-}
-
-.wp-desktop-window__tab-chip--close:focus-visible {
-	color: #fff;
-	background: #d63638;
-	outline: 2px solid rgba( 214, 54, 56, 0.6 );
-	outline-offset: 1px;
-}
-
-.wp-desktop-window__tab-chip svg {
-	display: block;
-	pointer-events: none;
-	/*
-	 * Stroke gets heavier on hover so the glyph reads crisply
-	 * against the wash. The chip hover transition handles the
-	 * color/background swap; stroke-width has to be on the SVG
-	 * itself but inherits the parent's currentColor.
-	 */
-	width: 12px;
-	height: 12px;
-}
-
-@media ( prefers-reduced-motion: reduce ) {
-	.wp-desktop-window__tab-chip {
-		transition-duration: 0.01ms;
-	}
-	.wp-desktop-window__tab-chip--detach:hover {
-		transform: none;
-	}
 }
 
 /* Window body: contains the iframe. */

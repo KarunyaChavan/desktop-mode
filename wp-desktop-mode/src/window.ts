@@ -11,6 +11,11 @@ import { sanitizeClassName, urlMatchKey } from './utils';
 import { HOOKS, doAction } from './hooks';
 import { __, sprintf } from './i18n';
 import { showToast } from './toast';
+// Register the window-chrome atoms — no named import needed, the
+// side-effect `defineComponent(...)` calls wire them up.
+import './ui/components/wpd-window-button/wpd-window-button';
+import './ui/components/wpd-menu/wpd-menu';
+import './ui/components/wpd-tab-chip/wpd-tab-chip';
 
 /** Minimum distance from viewport edges when dragging. */
 const EDGE_MARGIN = 8;
@@ -63,18 +68,27 @@ function updateFullscreenBodyClass(): void {
 }
 
 /**
- * Build a title-bar control button with an inline SVG icon.
- *
- * Using inline SVG (rather than a dashicon font glyph) keeps icons crisp
- * at any size and lets them inherit `currentColor` so they adapt to the
- * focused / unfocused title-bar state without separate CSS rules.
+ * Build a title-bar control button via the `<wpd-window-button>`
+ * web component. The component ships the SVG icon, variant
+ * styling, focused-/unfocused-aware coloring (via custom
+ * properties set on the outer window element), and pressed-down
+ * state. Legacy class names are kept for CSS that still targets
+ * specific buttons (e.g., the title-bar layout selector that
+ * reshapes around the menu button).
  */
-function createControlButton( variant: string, label: string, svgInner: string ): HTMLButtonElement {
-	const btn = document.createElement( 'button' );
-	btn.type = 'button';
-	btn.className = `wp-desktop-window__btn wp-desktop-window__btn--${ variant }`;
+function createControlButton(
+	variant: string,
+	label: string,
+	icon: string,
+): HTMLElement {
+	const btn = document.createElement( 'wpd-window-button' );
+	btn.setAttribute( 'icon', icon );
 	btn.setAttribute( 'aria-label', label );
-	btn.innerHTML = `<svg class="wp-desktop-window__btn-icon" width="14" height="14" viewBox="0 0 12 12" aria-hidden="true" focusable="false">${ svgInner }</svg>`;
+	btn.classList.add( 'wp-desktop-window__btn' );
+	btn.classList.add( `wp-desktop-window__btn--${ variant }` );
+	if ( variant === 'close' ) {
+		btn.setAttribute( 'danger', '' );
+	}
 	return btn;
 }
 
@@ -108,65 +122,52 @@ function createWindowElement( config: WindowConfig ): HTMLElement {
 	//
 	// Future window-management verbs ("Tile left", "Duplicate", etc.)
 	// should migrate here so the title bar stops growing controls.
-	let menuBtn: HTMLButtonElement | null = null;
+	let menuBtn: HTMLElement | null = null;
 	let menuPanel: HTMLElement | null = null;
 	if ( ! config.native ) {
-		menuBtn = document.createElement( 'button' );
-		menuBtn.type = 'button';
-		menuBtn.className = 'wp-desktop-window__btn wp-desktop-window__menu-btn';
+		menuBtn = document.createElement( 'wpd-window-button' );
+		menuBtn.setAttribute( 'icon', 'menu' );
 		menuBtn.setAttribute( 'aria-label', __( 'Window actions' ) );
 		menuBtn.setAttribute( 'aria-haspopup', 'menu' );
 		menuBtn.setAttribute( 'aria-expanded', 'false' );
-		menuBtn.innerHTML =
-			'<svg class="wp-desktop-window__btn-icon" width="14" height="14" viewBox="0 0 12 12" aria-hidden="true" focusable="false">' +
-			'<circle cx="3" cy="6" r="1.2" fill="currentColor"/>' +
-			'<circle cx="6" cy="6" r="1.2" fill="currentColor"/>' +
-			'<circle cx="9" cy="6" r="1.2" fill="currentColor"/>' +
-			'</svg>';
+		// Keep the legacy classes so the title-bar layout selector
+		// that reshapes around the menu button (see windows.css
+		// `:has(.wp-desktop-window__menu-btn)`) still matches.
+		menuBtn.classList.add( 'wp-desktop-window__btn' );
+		menuBtn.classList.add( 'wp-desktop-window__menu-btn' );
 
-		menuPanel = document.createElement( 'div' );
-		menuPanel.className = 'wp-desktop-window__menu-panel';
-		menuPanel.setAttribute( 'role', 'menu' );
+		menuPanel = document.createElement( 'wpd-menu' );
+		menuPanel.classList.add( 'wp-desktop-window__menu-panel' );
 		menuPanel.hidden = true;
 
-		// "Open on startup" — checkable. The checked state is
-		// hydrated in bindEvents() once we can read the shared public
-		// API; the button just needs to exist here.
-		const startup = document.createElement( 'button' );
-		startup.type = 'button';
-		startup.className =
-			'wp-desktop-window__menu-item wp-desktop-window__menu-item--startup';
+		// "Open on startup" — checkable. Checked state is hydrated
+		// in bindEvents() once `window.wp.desktop.config` is
+		// populated; the item just needs to exist here.
+		const startup = document.createElement( 'wpd-menu-item' );
 		startup.setAttribute( 'role', 'menuitemcheckbox' );
-		startup.setAttribute( 'aria-checked', 'false' );
-		const startupCheck = document.createElement( 'span' );
-		startupCheck.className = 'wp-desktop-window__menu-check';
-		startupCheck.setAttribute( 'aria-hidden', 'true' );
-		const startupLabel = document.createElement( 'span' );
-		startupLabel.className = 'wp-desktop-window__menu-label';
-		startupLabel.textContent = __( 'Open on startup' );
-		startup.appendChild( startupCheck );
-		startup.appendChild( startupLabel );
+		startup.setAttribute( 'value', 'startup' );
+		// Legacy classes preserved so settings-refresh code can
+		// still find the item by class during the
+		// `default-window-changed` repaint.
+		startup.classList.add( 'wp-desktop-window__menu-item' );
+		startup.classList.add( 'wp-desktop-window__menu-item--startup' );
+		startup.textContent = __( 'Open on startup' );
 		menuPanel.appendChild( startup );
 
 		if ( config.multi ) {
-			const openAnother = document.createElement( 'button' );
-			openAnother.type = 'button';
-			openAnother.className =
-				'wp-desktop-window__menu-item wp-desktop-window__menu-item--open-another';
+			const openAnother = document.createElement( 'wpd-menu-item' );
 			openAnother.setAttribute( 'role', 'menuitem' );
-			const oaIcon = document.createElement( 'span' );
-			oaIcon.className =
-				'wp-desktop-window__menu-icon dashicons dashicons-plus-alt2';
-			oaIcon.setAttribute( 'aria-hidden', 'true' );
-			const oaLabel = document.createElement( 'span' );
-			oaLabel.className = 'wp-desktop-window__menu-label';
-			oaLabel.textContent = sprintf(
+			openAnother.setAttribute( 'value', 'open-another' );
+			openAnother.setAttribute( 'icon', 'dashicons-plus-alt2' );
+			openAnother.classList.add( 'wp-desktop-window__menu-item' );
+			openAnother.classList.add(
+				'wp-desktop-window__menu-item--open-another',
+			);
+			openAnother.textContent = sprintf(
 				// translators: %s is the window's admin-page name (e.g., "Posts")
 				__( 'Open another %s' ),
 				config.title,
 			);
-			openAnother.appendChild( oaIcon );
-			openAnother.appendChild( oaLabel );
 			menuPanel.appendChild( openAnother );
 		}
 	}
@@ -183,36 +184,15 @@ function createWindowElement( config: WindowConfig ): HTMLElement {
 	const controls = document.createElement( 'div' );
 	controls.className = 'wp-desktop-window__controls';
 
-	const btnMin = createControlButton(
-		'minimize',
-		__( 'Minimize' ),
-		'<path d="M3 6h6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>',
-	);
-	const btnMax = createControlButton(
-		'maximize',
-		__( 'Maximize' ),
-		'<rect x="3" y="3" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.25" fill="none"/>',
-	);
-	const btnFocus = createControlButton(
-		'focus',
-		__( 'Enter fullscreen' ),
-		'<path d="M4.5 2H2v2.5M10 4.5V2H7.5M4.5 10H2V7.5M10 7.5V10H7.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none"/>',
-	);
+	const btnMin = createControlButton( 'minimize', __( 'Minimize' ), 'minimize' );
+	const btnMax = createControlButton( 'maximize', __( 'Maximize' ), 'maximize' );
+	const btnFocus = createControlButton( 'focus', __( 'Enter fullscreen' ), 'fullscreen' );
 	// Detach: open this window's current URL in a new browser tab as
 	// plain classic admin (no desktop shell, no chromeless). Escape hatch
 	// for users who want to work on one page outside the windowed UI
-	// without disabling desktop mode globally. Icon is the conventional
-	// "open in new window" box + arrow.
-	const btnDetach = createControlButton(
-		'detach',
-		__( 'Detach to new tab' ),
-		'<path d="M5 2H2.5v7.5H10V7M6.5 2H10v3.5M10 2L5.5 6.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none"/>',
-	);
-	const btnClose = createControlButton(
-		'close',
-		__( 'Close' ),
-		'<path d="M3.25 3.25l5.5 5.5M3.25 8.75l5.5-5.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>',
-	);
+	// without disabling desktop mode globally.
+	const btnDetach = createControlButton( 'detach', __( 'Detach to new tab' ), 'detach' );
+	const btnClose = createControlButton( 'close', __( 'Close' ), 'close' );
 
 	controls.appendChild( btnMin );
 	controls.appendChild( btnMax );
@@ -598,12 +578,12 @@ export class Window {
 
 		// Title-bar actions menu (multi-capable windows only — button
 		// absent for singletons).
-		const menuBtn = this.element.querySelector(
+		const menuBtn = this.element.querySelector<HTMLElement>(
 			'.wp-desktop-window__menu-btn',
-		) as HTMLButtonElement | null;
-		const menuPanel = this.element.querySelector(
+		);
+		const menuPanel = this.element.querySelector<HTMLElement>(
 			'.wp-desktop-window__menu-panel',
-		) as HTMLElement | null;
+		);
 		if ( menuBtn && menuPanel ) {
 			menuBtn.addEventListener( 'click', ( e: Event ) => {
 				e.stopPropagation();
@@ -613,7 +593,11 @@ export class Window {
 				'.wp-desktop-window__menu-item--open-another',
 			);
 			if ( openAnother ) {
-				openAnother.addEventListener( 'click', ( e: Event ) => {
+				// `<wpd-menu-item>` emits `wpd-menu-item-click` on
+				// selection — listen for that rather than raw click
+				// so other click-based inner DOM (focus rings, etc.)
+				// don't double-fire.
+				openAnother.addEventListener( 'wpd-menu-item-click', ( e: Event ) => {
 					e.stopPropagation();
 					this.closeActionsMenu();
 					this.onOpenAnother?.( this );
@@ -624,12 +608,16 @@ export class Window {
 			// click handler to toggle via `setDefaultWindow`. The
 			// callback is injected by the window manager so we don't
 			// couple the Window class to wp.desktop directly.
-			const startup = menuPanel.querySelector<HTMLButtonElement>(
+			const startup = menuPanel.querySelector<HTMLElement>(
 				'.wp-desktop-window__menu-item--startup',
 			);
 			if ( startup ) {
 				this.refreshStartupCheckState( startup );
-				startup.addEventListener( 'click', ( e: Event ) => {
+				// `<wpd-menu-item>` emits `wpd-menu-item-click` on
+				// its button click; listen there (not on the plain
+				// `click`) so we catch the check toggle without
+				// racing the item's own internal state update.
+				startup.addEventListener( 'wpd-menu-item-click', ( e: Event ) => {
 					// Keep the menu open — a checkbox item is a toggle,
 					// not a one-shot action. Users commonly want to
 					// verify the new state without reopening the menu,
@@ -869,30 +857,20 @@ export class Window {
 		labelEl.textContent = label;
 		tabEl.appendChild( labelEl );
 
-		const detachBtn = document.createElement( 'span' );
-		detachBtn.className = 'wp-desktop-window__tab-chip wp-desktop-window__tab-chip--detach';
+		const detachBtn = document.createElement( 'wpd-tab-chip' );
+		detachBtn.setAttribute( 'variant', 'detach' );
 		detachBtn.dataset.tabAction = 'detach';
 		detachBtn.dataset.tabId = tabId;
-		detachBtn.setAttribute( 'role', 'button' );
 		detachBtn.setAttribute( 'aria-label', __( 'Open in a new browser tab' ) );
 		detachBtn.title = __( 'Open in a new browser tab' );
-		detachBtn.innerHTML =
-			'<svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true" focusable="false">' +
-			'<path d="M5 2H2.5v7.5H10V7M6.5 2H10v3.5M10 2L5.5 6.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none"/>' +
-			'</svg>';
 		tabEl.appendChild( detachBtn );
 
-		const closeBtn = document.createElement( 'span' );
-		closeBtn.className = 'wp-desktop-window__tab-chip wp-desktop-window__tab-chip--close';
+		const closeBtn = document.createElement( 'wpd-tab-chip' );
+		closeBtn.setAttribute( 'variant', 'close' );
 		closeBtn.dataset.tabAction = 'close';
 		closeBtn.dataset.tabId = tabId;
-		closeBtn.setAttribute( 'role', 'button' );
 		closeBtn.setAttribute( 'aria-label', __( 'Close tab' ) );
 		closeBtn.title = __( 'Close tab' );
-		closeBtn.innerHTML =
-			'<svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true" focusable="false">' +
-			'<path d="M3.25 3.25l5.5 5.5M3.25 8.75l5.5-5.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>' +
-			'</svg>';
 		tabEl.appendChild( closeBtn );
 
 		tabStrip.appendChild( tabEl );
@@ -1702,11 +1680,15 @@ export class Window {
 	 * If the REST fails the optimistic flip stays (wrong) until the
 	 * next menu open, where the canonical check takes over.
 	 */
-	private flipStartupCheckOptimistically( button: HTMLButtonElement ): void {
-		const isChecked = button.getAttribute( 'aria-checked' ) === 'true';
-		const next = ! isChecked;
-		button.setAttribute( 'aria-checked', next ? 'true' : 'false' );
-		button.classList.toggle( 'wp-desktop-window__menu-item--checked', next );
+	private flipStartupCheckOptimistically( item: HTMLElement ): void {
+		const isChecked = item.hasAttribute( 'checked' );
+		if ( isChecked ) {
+			item.removeAttribute( 'checked' );
+		} else {
+			item.setAttribute( 'checked', '' );
+		}
+		// The `<wpd-menu-item>` component mirrors `checked` into
+		// `aria-checked` on its next render; no manual sync needed.
 	}
 
 	/**
@@ -1715,7 +1697,7 @@ export class Window {
 	 * item's checked state accordingly. Called when the menu is built
 	 * and every time the public preference changes.
 	 */
-	private refreshStartupCheckState( button: HTMLButtonElement ): void {
+	private refreshStartupCheckState( item: HTMLElement ): void {
 		const pref = window.wp?.desktop?.config?.defaultWindow;
 		let isDefault = false;
 		if ( pref && pref.enabled && typeof pref.url === 'string' ) {
@@ -1727,11 +1709,11 @@ export class Window {
 				isDefault = false;
 			}
 		}
-		button.setAttribute( 'aria-checked', isDefault ? 'true' : 'false' );
-		button.classList.toggle(
-			'wp-desktop-window__menu-item--checked',
-			isDefault,
-		);
+		if ( isDefault ) {
+			item.setAttribute( 'checked', '' );
+		} else {
+			item.removeAttribute( 'checked' );
+		}
 	}
 
 	private toggleActionsMenu(): void {
@@ -1759,9 +1741,9 @@ export class Window {
 		const panel = this.element.querySelector(
 			'.wp-desktop-window__menu-panel',
 		) as HTMLElement | null;
-		const btn = this.element.querySelector(
+		const btn = this.element.querySelector<HTMLElement>(
 			'.wp-desktop-window__menu-btn',
-		) as HTMLButtonElement | null;
+		);
 		if ( ! panel || ! btn ) {
 			return;
 		}
@@ -1774,7 +1756,7 @@ export class Window {
 		// silently fall back to unchecked. Reading on each open catches
 		// that plus any external change (e.g. another window toggled
 		// itself as default) that hasn't propagated yet.
-		const startup = panel.querySelector<HTMLButtonElement>(
+		const startup = panel.querySelector<HTMLElement>(
 			'.wp-desktop-window__menu-item--startup',
 		);
 		if ( startup ) {
@@ -1819,9 +1801,9 @@ export class Window {
 		const panel = this.element.querySelector(
 			'.wp-desktop-window__menu-panel',
 		) as HTMLElement | null;
-		const btn = this.element.querySelector(
+		const btn = this.element.querySelector<HTMLElement>(
 			'.wp-desktop-window__menu-btn',
-		) as HTMLButtonElement | null;
+		);
 		if ( panel ) {
 			panel.hidden = true;
 		}

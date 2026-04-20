@@ -20,3 +20,6 @@ export { WpdRangeField } from './wpd-range-field/wpd-range-field';
 export { WpdCheckboxLabel } from './wpd-checkbox-label/wpd-checkbox-label';
 export { WpdToast, WpdToastContainer } from './wpd-toast/wpd-toast';
 export { WpdTabs, WpdTab } from './wpd-tabs/wpd-tabs';
+export { WpdWindowButton } from './wpd-window-button/wpd-window-button';
+export { WpdMenu, WpdMenuItem } from './wpd-menu/wpd-menu';
+export { WpdTabChip } from './wpd-tab-chip/wpd-tab-chip';

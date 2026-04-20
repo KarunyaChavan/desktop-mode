@@ -18,6 +18,10 @@
  */
 
 import { applyFilters, HOOKS } from '../hooks';
+import {
+	collectRegistrationErrors,
+	logRegistrationErrors,
+} from '../registration-errors';
 import type { WallpaperDef } from './types';
 
 /** Internal: the seed list every filter sees. Mutated by `register`. */
@@ -32,13 +36,9 @@ const seed: WallpaperDef[] = [];
  * API so plugin identity can be tracked.
  */
 export function register( def: WallpaperDef ): void {
-	if ( ! isValidDef( def ) ) {
-		if ( typeof console !== 'undefined' ) {
-			console.warn(
-				'[wp-desktop-mode] Ignored invalid wallpaper registration:',
-				def,
-			);
-		}
+	const errors = collectRegistrationErrors< WallpaperDef >( def, WALLPAPER_CHECKS );
+	if ( errors.length > 0 ) {
+		logRegistrationErrors( 'Wallpaper', errors, def );
 		return;
 	}
 	// Replace an existing entry with the same id rather than doubling
@@ -97,28 +97,54 @@ export function get( id: string ): WallpaperDef | undefined {
  * mount function typing) would over-reach — plugin authors are in
  * charge of their own correctness past this boundary.
  */
+const WALLPAPER_CHECKS = [
+	{
+		field: 'id',
+		message: 'missing or not a non-empty string',
+		valid: ( d: Partial< WallpaperDef > ) =>
+			typeof d.id === 'string' && d.id !== '',
+	},
+	{
+		field: 'label',
+		message: 'missing or not a non-empty string',
+		valid: ( d: Partial< WallpaperDef > ) =>
+			typeof d.label === 'string' && d.label !== '',
+	},
+	{
+		field: 'preview',
+		message: 'missing or not a non-empty string',
+		valid: ( d: Partial< WallpaperDef > ) =>
+			typeof d.preview === 'string' && d.preview !== '',
+	},
+	{
+		field: 'type',
+		message: 'must be "css" or "canvas"',
+		valid: ( d: Partial< WallpaperDef > ) =>
+			d.type === 'css' || d.type === 'canvas',
+	},
+	{
+		field: 'value/resolveValue/mount',
+		message:
+			'css types need `value` or `resolveValue`; canvas types need `mount`',
+		valid: ( d: Partial< WallpaperDef > ) => {
+			if ( d.type === 'css' ) {
+				return (
+					typeof ( d as { value?: unknown } ).value === 'string' ||
+					typeof ( d as { resolveValue?: unknown } ).resolveValue ===
+						'function'
+				);
+			}
+			if ( d.type === 'canvas' ) {
+				return typeof ( d as { mount?: unknown } ).mount === 'function';
+			}
+			// type check already failed above; don't double-report.
+			return true;
+		},
+	},
+];
+
 function isValidDef( def: unknown ): def is WallpaperDef {
-	if ( ! def || typeof def !== 'object' ) {
-		return false;
-	}
-	const d = def as Partial<WallpaperDef>;
-	if ( typeof d.id !== 'string' || d.id === '' ) {
-		return false;
-	}
-	if ( typeof d.label !== 'string' || d.label === '' ) {
-		return false;
-	}
-	if ( typeof d.preview !== 'string' || d.preview === '' ) {
-		return false;
-	}
-	if ( d.type === 'css' ) {
-		return (
-			typeof ( d as { value?: unknown } ).value === 'string' ||
-			typeof ( d as { resolveValue?: unknown } ).resolveValue === 'function'
-		);
-	}
-	if ( d.type === 'canvas' ) {
-		return typeof ( d as { mount?: unknown } ).mount === 'function';
-	}
-	return false;
+	return (
+		collectRegistrationErrors< WallpaperDef >( def, WALLPAPER_CHECKS ).length === 0
+	);
 }

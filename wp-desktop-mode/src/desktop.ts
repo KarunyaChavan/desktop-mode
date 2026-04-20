@@ -51,6 +51,27 @@ export interface WpDesktopPublicApi {
 	saveSession: () => void;
 	/** Raw `@wordpress/hooks` bridge. Alias of `window.wp.hooks`. */
 	hooks: WpHooks;
+	/**
+	 * Typed constants for every hook the shell dispatches. Use these
+	 * in `wp.desktop.hooks.addAction()` / `addFilter()` calls instead
+	 * of hand-typed strings so a renamed hook fails typecheck in your
+	 * editor instead of silently going dead.
+	 *
+	 * ```ts
+	 * wp.desktop.hooks.addAction(
+	 *     wp.desktop.HOOKS.ARRANGE_CASCADE_APPLIED,
+	 *     'myplugin/toast',
+	 *     ( e ) => console.log( 'Cascade applied', e )
+	 * );
+	 * ```
+	 */
+	HOOKS: typeof import( './hooks' ).HOOKS;
+	/**
+	 * True when the desktop shell is mounted and active on this page.
+	 * Cheap capability check for plugins that also run in classic
+	 * admin and want to branch without probing `document.getElementById`.
+	 */
+	isActive: () => boolean;
 	/** Convenience: register a wallpaper via `wp-desktop.wallpapers` filter. */
 	registerWallpaper: ( def: WallpaperDef ) => void;
 	/** Convenience: register a widget via `wp-desktop.widgets` filter. */
@@ -322,6 +343,8 @@ function init(): void {
 		dock,
 		saveSession,
 		hooks: rawHooks(),
+		HOOKS,
+		isActive: () => !! document.getElementById( 'wp-desktop-shell' ),
 		registerWallpaper: ( def: WallpaperDef ) => {
 			registry.register( def );
 			// Re-apply so a plugin that registers its own wallpaper and
@@ -590,7 +613,19 @@ function bindTopWindowLinkInterceptor(
 			let url: URL;
 			try {
 				url = new URL( rawHref, window.location.href );
-			} catch {
+			} catch ( err ) {
+				// Malformed href — rare in practice (the browser's own
+				// parser is quite lenient) but if a plugin is generating
+				// broken URLs the only signal today would be "the link
+				// doesn't get intercepted and leaves the shell." Log so
+				// the author can trace it.
+				if ( typeof console !== 'undefined' ) {
+					console.warn(
+						'[wp-desktop-mode] Couldn’t parse href; letting the browser handle the click:',
+						rawHref,
+						err,
+					);
+				}
 				return;
 			}
 
@@ -600,7 +635,18 @@ function bindTopWindowLinkInterceptor(
 			let adminPath: string;
 			try {
 				adminPath = new URL( config.adminUrl ).pathname;
-			} catch {
+			} catch ( err ) {
+				// Shell boot should have rejected a bad adminUrl, so
+				// reaching this branch means something mutated config
+				// after boot. Log + fall back rather than break every
+				// link click on the page.
+				if ( typeof console !== 'undefined' ) {
+					console.error(
+						'[wp-desktop-mode] config.adminUrl is not a valid URL; falling back to /wp-admin/:',
+						config.adminUrl,
+						err,
+					);
+				}
 				adminPath = '/wp-admin/';
 			}
 			if ( ! url.pathname.startsWith( adminPath ) ) {

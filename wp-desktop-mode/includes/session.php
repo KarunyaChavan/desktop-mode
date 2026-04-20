@@ -100,16 +100,41 @@ function wpdm_get_session( $user_id ) {
 /**
  * Persists a sanitized desktop session to user meta.
  *
+ * Rejects writes whose `updated` timestamp is older than what's
+ * already on file — a simple last-write-wins guard that prevents two
+ * tabs open on the same user from clobbering each other. The client
+ * stamps `updated` with `Math.floor(Date.now() / 1000)` at snapshot
+ * time (see `WindowManager.snapshot`), so this comparison lines up
+ * with real wall-clock ordering on same-machine multi-tab setups.
+ *
+ * Equal timestamps (two writes in the same second) are accepted —
+ * that's a tie and whichever the server processes first wins, which
+ * matches the pre-0.8 behavior for simultaneous saves.
+ *
  * @since 0.4.0
  *
  * @param int   $user_id The user ID.
  * @param array $session Raw session payload (will be sanitized).
- * @return bool True on success, false on failure.
+ * @return bool True on success, false when stale / invalid / failed.
  */
 function wpdm_save_session( $user_id, $session ) {
 	$user_id = (int) $user_id;
 	if ( $user_id <= 0 ) {
 		return false;
+	}
+
+	if ( is_array( $session ) && isset( $session['updated'] ) ) {
+		$incoming = (int) $session['updated'];
+		if ( $incoming > 0 ) {
+			$existing = wpdm_get_session( $user_id );
+			$stored   = isset( $existing['updated'] ) ? (int) $existing['updated'] : 0;
+			if ( $incoming < $stored ) {
+				// Stale write — another tab saved a newer snapshot
+				// after this one was taken. Bail so the user's latest
+				// work isn't overwritten by a slow-to-arrive payload.
+				return false;
+			}
+		}
 	}
 
 	$clean = wpdm_sanitize_session( $session );

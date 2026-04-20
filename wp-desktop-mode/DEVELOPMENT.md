@@ -1,0 +1,146 @@
+# Development guide
+
+This file is for people working **on** `wp-desktop-mode` — the plugin itself, not plugins that extend it. If you want to extend the shell, start with [`docs/getting-started.md`](docs/getting-started.md).
+
+## Dev loop
+
+```bash
+npm install           # one-time
+npm run dev           # watch: rebuilds assets/js/desktop.js on save
+npm run lint          # ESLint — our CI runs this
+npm run test:js       # Vitest — 180+ tests
+npm run test:js:watch # Vitest in watch mode
+npm run test:php      # PHPUnit (requires WP test suite installed)
+npm run build         # produces both assets/js/desktop{,.min}.js
+```
+
+Manual QA runs against the Dockerised WordPress environment in the parent Core-checkout repo — `npm run env:start` / `env:install` there. This plugin folder is self-contained; Docker orchestration stays in the host.
+
+## Module layout
+
+```
+src/
+├── public-api.ts            # Barrel: re-exports every plugin-author-facing
+│                            #   type / enum / helper. New author-facing
+│                            #   symbol? Add it here too.
+├── desktop.ts               # Shell entry — boots the window manager,
+│                            #   dock, widget layer, wallpaper layer, and
+│                            #   exposes `window.wp.desktop`.
+├── hooks.ts                 # @wordpress/hooks bridge + the typed HOOKS
+│                            #   enum that names every event we fire.
+├── types.ts                 # Window / session / config interfaces.
+├── window/                  # Window class + its pointer / chrome / tabs
+│                            #   / iframe-bridge / menu helpers.
+├── window-manager/          # WindowManager + desktops + arrange + snap
+│                            #   + overview helpers.
+├── wallpapers/              # Registry, layer, built-ins, types, vendor
+│                            #   script loader.
+├── widgets/                 # Registry, layer, picker, frame
+│                            #   (movable/resizable chrome), state.
+├── settings/                # OS Settings panel: state, sections,
+│                            #   media REST client.
+├── ui/
+│   ├── core/                # The tagged-template renderer + base
+│   │                        #   Component class + css` helper.
+│   └── components/          # <wpd-*> web components (one folder per
+│                            #   tag, each with .ts / .styles.ts / .test.ts).
+├── modules/                 # Vendor-script registry (PixiJS today,
+│                            #   more later). Used by canvas wallpapers.
+├── plugins/                 # Built-in plugins that use the public API —
+│                            #   animated-logo-wallpaper is the reference
+│                            #   example for third-party authors.
+├── dock.ts                  # The left-edge dock (icons, tooltips,
+│                            #   submenu popover, instance rail).
+├── toast.ts                 # Toast queue (wraps <wpd-toast-container>).
+├── utils.ts                 # urlMatchKey, deriveWindowId, sanitize*.
+└── i18n.ts                  # Thin wrapper around window.wp.i18n.
+```
+
+## Public vs internal
+
+Anything **re-exported from `src/public-api.ts`** is public. We promise
+backwards compatibility within a major version — renamed fields, tightened
+types, and removed symbols need a deprecation path.
+
+Anything **not** re-exported from `public-api.ts` is internal, even if
+the file itself is tracked. In particular:
+
+- `src/window/tabs.ts`, `menus.ts`, `pointer.ts`, `iframe-bridge.ts`,
+  `dom.ts` — package-private helpers of the `Window` class.
+- `src/window-manager/desktops.ts`, `arrange.ts`, `overview.ts`,
+  `snap.ts`, `geometry.ts` — package-private helpers of the
+  `WindowManager` class.
+- `src/settings/sections/*` — OS Settings internals.
+- `src/widgets/frame.ts`, `state.ts` — widget-layer internals.
+
+Class fields prefixed with `_` (e.g. `_externalTabs`, `_activeDesktopId`)
+are package-internal. They're public in TypeScript so sibling helper
+modules can reach them, but a plugin author touching them is knowingly
+off-road.
+
+When adding a new internal symbol, mark it with a JSDoc `@internal` tag
+so editors and typedoc can hide it from completion lists:
+
+```ts
+/** @internal */
+public _privateField: Map< string, unknown > = new Map();
+```
+
+## Adding a new hook
+
+1. **Name it.** Convention: `wp-desktop.<domain>.<event>` (JS) or
+   `wp_desktop_<domain>_<event>` (PHP). Add the constant to the `HOOKS`
+   enum in `src/hooks.ts` with a JSDoc describing payload + timing.
+2. **Fire it.** `doAction( HOOKS.NEW_THING, payload )` for actions or
+   `applyFilters( HOOKS.NEW_THING, value, context )` for filters.
+3. **Document it.** Add a row to `docs/javascript-reference.md` (JS
+   hooks) or a full section to `docs/hooks-reference.md` (PHP hooks),
+   with status label (Stable / Experimental / Planned).
+4. **Test it.** At minimum, a Vitest assertion that the action fires
+   with the expected payload — see `tests/vitest/window-lifecycle-hooks.test.ts`
+   for patterns.
+5. **Example it.** If the hook is non-trivial, add a recipe to
+   `docs/examples/` (see `arrange-action.md`, `window-lifecycle.md` as
+   templates).
+
+## Adding a new public API method
+
+Everything on `window.wp.desktop` lives in the `WpDesktopPublicApi`
+interface in `src/desktop.ts`. To add a method:
+
+1. Add the field to the interface with a JSDoc.
+2. Wire it up inside the `window.wp.desktop = { … }` assignment.
+3. Re-export whatever types it uses from `src/public-api.ts`.
+4. Document it in `docs/javascript-reference.md`.
+
+## Coding conventions
+
+- **TS**: strict mode, tabs, `snake_case` for PHP / `camelCase` for JS.
+  Prefer `const` over `let`. No `any`; use `unknown` + type-narrow.
+- **CSS**: custom properties for theming. BEM-ish
+  `.wp-desktop-{component}__{element}--{modifier}`.
+- **PHP**: WordPress standards (tabs, Yoda conditions, `snake_case`),
+  `defined( 'ABSPATH' ) || exit;` at the top of every file.
+- **Comments**: the "why", not the "what". If a workaround exists for
+  a browser quirk or a subtle invariant, note it inline. Otherwise
+  let the code speak.
+
+## Where things are tested
+
+- **Vitest** — `tests/vitest/*.test.ts` + colocated
+  `src/ui/components/*/*.test.ts`. Runs in jsdom. ~200 tests.
+- **PHPUnit** — `tests/phpunit/tests/*.php`. Tagged `@group desktop-mode`.
+  Run from the Core test harness (`WP_TESTS_DIR`).
+- **E2E** — planned (Playwright). Nothing landed yet.
+
+## What breaks most often
+
+- **Circular imports** between `src/window/` helpers — fine at runtime
+  with function exports but TypeScript's module ordering can complain.
+  Keep side-effect-free type exports separate from function exports.
+- **jsdom gaps** — `scrollIntoView`, `CSSStyleSheet.replaceSync`,
+  `ResizeObserver` need mocks. Check `tests/vitest/helpers/` before
+  adding a fresh one.
+- **Vite IIFE** means dynamic `import()` flattens into the main
+  bundle. Vendor scripts (PixiJS) ship separately and inject via
+  `loadVendorScript` on first use — don't code-split inside `src/`.

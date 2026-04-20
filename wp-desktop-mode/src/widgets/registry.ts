@@ -13,6 +13,10 @@
  */
 
 import { applyFilters, HOOKS } from '../hooks';
+import {
+	collectRegistrationErrors,
+	logRegistrationErrors,
+} from '../registration-errors';
 import type { WidgetDef } from './types';
 
 /** Seed list — mutated by `register`, reset only in tests. */
@@ -24,13 +28,9 @@ const seed: WidgetDef[] = [];
  * plugins override a built-in if they really want to.
  */
 export function register( def: WidgetDef ): void {
-	if ( ! isValidDef( def ) ) {
-		if ( typeof console !== 'undefined' ) {
-			console.warn(
-				'[wp-desktop-mode] Ignored invalid widget registration:',
-				def,
-			);
-		}
+	const errors = collectRegistrationErrors< WidgetDef >( def, WIDGET_CHECKS );
+	if ( errors.length > 0 ) {
+		logRegistrationErrors( 'Widget', errors, def );
 		return;
 	}
 	const idx = seed.findIndex( ( w ) => w.id === def.id );
@@ -79,22 +79,37 @@ export function get( id: string ): WidgetDef | undefined {
  * layer and picker actually touch. Deeper correctness is the plugin
  * author's responsibility past this boundary.
  */
+const WIDGET_CHECKS = [
+	{
+		field: 'id',
+		message: 'missing or not a non-empty string',
+		valid: ( d: Partial< WidgetDef > ) =>
+			typeof d.id === 'string' && d.id !== '',
+	},
+	{
+		field: 'label',
+		message: 'missing or not a non-empty string',
+		valid: ( d: Partial< WidgetDef > ) =>
+			typeof d.label === 'string' && d.label !== '',
+	},
+	{
+		field: 'description',
+		message: 'not a string',
+		valid: ( d: Partial< WidgetDef > ) => typeof d.description === 'string',
+	},
+	{
+		field: 'icon',
+		message: 'missing or not a non-empty string',
+		valid: ( d: Partial< WidgetDef > ) =>
+			typeof d.icon === 'string' && d.icon !== '',
+	},
+	{
+		field: 'mount',
+		message: 'not a function',
+		valid: ( d: Partial< WidgetDef > ) => typeof d.mount === 'function',
+	},
+];
+
 function isValidDef( def: unknown ): def is WidgetDef {
-	if ( ! def || typeof def !== 'object' ) {
-		return false;
-	}
-	const d = def as Partial<WidgetDef>;
-	if ( typeof d.id !== 'string' || d.id === '' ) {
-		return false;
-	}
-	if ( typeof d.label !== 'string' || d.label === '' ) {
-		return false;
-	}
-	if ( typeof d.description !== 'string' ) {
-		return false;
-	}
-	if ( typeof d.icon !== 'string' || d.icon === '' ) {
-		return false;
-	}
-	return typeof d.mount === 'function';
+	return collectRegistrationErrors< WidgetDef >( def, WIDGET_CHECKS ).length === 0;
 }

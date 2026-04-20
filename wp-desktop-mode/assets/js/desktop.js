@@ -146,6 +146,14 @@ var wpDesktop = function(exports) {
      * original.
      */
     ARRANGE_SNAP_CELL_SIZE: "wp-desktop.arrange.snap.cell-size",
+    /**
+     * Action, fires when the user clicks a plugin-registered entry in
+     * the Arrange admin-bar submenu (items added via the
+     * `wp_desktop_arrange_menu_items` PHP filter). Payload `{ id }`
+     * where `id` is the item's `id` field as registered. Plugins
+     * subscribe here to run their custom arrangement logic.
+     */
+    ARRANGE_CUSTOM_ACTION: "wp-desktop.arrange.custom-action",
     // ------------------------------------------------------------------
     // Widgets — the right-side column. Widgets paint above the
     // wallpaper but beneath windows. Lifecycle mirrors canvas
@@ -4719,15 +4727,33 @@ var wpDesktop = function(exports) {
   _WpdTabs.styles = [tabsStyles];
   let WpdTabs = _WpdTabs;
   defineComponent("wpd-tabs", WpdTabs);
+  function collectRegistrationErrors(def, checks) {
+    if (!def || typeof def !== "object") {
+      return ["def (not an object)"];
+    }
+    const d = def;
+    const errors = [];
+    for (const check of checks) {
+      if (!check.valid(d)) {
+        errors.push(`${check.field} (${check.message})`);
+      }
+    }
+    return errors;
+  }
+  function logRegistrationErrors(kind, errors, def) {
+    if (typeof console === "undefined") {
+      return;
+    }
+    console.warn(
+      `[wp-desktop-mode] ${kind} registration rejected — fields: ` + errors.join(", ") + ".",
+      def
+    );
+  }
   const seed$1 = [];
   function register$1(def) {
-    if (!isValidDef$1(def)) {
-      if (typeof console !== "undefined") {
-        console.warn(
-          "[wp-desktop-mode] Ignored invalid wallpaper registration:",
-          def
-        );
-      }
+    const errors = collectRegistrationErrors(def, WALLPAPER_CHECKS);
+    if (errors.length > 0) {
+      logRegistrationErrors("Wallpaper", errors, def);
       return;
     }
     const idx = seed$1.findIndex((w) => w.id === def.id);
@@ -4759,27 +4785,43 @@ var wpDesktop = function(exports) {
   function get$1(id) {
     return all$1().find((w) => w.id === id);
   }
+  const WALLPAPER_CHECKS = [
+    {
+      field: "id",
+      message: "missing or not a non-empty string",
+      valid: (d) => typeof d.id === "string" && d.id !== ""
+    },
+    {
+      field: "label",
+      message: "missing or not a non-empty string",
+      valid: (d) => typeof d.label === "string" && d.label !== ""
+    },
+    {
+      field: "preview",
+      message: "missing or not a non-empty string",
+      valid: (d) => typeof d.preview === "string" && d.preview !== ""
+    },
+    {
+      field: "type",
+      message: 'must be "css" or "canvas"',
+      valid: (d) => d.type === "css" || d.type === "canvas"
+    },
+    {
+      field: "value/resolveValue/mount",
+      message: "css types need `value` or `resolveValue`; canvas types need `mount`",
+      valid: (d) => {
+        if (d.type === "css") {
+          return typeof d.value === "string" || typeof d.resolveValue === "function";
+        }
+        if (d.type === "canvas") {
+          return typeof d.mount === "function";
+        }
+        return true;
+      }
+    }
+  ];
   function isValidDef$1(def) {
-    if (!def || typeof def !== "object") {
-      return false;
-    }
-    const d = def;
-    if (typeof d.id !== "string" || d.id === "") {
-      return false;
-    }
-    if (typeof d.label !== "string" || d.label === "") {
-      return false;
-    }
-    if (typeof d.preview !== "string" || d.preview === "") {
-      return false;
-    }
-    if (d.type === "css") {
-      return typeof d.value === "string" || typeof d.resolveValue === "function";
-    }
-    if (d.type === "canvas") {
-      return typeof d.mount === "function";
-    }
-    return false;
+    return collectRegistrationErrors(def, WALLPAPER_CHECKS).length === 0;
   }
   const STORAGE_KEY = "wp-desktop-os-settings";
   const HD_MIN_WIDTH = 1920;
@@ -6054,13 +6096,9 @@ var wpDesktop = function(exports) {
   }
   const seed = [];
   function register(def) {
-    if (!isValidDef(def)) {
-      if (typeof console !== "undefined") {
-        console.warn(
-          "[wp-desktop-mode] Ignored invalid widget registration:",
-          def
-        );
-      }
+    const errors = collectRegistrationErrors(def, WIDGET_CHECKS);
+    if (errors.length > 0) {
+      logRegistrationErrors("Widget", errors, def);
       return;
     }
     const idx = seed.findIndex((w) => w.id === def.id);
@@ -6086,24 +6124,35 @@ var wpDesktop = function(exports) {
   function get(id) {
     return all().find((w) => w.id === id);
   }
+  const WIDGET_CHECKS = [
+    {
+      field: "id",
+      message: "missing or not a non-empty string",
+      valid: (d) => typeof d.id === "string" && d.id !== ""
+    },
+    {
+      field: "label",
+      message: "missing or not a non-empty string",
+      valid: (d) => typeof d.label === "string" && d.label !== ""
+    },
+    {
+      field: "description",
+      message: "not a string",
+      valid: (d) => typeof d.description === "string"
+    },
+    {
+      field: "icon",
+      message: "missing or not a non-empty string",
+      valid: (d) => typeof d.icon === "string" && d.icon !== ""
+    },
+    {
+      field: "mount",
+      message: "not a function",
+      valid: (d) => typeof d.mount === "function"
+    }
+  ];
   function isValidDef(def) {
-    if (!def || typeof def !== "object") {
-      return false;
-    }
-    const d = def;
-    if (typeof d.id !== "string" || d.id === "") {
-      return false;
-    }
-    if (typeof d.label !== "string" || d.label === "") {
-      return false;
-    }
-    if (typeof d.description !== "string") {
-      return false;
-    }
-    if (typeof d.icon !== "string" || d.icon === "") {
-      return false;
-    }
-    return typeof d.mount === "function";
+    return collectRegistrationErrors(def, WIDGET_CHECKS).length === 0;
   }
   let active = null;
   function openWidgetPicker(options) {
@@ -7555,6 +7604,8 @@ var wpDesktop = function(exports) {
       dock,
       saveSession,
       hooks: rawHooks(),
+      HOOKS,
+      isActive: () => !!document.getElementById("wp-desktop-shell"),
       registerWallpaper: (def) => {
         register$1(def);
         osSettings.apply();
@@ -7695,7 +7746,14 @@ var wpDesktop = function(exports) {
         let url;
         try {
           url = new URL(rawHref, window.location.href);
-        } catch {
+        } catch (err) {
+          if (typeof console !== "undefined") {
+            console.warn(
+              "[wp-desktop-mode] Couldn’t parse href; letting the browser handle the click:",
+              rawHref,
+              err
+            );
+          }
           return;
         }
         if (url.origin !== window.location.origin) {
@@ -7704,7 +7762,14 @@ var wpDesktop = function(exports) {
         let adminPath;
         try {
           adminPath = new URL(config.adminUrl).pathname;
-        } catch {
+        } catch (err) {
+          if (typeof console !== "undefined") {
+            console.error(
+              "[wp-desktop-mode] config.adminUrl is not a valid URL; falling back to /wp-admin/:",
+              config.adminUrl,
+              err
+            );
+          }
           adminPath = "/wp-admin/";
         }
         if (!url.pathname.startsWith(adminPath)) {

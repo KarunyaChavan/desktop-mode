@@ -10,6 +10,15 @@ If something you need isn't here, open an issue. New hooks are welcome — our r
 
 > **Looking for JavaScript hooks?** The browser-side shell exposes WordPress-style filters and actions via `window.wp.hooks` under the `wp-desktop.*` namespace — including hooks for wallpaper registration, window lifecycle, and the animated logo wallpaper's visibility events. See the [JavaScript Reference](./javascript-reference.md#4-hooks--wp-desktop) for the full catalog.
 
+### PHP vs. JS hook parity
+
+The two hook surfaces are **deliberately not mirrored** — they target different extension points:
+
+- **PHP hooks** (this file) fire on the server: shell mount, chromeless render, dock-items composition, portal / session logic. If you're changing server-rendered state, you want PHP.
+- **JS hooks** (javascript-reference.md) fire in the browser: window lifecycle, drag / resize, overview, arrange actions, wallpaper + widget mount lifecycle, virtual-desktop transitions. If you're reacting to user interaction, you want JS.
+
+A few concepts ARE mirrored (e.g. `wp_desktop_dock_items` PHP filter ↔ `wp-desktop.widgets` JS filter — both shape registries), but most aren't. Don't be surprised if a JS hook has no PHP counterpart or vice versa — that's the design.
+
 ---
 
 ## Actions

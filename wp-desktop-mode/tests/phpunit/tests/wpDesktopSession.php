@@ -237,6 +237,79 @@ class Tests_DesktopMode_WpDesktopSession extends WP_UnitTestCase {
 	}
 
 	/**
+	 * Two tabs open for the same user can race each other — one takes
+	 * a snapshot at T, another at T+1. Whichever the server processes
+	 * LAST used to win unconditionally, clobbering the newer state.
+	 * The `updated` field on the incoming payload is now compared to
+	 * the stored value; stale writes (incoming < stored) are rejected.
+	 *
+	 * @covers ::wpdm_save_session
+	 */
+	public function test_save_session_rejects_stale_write() {
+		$fresh = array(
+			'windows' => array( $this->make_window() ),
+			'focused' => 'wp-window-edit-php',
+			'updated' => 2_000_000_000, // far future
+		);
+		$this->assertTrue( wpdm_save_session( self::$admin_id, $fresh ) );
+
+		$stale = array(
+			'windows' => array(),
+			'focused' => '',
+			'updated' => 1_000_000_000, // before the stored one
+		);
+		$this->assertFalse(
+			wpdm_save_session( self::$admin_id, $stale ),
+			'Stale write should be rejected so fresher state survives.'
+		);
+
+		// The windows array from the fresh write must still be intact.
+		$stored = wpdm_get_session( self::$admin_id );
+		$this->assertCount( 1, $stored['windows'] );
+	}
+
+	/**
+	 * Equal timestamps are accepted — two saves landing in the same
+	 * second is a tie, and rejecting either would silently drop user
+	 * work on a fast system with clock second-granularity.
+	 *
+	 * @covers ::wpdm_save_session
+	 */
+	public function test_save_session_accepts_equal_timestamp() {
+		$first = array(
+			'windows' => array( $this->make_window() ),
+			'focused' => 'wp-window-edit-php',
+			'updated' => 1_500_000_000,
+		);
+		$second = array(
+			'windows' => array( $this->make_window( array( 'id' => 'wp-window-upload-php', 'url' => admin_url( 'upload.php' ), 'title' => 'Media' ) ) ),
+			'focused' => 'wp-window-upload-php',
+			'updated' => 1_500_000_000, // same timestamp
+		);
+		$this->assertTrue( wpdm_save_session( self::$admin_id, $first ) );
+		$this->assertTrue( wpdm_save_session( self::$admin_id, $second ) );
+
+		$stored = wpdm_get_session( self::$admin_id );
+		$this->assertSame( 'wp-window-upload-php', $stored['windows'][0]['id'] );
+	}
+
+	/**
+	 * Missing `updated` on the incoming payload should not block the
+	 * save — first-write-ever and edge cases where the client couldn't
+	 * compute a timestamp stay functional.
+	 *
+	 * @covers ::wpdm_save_session
+	 */
+	public function test_save_session_accepts_missing_timestamp() {
+		$payload = array(
+			'windows' => array( $this->make_window() ),
+			'focused' => 'wp-window-edit-php',
+			// no `updated`
+		);
+		$this->assertTrue( wpdm_save_session( self::$admin_id, $payload ) );
+	}
+
+	/**
 	 * @covers ::wpdm_clear_session
 	 */
 	public function test_clear_session_removes_meta() {

@@ -11,7 +11,7 @@
  */
 
 import { WindowManager } from './window-manager';
-import { Dock } from './dock';
+import { Dock, type SystemDockItem } from './dock';
 import { OsSettings } from './settings';
 import { deriveWindowId, urlMatchKey } from './utils';
 import {
@@ -30,8 +30,16 @@ import {
 	type WallpaperSurface,
 } from './wallpapers/surfaces';
 import { WidgetLayer } from './widgets/layer';
+import {
+	cloneTemplate,
+	createNativeWindowSync,
+	createRegisterWindow,
+	onWindow,
+	type WindowLifecycleHandlers,
+} from './native-windows';
 import { registerBuiltInWidgets } from './widgets/built-in';
 import * as widgetRegistry from './widgets/registry';
+import { WPD_COMPONENT_TAGS } from './ui/components';
 import {
 	registerModule,
 	loadModules,
@@ -39,7 +47,12 @@ import {
 } from './modules/registry';
 import type { WallpaperDef } from './wallpapers/types';
 import './plugins';
-import type { DesktopConfig, SessionWindow } from './types';
+import type {
+	DesktopConfig,
+	NativeWindowDef,
+	SessionWindow,
+} from './types';
+import type { Window as DesktopWindow } from './window';
 
 /** Stable id for the OS Settings native window. */
 const OS_SETTINGS_WINDOW_ID = 'wp-desktop-os-settings';
@@ -98,6 +111,55 @@ export interface WpDesktopPublicApi {
 	 * quick-start widget is present on a new user's first visit.
 	 */
 	widgetLayer: WidgetLayer | null;
+	/**
+	 * Register a shell-level system tile (a JS-owned launcher that
+	 * isn't part of the admin menu — Jorvy, a quick-notes panel, a
+	 * native-window tool) on one of the two rails.
+	 *
+	 * Default placement is `'taskbar'` — the bottom macOS-style pill
+	 * that already hosts installed-plugin menus. That keeps the
+	 * left-edge dock reserved for core WordPress pages + shell-owned
+	 * affordances (OS Settings). Plugins that genuinely belong on
+	 * the left rail (rare) can pass `placement: 'dock'` explicitly.
+	 *
+	 * When a tile lands on the taskbar and the taskbar was empty
+	 * (no plugin-menu items, no prior system tiles), the bar is
+	 * auto-unhidden. Returns the resolved placement for callers
+	 * that want to log / persist it.
+	 */
+	registerSystemTile: (
+		item: SystemDockItem,
+		placement?: 'dock' | 'taskbar',
+	) => 'dock' | 'taskbar';
+	/**
+	 * Open a native window from a compact {@link NativeWindowDef}
+	 * with sensible shell-provided defaults (`native: true`,
+	 * fallback `#<id>` url, default min-size, default initial
+	 * size). Idempotent on `id` — opening a window that's already
+	 * open focuses the existing instance instead of stacking a
+	 * duplicate.
+	 *
+	 * Prefer this over direct `windowManager.open({ native: true,
+	 * ... })` calls: plugins declare only what they care about, and
+	 * the shell fills in the boilerplate.
+	 */
+	registerWindow: ( def: NativeWindowDef ) => DesktopWindow;
+	/**
+	 * Clone a `<template>` element's contents into a fresh
+	 * `DocumentFragment`. Convenience wrapper — accepts either the
+	 * element's DOM id or the element itself. Throws if the
+	 * reference doesn't resolve to a template.
+	 */
+	cloneTemplate: ( template: string | HTMLTemplateElement ) => DocumentFragment;
+	/**
+	 * Subscribe to a specific window's lifecycle events by id.
+	 * Returns an unsubscribe function; also auto-unsubscribes when
+	 * the window closes. See {@link WindowLifecycleHandlers}.
+	 */
+	onWindow: (
+		id: string,
+		handlers: WindowLifecycleHandlers,
+	) => () => void;
 	/** Load a vendor script once, memoized. See `src/wallpapers/vendor-loader.ts`. */
 	loadVendorScript: ( url: string ) => Promise<void>;
 	/**
@@ -410,6 +472,50 @@ function init(): void {
 		void setDefaultWindow( alreadyDefault ? null : winUrl );
 	};
 
+	/**
+	 * Place a system tile on the requested rail. Extracted so
+	 * `registerSystemTile` can do its single taskbar-unhide + hook
+	 * fire uniformly regardless of the placement branch it takes.
+	 * Returns the resolved placement — it may differ from the
+	 * requested value when the taskbar element is missing.
+	 */
+	const placeSystemTile = (
+		item: SystemDockItem,
+		placement: 'dock' | 'taskbar',
+	): 'dock' | 'taskbar' => {
+		if ( placement === 'dock' ) {
+			dock?.appendSystemItem( item );
+			return 'dock';
+		}
+		if ( ! taskbar ) {
+			dock?.appendSystemItem( item );
+			return 'dock';
+		}
+		taskbar.appendSystemItem( item );
+		if ( taskbarEl && taskbarEl.hidden ) {
+			taskbarEl.hidden = false;
+			desktopArea.classList.add( 'wp-desktop-area--with-taskbar' );
+		}
+		return 'taskbar';
+	};
+
+	// Native-window sync — the server-declared list from
+	// `wp_register_desktop_window()` drives system-tile lifecycle
+	// for plugin-owned native windows. At boot we prime tiles from
+	// `config.nativeWindows`; the live-refresh path calls the same
+	// syncer with the fresh payload so activation / deactivation
+	// maps to tile add / remove without any shell reload.
+	const syncNativeWindows = createNativeWindowSync( {
+		manager,
+		dock,
+		taskbar,
+		taskbarEl,
+		desktopArea,
+	} );
+	void syncNativeWindows(
+		Array.isArray( config.nativeWindows ) ? config.nativeWindows : [],
+	);
+
 	// Live menu refresh — rebuild both rails when a plugin activation
 	// or deactivation lands in any windowed `plugins.php`. Without
 	// this the dock + taskbar reflect the server-side `$menu` at
@@ -420,7 +526,14 @@ function init(): void {
 	// Wired BEFORE the `window.wp.desktop` assignment so the returned
 	// refresh function is available to expose in the public API in
 	// the same statement.
-	const refreshMenu = bindMenuRefresh( dock, taskbar, taskbarEl, desktopArea, config );
+	const refreshMenu = bindMenuRefresh(
+		dock,
+		taskbar,
+		taskbarEl,
+		desktopArea,
+		config,
+		syncNativeWindows,
+	);
 
 	// Expose the public API on `window.wp.desktop`. The `hooks` field
 	// aliases `window.wp.hooks` so plugins have one idiomatic entry
@@ -454,6 +567,14 @@ function init(): void {
 		widgetLayer,
 		loadVendorScript,
 		getWallpaperSurfaces: () => collectWallpaperSurfaces( manager ),
+		registerWindow: createRegisterWindow( manager ),
+		cloneTemplate,
+		onWindow,
+		registerSystemTile: ( item, placement = 'taskbar' ) => {
+			const resolved = placeSystemTile( item, placement );
+			doAction( HOOKS.DOCK_ITEM_APPENDED, { id: item.id, placement: resolved } );
+			return resolved;
+		},
 		registerModule,
 		loadModules,
 		whenReady,
@@ -467,6 +588,12 @@ function init(): void {
 	// populated so subscribers see the full public API. Subscribers
 	// that later re-apply the wallpaper pick up their own
 	// registrations via registry re-read.
+	// Component-registry signal — fires before `INIT` so plugin
+	// subscribers that need the component kit available can subscribe
+	// to either hook (components first, init second) and rely on the
+	// ordering.
+	doAction( HOOKS.COMPONENTS_REGISTERED, { tags: [ ...WPD_COMPONENT_TAGS ] } );
+
 	doAction( HOOKS.INIT, { config } );
 
 	// Re-apply the wallpaper once init subscribers have had a chance
@@ -1012,6 +1139,9 @@ function bindMenuRefresh(
 	taskbarEl: HTMLElement | null,
 	desktopArea: HTMLElement,
 	config: DesktopConfig,
+	syncNativeWindows: (
+		list: import( './types' ).NativeWindowServerEntry[],
+	) => Promise< void >,
 ): () => Promise<void> {
 	// Shared applier — takes a freshly-split payload and rebuilds
 	// both rails. Extracted so the message-with-payload path (no
@@ -1019,9 +1149,11 @@ function bindMenuRefresh(
 	const applyPayload = ( payload: {
 		dockItems?: unknown;
 		taskbarItems?: unknown;
+		nativeWindows?: unknown;
 	} ): void => {
 		const dockItems = payload.dockItems;
 		const taskbarItems = payload.taskbarItems;
+		const nativeWindows = payload.nativeWindows;
 
 		// Guard: an empty `dockItems` list is NEVER legitimate —
 		// WordPress Core always ships Dashboard, which lands on the
@@ -1055,6 +1187,19 @@ function bindMenuRefresh(
 				taskbarItems.length > 0,
 			);
 		}
+
+		// Native-window sync — server registry is the source of
+		// truth for plugin-owned native windows. Tiles added
+		// server-side (plugin activated via `wp_register_desktop_window`)
+		// appear; tiles whose plugin deactivated disappear. All
+		// without a shell reload.
+		if ( Array.isArray( nativeWindows ) ) {
+			void syncNativeWindows(
+				nativeWindows as import( './types' ).NativeWindowServerEntry[],
+			);
+			config.nativeWindows =
+				nativeWindows as DesktopConfig[ 'nativeWindows' ];
+		}
 	};
 
 	const refresh = async (): Promise<void> => {
@@ -1073,6 +1218,7 @@ function bindMenuRefresh(
 			const data = ( await res.json() ) as {
 				dockItems?: DesktopConfig[ 'dockItems' ];
 				taskbarItems?: DesktopConfig[ 'taskbarItems' ];
+				nativeWindows?: DesktopConfig[ 'nativeWindows' ];
 			};
 			applyPayload( data );
 		} catch ( err ) {
@@ -1093,7 +1239,11 @@ function bindMenuRefresh(
 		}
 		const data = e.data as {
 			type?: string;
-			payload?: { dockItems?: unknown; taskbarItems?: unknown };
+			payload?: {
+				dockItems?: unknown;
+				taskbarItems?: unknown;
+				nativeWindows?: unknown;
+			};
 		} | null;
 		if ( ! data || data.type !== 'wp-desktop-plugins-changed' ) {
 			return;

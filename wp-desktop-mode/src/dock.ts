@@ -197,6 +197,33 @@ export class Dock {
 	}
 
 	/**
+	 * Remove a previously-registered system item. Used by the
+	 * server-driven native-window sync path — when a plugin is
+	 * deactivated, its native-window entry disappears from the
+	 * server's payload and the shell calls this to pull the tile
+	 * back off the rail without a reload.
+	 *
+	 * Idempotent: an unknown id is a silent no-op. The system
+	 * separator is kept in place as long as at least one system
+	 * item remains; removing the last system item also strips the
+	 * separator so the rail doesn't dangle a divider under nothing.
+	 */
+	public removeSystemItem( id: string ): void {
+		const tile = this.systemItemElements.get( id );
+		if ( ! tile ) {
+			return;
+		}
+		tile.remove();
+		this.systemItemElements.delete( id );
+		this.systemItems = this.systemItems.filter( ( s ) => s.id !== id );
+
+		if ( this.systemItemElements.size === 0 && this.systemSeparator ) {
+			this.systemSeparator.remove();
+			this.systemSeparator = null;
+		}
+	}
+
+	/**
 	 * Append a JS-registered system item to the dock.
 	 *
 	 * System items render after the menu-derived items, separated by a

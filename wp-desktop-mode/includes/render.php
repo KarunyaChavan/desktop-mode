@@ -105,9 +105,12 @@ function wpdm_enqueue_assets() {
 	// `wpdm_build_menu_payload` is shared with the REST menu endpoint
 	// so a live refresh (post plugin-activation) produces the same
 	// split the boot payload did.
-	$menu_payload  = wpdm_build_menu_payload();
-	$dock_items    = $menu_payload['dockItems'];
-	$taskbar_items = $menu_payload['taskbarItems'];
+	$menu_payload   = wpdm_build_menu_payload();
+	$dock_items     = $menu_payload['dockItems'];
+	$taskbar_items  = $menu_payload['taskbarItems'];
+	$native_windows = isset( $menu_payload['nativeWindows'] )
+		? $menu_payload['nativeWindows']
+		: array();
 
 	// Build the current page URL from $pagenow + $_GET. Strip the portal
 	// marker so the derived window ID matches what the dock would produce
@@ -134,6 +137,7 @@ function wpdm_enqueue_assets() {
 	 *     @type string $colorScheme  The active admin color scheme.
 	 *     @type array  $dockItems    Dock items derived from the admin menu, filtered to CORE WordPress pages (Dashboard, Posts, Plugins, Users, Settings, CPTs…).
 	 *     @type array  $taskbarItems Plugin-contributed top-level menu items (admin.php?page=*). Rendered in the bottom taskbar — see `wpdm_dock_placement` + `wp_desktop_dock_placement` for the routing heuristic.
+	 *     @type array  $nativeWindows Server-declared native windows (via `wp_register_desktop_window`). Shell registers + syncs tiles based on this list — activation/deactivation is a diff without shell reload.
 	 *     @type array  $session      Saved session (windows, focused, updated).
 	 *     @type string $sessionUrl       REST endpoint for saving the session.
 	 *     @type string $mediaUrl         REST endpoint for media uploads (wp/v2/media).
@@ -157,6 +161,7 @@ function wpdm_enqueue_assets() {
 			'colorScheme'      => sanitize_html_class( get_user_option( 'admin_color' ), 'fresh' ),
 			'dockItems'        => $dock_items,
 			'taskbarItems'     => $taskbar_items,
+			'nativeWindows'    => $native_windows,
 			'session'          => wpdm_get_session( get_current_user_id() ),
 			'sessionUrl'       => esc_url_raw( rest_url( 'wp-desktop/v1/session' ) ),
 			'mediaUrl'         => esc_url_raw( rest_url( 'wp/v2/media' ) ),

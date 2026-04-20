@@ -553,6 +553,56 @@ describe( 'widget chrome — drag threshold', () => {
 	} );
 } );
 
+describe( 'Dock.appendSystemItem placement', () => {
+	beforeEach( () => {
+		installHooksStub();
+	} );
+	afterEach( () => {
+		clearHooksStub();
+		document.body.innerHTML = '';
+	} );
+
+	test( 'vertical and horizontal Docks both accept system items', async () => {
+		const { Dock } = await import( '../../src/dock' );
+		const manager = {
+			getFocused: () => null,
+			getAllByBaseId: () => [],
+			getById: () => undefined,
+			getActiveDesktopId: () => 'default-1',
+		} as unknown as ConstructorParameters< typeof Dock >[ 1 ];
+
+		const dockEl = document.createElement( 'nav' );
+		const taskbarEl = document.createElement( 'nav' );
+		document.body.appendChild( dockEl );
+		document.body.appendChild( taskbarEl );
+
+		const dock = new Dock( dockEl, manager, [], 'http://x/wp-admin/', 'left' );
+		const taskbar = new Dock( taskbarEl, manager, [], 'http://x/wp-admin/', 'bottom' );
+
+		dock.appendSystemItem( {
+			id: 'os-settings',
+			title: 'OS Settings',
+			icon: 'dashicons-admin-generic',
+			onOpen: () => undefined,
+		} );
+		taskbar.appendSystemItem( {
+			id: 'jorvy',
+			title: 'Jorvy',
+			icon: 'dashicons-star-filled',
+			onOpen: () => undefined,
+		} );
+
+		const dockSys = dockEl.querySelector( '[data-system-id="os-settings"]' );
+		const taskSys = taskbarEl.querySelector( '[data-system-id="jorvy"]' );
+		expect( dockSys ).not.toBeNull();
+		expect( taskSys ).not.toBeNull();
+
+		// Separator renders on BOTH rails when a system item arrives.
+		expect( dockEl.querySelector( '.wp-desktop-dock__separator' ) ).not.toBeNull();
+		expect( taskbarEl.querySelector( '.wp-desktop-dock__separator' ) ).not.toBeNull();
+	} );
+} );
+
 describe( 'WidgetLayer.ensureMounted', () => {
 	beforeEach( () => {
 		installHooksStub();

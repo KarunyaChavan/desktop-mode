@@ -593,9 +593,96 @@ function wpdm_build_menu_payload() {
 	);
 
 	return array(
-		'dockItems'    => $dock,
-		'taskbarItems' => $taskbar,
+		'dockItems'     => $dock,
+		'taskbarItems'  => $taskbar,
+		'nativeWindows' => wpdm_build_native_windows_payload(),
 	);
+}
+
+/**
+ * Serialize the server-declared native-window registry into the
+ * payload shape the shell consumes. For each entry registered via
+ * `wp_register_desktop_window()`, we capture: the window's
+ * metadata (id/title/icon/placement/dimensions/autofocus), the
+ * rendered template HTML (by running the template callback into an
+ * output buffer), and the URL of the enqueued script handle (so
+ * mid-session activations can load the plugin's JS dynamically
+ * without a full shell reload).
+ *
+ * @since 0.10.0
+ *
+ * @return array[]
+ */
+function wpdm_build_native_windows_payload() {
+	if ( ! function_exists( 'wpdm_native_window_registry' ) ) {
+		return array();
+	}
+	$registry = wpdm_native_window_registry();
+	if ( ! is_array( $registry ) ) {
+		return array();
+	}
+
+	$out = array();
+	foreach ( $registry as $entry ) {
+		if ( ! is_callable( $entry['template'] ) ) {
+			continue;
+		}
+
+		// Capture the template HTML. The template callback echoes;
+		// we buffer so the shell receives a string it can inject
+		// into its own document as a `<template>` when a plugin
+		// gets activated mid-session.
+		ob_start();
+		call_user_func( $entry['template'] );
+		$template_html = ob_get_clean();
+
+		// Resolve script handle → URL so the shell can inject a
+		// `<script>` tag dynamically on mid-session activation.
+		// `wp_scripts()->registered[<handle>]->src` is the absolute
+		// path WordPress would have emitted during the normal
+		// enqueue. Missing handle → empty string; shell treats
+		// that as "template only, no script to load."
+		$script_url = '';
+		$script_handle = isset( $entry['script'] ) ? (string) $entry['script'] : '';
+		if ( '' !== $script_handle ) {
+			$wp_scripts = wp_scripts();
+			if ( $wp_scripts && isset( $wp_scripts->registered[ $script_handle ] ) ) {
+				$registered = $wp_scripts->registered[ $script_handle ];
+				$src = is_string( $registered->src ) ? $registered->src : '';
+				if ( '' !== $src ) {
+					// Prefer the fully-qualified URL — admin pages
+					// live at the admin origin so a protocol-relative
+					// shouldn't bite us, but explicit is better.
+					$resolved = $src;
+					if ( 0 === strpos( $resolved, '/' ) && 0 !== strpos( $resolved, '//' ) ) {
+						$resolved = site_url( $resolved );
+					}
+					if ( ! empty( $registered->ver ) ) {
+						$resolved = add_query_arg( 'ver', $registered->ver, $resolved );
+					}
+					$script_url = $resolved;
+				}
+			}
+		}
+
+		$out[] = array(
+			'id'           => $entry['id'],
+			'title'        => $entry['title'],
+			'icon'         => $entry['icon'],
+			'placement'    => $entry['placement'],
+			'width'        => $entry['width'],
+			'height'       => $entry['height'],
+			'minWidth'     => $entry['min_width'],
+			'minHeight'    => $entry['min_height'],
+			'autofocus'    => $entry['autofocus'],
+			'templateId'   => 'wpdm-native-window-' . $entry['id'],
+			'templateHtml' => $template_html,
+			'scriptUrl'    => $script_url,
+			'scriptHandle' => $script_handle,
+		);
+	}
+
+	return $out;
 }
 
 /**

@@ -216,7 +216,12 @@ export function createWindowElement( config: WindowConfig ): HTMLElement {
 		iframe.className = 'wp-desktop-window__iframe';
 		iframe.setAttribute( 'name', `wp-desktop-frame-${ config.id }` );
 
-		const chromelessSrc = withChromelessParam( config.url );
+		// `config.url` is required for iframe windows — enforced at
+		// the type level (it's only marked optional to cover the
+		// native-window case, which never reaches this branch).
+		const chromelessSrc = config.url
+			? withChromelessParam( config.url )
+			: null;
 		iframe.src = chromelessSrc ?? 'about:blank';
 
 		body.appendChild( iframe );
@@ -254,7 +259,7 @@ export function createWindowElement( config: WindowConfig ): HTMLElement {
 		// translators: %s is the window's admin-page title (e.g., "Posts")
 		tabs.setAttribute( 'aria-label', sprintf( __( '%s sub-pages' ), config.title ) );
 
-		if ( config.submenu && config.submenu.length > 0 ) {
+		if ( config.submenu && config.submenu.length > 0 && config.url ) {
 			const initialKey = urlMatchKey( config.url );
 			for ( const sub of config.submenu ) {
 				const tab = document.createElement( 'button' );

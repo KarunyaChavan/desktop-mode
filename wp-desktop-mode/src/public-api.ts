@@ -41,8 +41,12 @@ export type {
 	Desktop,
 	DesktopConfig,
 	DockItemConfig,
+	MonitorEntry,
+	NativeWindowDef,
+	NativeWindowServerEntry,
 	Session,
 	SessionWindow,
+	VisibleWindowRect,
 	WindowConfig,
 	WindowSnapshot,
 	WindowState,
@@ -107,6 +111,8 @@ export {
 	didAction,
 	doAction,
 	rawHooks,
+	removeAction,
+	removeFilter,
 	whenReady,
 } from './hooks';
 
@@ -115,4 +121,69 @@ export {
 
 export type { Window } from './window';
 export type { WindowManager } from './window-manager';
-export type { Dock } from './dock';
+export type { Dock, DockOrientation, SystemDockItem } from './dock';
+export type { WidgetLayer } from './widgets/layer';
+
+// ----- Native window helpers -----
+
+/**
+ * Native-window convenience wrappers. `registerWindow` is a compact
+ * alias for the boilerplate-heavy `windowManager.open({ native: true, … })`
+ * pattern; `cloneTemplate` short-circuits the `<template>`-element
+ * cloning dance every native window would otherwise inline.
+ */
+export {
+	cloneTemplate,
+	createRegisterWindow,
+	onWindow,
+} from './native-windows';
+
+export type { WindowLifecycleHandlers } from './native-windows';
+
+// ----- Wallpaper surfaces (collision-aware wallpapers) -----
+
+export type { WallpaperSurface } from './wallpapers/surfaces';
+
+// ----- UI component kit (Stable) -----
+//
+// Every component listed below defines itself on
+// `customElements` via side-effects at import time — importing
+// this barrel from a plugin's bundle registers every tag. The
+// classes are also named exports so plugins that need to
+// subclass or type-assert them can.
+//
+// Each component is considered **Stable**: attribute names,
+// event contracts, and `::part()` anchors won't break within a
+// major release without a deprecation notice first.
+
+export {
+	WpdButton,
+	WpdCheckboxLabel,
+	WpdCluster,
+	WpdColorField,
+	WpdDisplay,
+	WpdEmptyState,
+	WpdGrid,
+	WpdIcon,
+	WpdKey,
+	WpdMenu,
+	WpdMenuItem,
+	WpdPanel,
+	WpdRangeField,
+	WpdSection,
+	WpdSegment,
+	WpdSegmented,
+	WpdStack,
+	WpdSwatch,
+	WpdSwatchGrid,
+	WpdTab,
+	WpdTabChip,
+	WpdTabs,
+	WpdToast,
+	WpdToastContainer,
+	WpdWindowButton,
+} from './ui/components';
+
+// Stable variant enum for <wpd-button> — plugins can narrow props
+// against the recognised set rather than hard-coding strings.
+export type { WpdButtonVariant } from './ui/components/wpd-button/wpd-button';

@@ -619,6 +619,7 @@ wp.desktop.registerWallpaper( {
 | `taskbar` | Stable | Bottom-edge Dock instance (null if no element or no plugin menus routed to taskbar) |
 | `registerWallpaper( def )` | Stable | Add a wallpaper to the registry + re-apply |
 | `registerWidget( def )` | Stable | Add a widget to the registry |
+| `registerSystemTile( item, placement? )` | Stable | Add a JS-owned launcher tile to the taskbar (default) or dock. Returns the resolved placement. See "System tiles" below. |
 | `loadVendorScript( url )` | Stable | Memoized `<script>` injector. Low-level; most plugins use `needs` instead. |
 | `getWallpaperSurfaces()` | Stable | Live `WallpaperSurface[]` for collision-aware wallpapers. See "Wallpaper surfaces" below. |
 | `registerModule( def )` | Stable | Register a shared vendor library under a stable id. |
@@ -627,6 +628,48 @@ wp.desktop.registerWallpaper( {
 | `refreshMenu()` | Stable | Force a refetch of the live admin-menu split. Auto-fired on plugin activation / deactivation. |
 | `setDefaultWindow( url \| null )` | Stable | Update the user's "open on startup" preference. |
 | `config` | Stable | The `DesktopConfig` that booted the shell |
+
+### System tiles
+
+A **system tile** is a JS-owned launcher that isn't part of the admin menu — Jorvy, a plugin's native-window quick tool, a custom shortcut. The shell keeps these on one of the two rails:
+
+- **Taskbar (default for plugins)** — bottom macOS-style pill, alongside installed-plugin admin menus.
+- **Dock** — left-edge rail, reserved for core WordPress and shell-owned affordances like OS Settings.
+
+Register via `wp.desktop.registerSystemTile()`:
+
+```javascript
+wp.desktop.whenReady( () => {
+    wp.desktop.registerSystemTile( {
+        id:     'jorvy',
+        title:  'Jorvy',
+        icon:   'dashicons-star-filled',
+        onOpen: () => {
+            wp.desktop.windowManager.open( {
+                id: 'jorvy',
+                url: '#jorvy',
+                title: 'Jorvy',
+                icon: 'dashicons-star-filled',
+                native: true,
+                render: ( body ) => { /* paint the native window body */ },
+                width: 360,
+                height: 240,
+                minWidth: 280,
+                minHeight: 200,
+            } );
+        },
+        isOpen: () => !! wp.desktop.windowManager.getById( 'jorvy' ),
+    } );
+    // Returns 'taskbar' by default. Pass 'dock' explicitly for the
+    // left rail (rare — reserved for shell-owned tiles).
+} );
+```
+
+**Why the default is `taskbar`:** plugin-contributed admin menus live in the bottom pill already (see `wp_desktop_dock_placement`). Putting plugin-contributed shell launchers next to them keeps "everything plugin" in one place and keeps the left dock focused on core WP. If you want the left rail, pass `placement: 'dock'` explicitly — the shell will honor it without coercion.
+
+**Taskbar auto-unhide.** When a system tile lands on a previously-empty taskbar (no plugin menus, no prior tiles), the rail automatically un-hides and the desktop area picks up the `--with-taskbar` CSS modifier. Subsequent tiles reuse the already-shown pill.
+
+---
 
 ### Wallpaper surfaces
 

@@ -16,7 +16,7 @@
  */
 
 import type { WindowConfig, WindowState } from './../types';
-import { HOOKS, doAction } from './../hooks';
+import { HOOKS, applyFilters, doAction } from './../hooks';
 import { __ } from './../i18n';
 // Register the window-chrome atoms — no named import needed, the
 // side-effect `defineComponent(...)` calls wire them up.
@@ -183,6 +183,15 @@ export class Window {
 	 */
 	public _boundOnDocumentPointerDown: ( ( e: PointerEvent ) => void ) | null = null;
 
+	/**
+	 * ResizeObserver watching the body element. Fires the inline
+	 * `config.onResize` callback AND the `WINDOW_BODY_RESIZED` hook
+	 * on every size change. Null when the environment lacks
+	 * ResizeObserver (old browsers, jsdom without a shim).
+	 * @internal
+	 */
+	public _bodyResizeObserver: ResizeObserver | null = null;
+
 	constructor( config: WindowConfig ) {
 		this.id = config.id;
 		this.config = config;
@@ -200,13 +209,75 @@ export class Window {
 		// render() before the opening animation so the first frame
 		// shows the rendered UI rather than an empty flash.
 		if ( config.native && config.render ) {
-			const body = this.element.querySelector(
+			const rawBody = this.element.querySelector(
 				'.wp-desktop-window__body',
 			) as HTMLElement | null;
-			if ( body ) {
+			if ( rawBody ) {
+				// `before-render` filter — lets subscribers inject a
+				// wrapper around the body (a surrounding `<wpd-panel>`,
+				// a theming shim, a dev-time debug outline) before the
+				// plugin's own render runs. Typed as returning
+				// `HTMLElement` so a filter that returns garbage
+				// coerces back to the original body.
+				const filtered = applyFilters(
+					HOOKS.NATIVE_WINDOW_BEFORE_RENDER,
+					rawBody,
+					{ windowId: this.id, config },
+				);
+				const body = filtered instanceof HTMLElement ? filtered : rawBody;
 				config.render( body );
+				doAction( HOOKS.NATIVE_WINDOW_AFTER_RENDER, {
+					windowId: this.id,
+					body,
+					config,
+				} );
+
+				// Auto-focus — deferred a frame so any layout side-
+				// effects of `render()` (measuring, wiring, adding
+				// disabled attrs) settle before `.focus()` resolves.
+				// `true` focuses the body itself (body must be
+				// tabbable — we bump its `tabIndex` temporarily).
+				// A string is a CSS selector resolved against the
+				// body.
+				if ( config.autofocus ) {
+					requestAnimationFrame( () => {
+						if ( this._isDestroyed ) {
+							return;
+						}
+						if ( typeof config.autofocus === 'string' ) {
+							const target = body.querySelector< HTMLElement >(
+								config.autofocus,
+							);
+							target?.focus();
+							return;
+						}
+						const hadTabIndex = body.hasAttribute( 'tabindex' );
+						if ( ! hadTabIndex ) {
+							body.tabIndex = -1;
+						}
+						body.focus();
+						if ( ! hadTabIndex ) {
+							// Leave `tabindex=-1` in place so the body
+							// stays programmatically focusable — a -1
+							// node is reachable via `.focus()` but
+							// never lands in the user's Tab order,
+							// which is exactly what "autofocus the
+							// body" wants.
+						}
+					} );
+				}
 			}
 		}
+
+		// Body-resize observer — fires inline `onResize( w, h )` +
+		// the `WINDOW_BODY_RESIZED` hook whenever the
+		// `.wp-desktop-window__body` element's dimensions change.
+		// Measured on the BODY (not the outer window) so subscribers
+		// get the paintable area with title-bar + tab-strip already
+		// subtracted, matching what a canvas inside the body reads.
+		// Attached for both native and iframe windows — either kind
+		// may host content that needs to react to size changes.
+		this._bodyResizeObserver = this.installBodyResizeObserver();
 
 		// Session-restored minimized windows must paint already-minimized
 		// on the first frame — otherwise the user sees the opening fade-in
@@ -340,7 +411,11 @@ export class Window {
 	 */
 	public getCurrentUrl(): string {
 		if ( ! this.iframe ) {
-			return this.config.url;
+			// Native windows default to a `#<id>` URL when the
+			// caller didn't supply one. `getCurrentUrl()` is read
+			// by session persistence + bookmarkable-state paths
+			// that need SOMETHING to persist.
+			return this.config.url || `#${ this.id }`;
 		}
 		try {
 			const href = this.iframe.contentWindow?.location.href;
@@ -842,7 +917,44 @@ export class Window {
 		if ( this._isDestroyed ) {
 			return;
 		}
+
+		// Cancellable pre-close filter — ONLY for native windows.
+		// Return `false` from the filter to abort the close; any
+		// other return (undefined, true) lets the close proceed.
+		// Iframe windows don't go through this: their close is
+		// typically triggered by the user closing the UI and
+		// cancelling it would be confusing.
+		if ( this.config.native ) {
+			const proceed = applyFilters< boolean, [ { windowId: string; config: WindowConfig } ] >(
+				HOOKS.NATIVE_WINDOW_BEFORE_CLOSE,
+				true,
+				{ windowId: this.id, config: this.config },
+			);
+			if ( proceed === false ) {
+				return;
+			}
+		}
+
 		this._isDestroyed = true;
+
+		// Tear down the body resize observer now rather than on
+		// element.remove() — subscribers shouldn't see a phantom
+		// `body-resized` fire as the window animates out.
+		this._bodyResizeObserver?.disconnect();
+		this._bodyResizeObserver = null;
+
+		// Fire the inline `config.onClose` hook — per-window, NOT
+		// the broadcast `window.closing` hook (that fires via the
+		// manager's remove path, after this callback returns).
+		try {
+			this.config.onClose?.();
+		} catch ( err ) {
+			doAction( HOOKS.SHELL_ERROR, {
+				scope: 'native-window-close',
+				id: this.id,
+				error: err,
+			} );
+		}
 
 		// Fire the callback immediately so the window manager updates
 		// its stack.
@@ -883,6 +995,55 @@ export class Window {
 		// no transition), remove after a generous timeout so the
 		// element doesn't linger.
 		setTimeout( onDone, 300 );
+	}
+
+	/**
+	 * Wire up a ResizeObserver on the body element. Fires the
+	 * inline `config.onResize` callback AND the
+	 * `WINDOW_BODY_RESIZED` hook on every size change. Returns the
+	 * observer so `close()` can disconnect it; returns null when
+	 * the body element is missing or the environment has no
+	 * ResizeObserver (jsdom without a shim, older browsers).
+	 */
+	private installBodyResizeObserver(): ResizeObserver | null {
+		const body = this.element.querySelector(
+			'.wp-desktop-window__body',
+		) as HTMLElement | null;
+		if ( ! body ) {
+			return null;
+		}
+		if ( typeof ResizeObserver === 'undefined' ) {
+			return null;
+		}
+		const observer = new ResizeObserver( ( entries ) => {
+			const entry = entries[ 0 ];
+			if ( ! entry ) {
+				return;
+			}
+			const cr = entry.contentRect;
+			const width = Math.round( cr.width );
+			const height = Math.round( cr.height );
+			// Inline callback first — isolates per-window logic from
+			// the broadcast hook subscribers and lets a plugin
+			// short-circuit its own expensive re-layout even when
+			// other subscribers are disabled.
+			try {
+				this.config.onResize?.( width, height );
+			} catch ( err ) {
+				doAction( HOOKS.SHELL_ERROR, {
+					scope: 'native-window-resize',
+					id: this.id,
+					error: err,
+				} );
+			}
+			doAction( HOOKS.WINDOW_BODY_RESIZED, {
+				windowId: this.id,
+				width,
+				height,
+			} );
+		} );
+		observer.observe( body );
+		return observer;
 	}
 
 	/** Get a snapshot of the window state for persistence. */

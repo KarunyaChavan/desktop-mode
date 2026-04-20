@@ -23,3 +23,44 @@ export { WpdTabs, WpdTab } from './wpd-tabs/wpd-tabs';
 export { WpdWindowButton } from './wpd-window-button/wpd-window-button';
 export { WpdMenu, WpdMenuItem } from './wpd-menu/wpd-menu';
 export { WpdTabChip } from './wpd-tab-chip/wpd-tab-chip';
+export { WpdStack } from './wpd-stack/wpd-stack';
+export { WpdCluster } from './wpd-cluster/wpd-cluster';
+export { WpdIcon } from './wpd-icon/wpd-icon';
+export { WpdPanel } from './wpd-panel/wpd-panel';
+export { WpdGrid } from './wpd-grid/wpd-grid';
+export { WpdDisplay } from './wpd-display/wpd-display';
+export { WpdEmptyState } from './wpd-empty-state/wpd-empty-state';
+export { WpdKey } from './wpd-key/wpd-key';
+
+// List of tags registered by this barrel. `doAction(
+// COMPONENTS_REGISTERED, { tags } )` fires once from
+// `src/desktop.ts` after the module graph settles, so
+// subscribers needing to defer work until every `<wpd-*>` is
+// callable have a single signal to latch onto.
+export const WPD_COMPONENT_TAGS = [
+	'wpd-section',
+	'wpd-button',
+	'wpd-swatch',
+	'wpd-swatch-grid',
+	'wpd-segmented',
+	'wpd-segment',
+	'wpd-color-field',
+	'wpd-range-field',
+	'wpd-checkbox-label',
+	'wpd-toast',
+	'wpd-toast-container',
+	'wpd-tabs',
+	'wpd-tab',
+	'wpd-window-button',
+	'wpd-menu',
+	'wpd-menu-item',
+	'wpd-tab-chip',
+	'wpd-stack',
+	'wpd-cluster',
+	'wpd-icon',
+	'wpd-panel',
+	'wpd-grid',
+	'wpd-display',
+	'wpd-empty-state',
+	'wpd-key',
+] as const;

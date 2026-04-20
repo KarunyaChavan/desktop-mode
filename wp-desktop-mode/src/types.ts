@@ -52,8 +52,18 @@ export interface WindowConfig {
 	 * always reuse the existing window.
 	 */
 	multi?: boolean;
-	/** The admin page URL to load in the iframe. */
-	url: string;
+	/**
+	 * The admin page URL to load in the iframe.
+	 *
+	 * Optional for **native windows** (`native: true`) because a
+	 * native window renders into `body` via {@link WindowConfig.render}
+	 * rather than loading a URL. Iframe windows still require it —
+	 * an iframe without a `src` serves `about:blank` and the user
+	 * sees nothing useful. The shell defaults an absent native `url`
+	 * to `#<id>` so history / bookmarking still round-trip to
+	 * something unique.
+	 */
+	url?: string;
 	/** Window title displayed in the title bar. */
 	title: string;
 	/** Dashicon class for the window icon (e.g., 'dashicons-admin-post'). */
@@ -100,6 +110,70 @@ export interface WindowConfig {
 	 * `native` is falsy.
 	 */
 	render?: ( body: HTMLElement ) => void;
+	/**
+	 * Auto-focus control for native windows. Pass `true` to focus
+	 * the body element itself (tabbable after render), a CSS
+	 * selector string to focus a specific child (e.g. `'input'` for
+	 * a search window, `'[data-primary]'` for a calculator's `=`
+	 * key), or omit / pass `false` to skip auto-focus entirely.
+	 *
+	 * Applied on the next animation frame after `render()` returns —
+	 * gives the DOM a chance to settle before `.focus()` resolves.
+	 * Ignored for iframe windows (the iframe's own focus handling
+	 * already owns that surface).
+	 */
+	autofocus?: boolean | string;
+	/**
+	 * Inline callback fired when the window's close animation begins.
+	 * Complements the `wp-desktop.window.closing` hook — the hook is
+	 * broadcast to every subscriber, while this callback is scoped
+	 * specifically to this window's caller. Native windows use it to
+	 * tear down subscriptions / timers that don't want to live past
+	 * the fade-out. No-op for iframe windows.
+	 */
+	onClose?: () => void;
+	/**
+	 * Inline callback fired whenever the body element's dimensions
+	 * change (user resize, initial mount, viewport reflow). Native
+	 * windows that paint their own canvas use this to re-measure;
+	 * DOM-based content usually doesn't need it. Delivered width /
+	 * height are the `.wp-desktop-window__body` client dimensions,
+	 * NOT the outer window size (title bar + tab strip are already
+	 * subtracted). Fires alongside the
+	 * `wp-desktop.window.body-resized` hook.
+	 */
+	onResize?: ( width: number, height: number ) => void;
+}
+
+/**
+ * Narrowed window configuration for **native** windows only. Author-
+ * facing alias that defaults `native: true` and drops the iframe-only
+ * fields the full {@link WindowConfig} carries. Use this when
+ * declaring a plugin's native window:
+ *
+ * ```ts
+ * const calc: NativeWindowDef = {
+ *   id: 'calc',
+ *   title: 'Calculator',
+ *   icon: 'dashicons-calculator',
+ *   width: 320,
+ *   height: 460,
+ *   minWidth: 280,
+ *   minHeight: 380,
+ *   render: ( body ) => { body.innerHTML = '…'; },
+ *   onResize: ( w, h ) => console.log( 'body:', w, h ),
+ * };
+ * wp.desktop.registerWindow( calc );
+ * ```
+ *
+ * @public
+ * @since 0.10.0
+ */
+export interface NativeWindowDef extends Omit< WindowConfig, 'native' | 'url' | 'submenu' > {
+	/** Optional `#hash`-style URL for history. Auto-generated from `id` when absent. */
+	url?: string;
+	/** Always `true` for native windows. Accepted for clarity; the shell enforces it. */
+	native?: true;
 }
 
 /**
@@ -141,6 +215,46 @@ export interface MonitorEntry {
 	failed?: boolean;
 	/** Arbitrary extra context. Kept untyped on purpose — MonitorEntry should stay small. */
 	extra?: Record<string, unknown>;
+}
+
+/**
+ * Server-declared native-window entry passed from PHP via the
+ * `nativeWindows` config field. One entry per
+ * `wp_register_desktop_window()` call. The shell automatically
+ * adds + removes tiles to match this list across boots AND mid-
+ * session plugin activation / deactivation — so activating a
+ * plugin that registered via this helper makes its tile appear
+ * without a browser reload, and deactivating it makes the tile
+ * disappear cleanly.
+ *
+ * @public
+ * @since 0.10.0
+ */
+export interface NativeWindowServerEntry {
+	/** Window id + dock-tile id. */
+	id: string;
+	/** Tooltip + window title. */
+	title: string;
+	/** Dashicons class or URL. */
+	icon: string;
+	/** 'dock' | 'taskbar' | 'none'. */
+	placement: 'dock' | 'taskbar' | 'none';
+	/** Initial window dimensions in px. */
+	width: number;
+	height: number;
+	/** Minimum user-resizable dimensions in px. */
+	minWidth: number;
+	minHeight: number;
+	/** Autofocus rule — true, CSS selector, or false/absent. */
+	autofocus: boolean | string;
+	/** DOM id of the `<template>` the shell clones into the window body. */
+	templateId: string;
+	/** Pre-rendered template HTML. Shell injects a `<template>` when the id isn't already in the DOM (mid-session activation path). */
+	templateHtml: string;
+	/** Absolute URL of the plugin's enqueued script. Shell dynamically loads it when this entry appears mid-session. Empty when the plugin declared no script. */
+	scriptUrl: string;
+	/** WordPress script handle (informational). */
+	scriptHandle: string;
 }
 
 /**
@@ -300,6 +414,13 @@ export interface DesktopConfig {
 	 * for plugins that want to override the default heuristic.
 	 */
 	taskbarItems: DockItemConfig[];
+	/**
+	 * Server-declared native windows (from `wp_register_desktop_window()`).
+	 * Shell auto-registers system tiles at boot + syncs them on every
+	 * live menu refresh so plugin activate / deactivate maps to tile
+	 * add / remove with no browser reload.
+	 */
+	nativeWindows: NativeWindowServerEntry[];
 	/** Previously saved session (may be empty on first run). */
 	session: Session;
 	/** REST endpoint for reading/writing the session. */

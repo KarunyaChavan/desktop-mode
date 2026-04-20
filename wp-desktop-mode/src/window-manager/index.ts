@@ -437,10 +437,17 @@ export class WindowManager {
 			}
 		};
 		win.onOpenAnother = ( w: Window ) => {
+			// Open-another is iframe-window only — the "+" chip is
+			// never rendered on native windows in practice. The
+			// `|| ''` is belt-and-suspenders for TS's perspective on
+			// the now-optional `config.url`: a native window
+			// reaching this path would produce `?wp_desktop=1` on
+			// an empty URL, which downstream code handles cleanly
+			// but will never actually fire.
 			this.openNew( {
 				id: w.config.baseId || w.id,
 				baseId: w.config.baseId || w.id,
-				url: w.config.url,
+				url: w.config.url || '',
 				title: w.config.title,
 				icon: w.config.icon,
 				submenu: w.config.submenu,

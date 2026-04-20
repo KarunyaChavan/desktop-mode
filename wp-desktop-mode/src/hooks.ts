@@ -112,6 +112,24 @@ export function addAction<TArgs extends unknown[] = unknown[]>(
 	);
 }
 
+/**
+ * Remove every callback registered under `namespace` for
+ * `hookName`. Returns the number of callbacks actually removed.
+ * Thin wrapper over `window.wp.hooks.removeAction` — exists so
+ * plugin authors can unsubscribe without importing the raw bus.
+ */
+export function removeAction( hookName: string, namespace: string ): number {
+	return getWpHooks().removeAction( hookName, namespace ) as number;
+}
+
+/**
+ * Counterpart of {@link addFilter}. Same contract as
+ * {@link removeAction} but for the filter bus.
+ */
+export function removeFilter( hookName: string, namespace: string ): number {
+	return getWpHooks().removeFilter( hookName, namespace ) as number;
+}
+
 export function applyFilters<TValue, TArgs extends unknown[] = unknown[]>(
 	hookName: string,
 	value: TValue,
@@ -297,6 +315,75 @@ export const HOOKS = {
 	WINDOW_DETACHED: 'wp-desktop.window.detached',
 	/** Action, fires when iframe title updates change the window title. */
 	WINDOW_TITLE_CHANGED: 'wp-desktop.window.title-changed',
+	/**
+	 * Action, fires when a window's body element's dimensions
+	 * change — mount, user resize, viewport reflow. Payload: `{
+	 * windowId: string, width: number, height: number }`. Body
+	 * dimensions exclude the title bar + tab strip, matching what a
+	 * canvas or layout engine inside the body would measure.
+	 */
+	WINDOW_BODY_RESIZED: 'wp-desktop.window.body-resized',
+
+	// ------------------------------------------------------------------
+	// Native-window lifecycle. These fire ONLY for windows constructed
+	// with `native: true` — iframe windows have no render phase to
+	// intercept. Use them to wrap / instrument / cancel the paint of
+	// plugin-contributed native windows (the Calculator, Jorvy, custom
+	// native launchers).
+	// ------------------------------------------------------------------
+
+	/**
+	 * Filter, applied to the body element a native window will render
+	 * into, just BEFORE the user's `render( body )` callback runs.
+	 * Payload: the `HTMLElement`; context: `{ windowId, config }`.
+	 *
+	 * Return the same element (or a wrapper) to intercept. Subscribers
+	 * commonly use this to inject a consistent shell (padding,
+	 * background, decorative chrome) around every native window
+	 * without every plugin re-implementing the pattern.
+	 */
+	NATIVE_WINDOW_BEFORE_RENDER: 'wp-desktop.native-window.before-render',
+	/**
+	 * Action, fires AFTER a native window's `render( body )` callback
+	 * returns. Payload: `{ windowId, body, config }`. Observability
+	 * hook — analytics / auto-focus / post-render measurement.
+	 */
+	NATIVE_WINDOW_AFTER_RENDER: 'wp-desktop.native-window.after-render',
+	/**
+	 * Filter, applied when a native window is about to start its
+	 * close animation. Return `false` to CANCEL the close — the
+	 * window stays open. Payload: `true`; context: `{ windowId,
+	 * config }`. Any non-`false` return (including `undefined`) lets
+	 * the close proceed.
+	 *
+	 * Intended for "unsaved changes" guards: a calculator with a
+	 * pending operation can prompt the user and abort the close
+	 * mid-flight. Does NOT apply to iframe windows — their close is
+	 * driven by browser navigation patterns the shell doesn't own.
+	 */
+	NATIVE_WINDOW_BEFORE_CLOSE: 'wp-desktop.native-window.before-close',
+
+	// ------------------------------------------------------------------
+	// Cross-plugin composition.
+	// ------------------------------------------------------------------
+
+	/**
+	 * Action, fires ONCE after every shell-shipped `<wpd-*>` custom
+	 * element has registered with `customElements`. Payload: `{
+	 * tags: string[] }` — the list of registered tag names. Plugins
+	 * that need to defer work until the component registry is
+	 * complete (e.g. hydrate user content that uses these tags)
+	 * subscribe here instead of polling `customElements.get()`.
+	 */
+	COMPONENTS_REGISTERED: 'wp-desktop.components.registered',
+	/**
+	 * Action, fires after `wp.desktop.registerSystemTile()` inserts
+	 * a tile into the dock or taskbar. Payload: `{ id: string,
+	 * placement: 'dock' | 'taskbar' }`. Useful for plugins that
+	 * want to decorate tiles they didn't register themselves —
+	 * analytics, theming, per-tile badges.
+	 */
+	DOCK_ITEM_APPENDED: 'wp-desktop.dock.item-appended',
 
 	// ------------------------------------------------------------------
 	// Overview / Arrange lifecycle actions.

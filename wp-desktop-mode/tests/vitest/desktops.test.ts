@@ -215,4 +215,42 @@ describe( 'WindowManager — virtual desktops', () => {
 			'desktop-2',
 		] );
 	} );
+
+	test( 'closing the active desktop while in overview re-lays out the survivor', () => {
+		// Set up: two windows on D1 (active), one on D2.
+		manager.open( openConfig( 'a' ) );
+		manager.open( openConfig( 'b' ) );
+		const second = manager.createDesktop();
+		manager.switchDesktop( second.id );
+		const c = manager.open( openConfig( 'c' ) );
+		manager.switchDesktop( 'desktop-1' );
+
+		// Enter overview — D1 windows pick up the --overview class.
+		manager.enterOverview();
+		const a = manager.getById( 'a' )!;
+		const b = manager.getById( 'b' )!;
+		expect( a.element.classList.contains( 'wp-desktop-window--overview' ) ).toBe( true );
+		expect( b.element.classList.contains( 'wp-desktop-window--overview' ) ).toBe( true );
+		// `c` is on the inactive desktop — hidden, no overview class.
+		expect( c.element.style.display ).toBe( 'none' );
+		expect( c.element.classList.contains( 'wp-desktop-window--overview' ) ).toBe( false );
+
+		// Close the active desktop. Survivor (desktop-2) absorbs a + b
+		// AND becomes active. Since we're in overview, the grid must
+		// re-lay out for the new active set: a, b, c all on desktop-2,
+		// all visible, all carrying the overview class.
+		manager.closeDesktop( 'desktop-1' );
+
+		expect( manager.getActiveDesktopId() ).toBe( second.id );
+		expect( a.config.desktopId ).toBe( second.id );
+		expect( b.config.desktopId ).toBe( second.id );
+		// All three windows are now on the active desktop and back in
+		// the grid — none hidden, none missing the overview class.
+		expect( a.element.style.display ).toBe( '' );
+		expect( b.element.style.display ).toBe( '' );
+		expect( c.element.style.display ).toBe( '' );
+		expect( a.element.classList.contains( 'wp-desktop-window--overview' ) ).toBe( true );
+		expect( b.element.classList.contains( 'wp-desktop-window--overview' ) ).toBe( true );
+		expect( c.element.classList.contains( 'wp-desktop-window--overview' ) ).toBe( true );
+	} );
 } );

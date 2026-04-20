@@ -2115,7 +2115,9 @@ var wpDesktop = function(exports) {
       const wasActive = this.activeDesktopId === id;
       if (wasActive) {
         this.activeDesktopId = survivor.id;
-        this.refreshDesktopVisibility();
+      }
+      if (this.overviewActive) {
+        this.relayoutOverviewForActiveDesktop();
       } else {
         this.refreshDesktopVisibility();
       }
@@ -2123,6 +2125,71 @@ var wpDesktop = function(exports) {
         desktopId: id,
         migratedTo: survivor.id
       });
+    }
+    /**
+     * Tear down + re-apply the overview grid for whichever desktop
+     * is currently active. Used by {@link closeDesktop} when the
+     * close happens mid-overview — without it, the post-close
+     * visual state is a mismatch (top bar visible, but windows at
+     * non-overview positions).
+     *
+     * Steps:
+     *   1. Clear overview state from every window that was in the
+     *      previous snapshot (transform → restored, class removed,
+     *      label dropped).
+     *   2. Re-evaluate `display` per window so the new active
+     *      desktop's windows surface and the rest hide.
+     *   3. Snapshot + lay out the new active desktop's eligible
+     *      windows in the overview grid.
+     *
+     * If the new active desktop has no eligible windows (empty
+     * desktop), the overview just shows the top bar over the dim
+     * backdrop — the user can still pick another desktop or hit
+     * Escape.
+     */
+    relayoutOverviewForActiveDesktop() {
+      for (const [winId, snap] of this.overviewSnapshot) {
+        const w = this.getById(winId);
+        if (w) {
+          w.element.style.transform = snap.transform;
+          w.element.style.transition = snap.transition;
+          w.element.classList.remove("wp-desktop-window--overview");
+        }
+      }
+      for (const label of this.overviewLabels.values()) {
+        label.remove();
+      }
+      this.overviewLabels.clear();
+      this.overviewSnapshot.clear();
+      this.refreshDesktopVisibility();
+      const eligible = this.stack.filter(
+        (w) => !w.config.native && w.state !== "minimized" && w.config.desktopId === this.activeDesktopId
+      );
+      if (eligible.length === 0) {
+        return;
+      }
+      for (const w of eligible) {
+        this.overviewSnapshot.set(w.id, {
+          transform: w.element.style.transform || "",
+          transition: w.element.style.transition || ""
+        });
+      }
+      const targetRect = this.desktop.getBoundingClientRect();
+      const layout = computeOverviewLayout(
+        eligible,
+        targetRect,
+        _WindowManager.OVERVIEW_TOP_BAR_RESERVE
+      );
+      for (const item of layout) {
+        const el = item.win.element;
+        el.classList.add("wp-desktop-window--overview");
+        const dx = item.x - el.offsetLeft;
+        const dy = item.y - el.offsetTop;
+        el.style.transform = `translate(${dx}px, ${dy}px) scale(${item.scale})`;
+        const label = this.createOverviewLabel(item);
+        el.insertAdjacentElement("afterend", label);
+        this.overviewLabels.set(item.win.id, label);
+      }
     }
     // ==========================================================
     // Window-arrangement layouts

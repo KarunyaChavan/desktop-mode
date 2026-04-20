@@ -1,6 +1,10 @@
 /**
  * Unit tests for `src/toast.ts`. Uses jsdom's fake timers so the
  * dismiss timeout is deterministic without actually waiting.
+ *
+ * The DOM now renders via `<wpd-toast-container>` + `<wpd-toast>`
+ * web components — tests interact with tag names rather than the
+ * old class-based selectors.
  */
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { showToast } from '../../src/toast';
@@ -18,9 +22,9 @@ describe( 'toast.ts', () => {
 
 	test( 'showToast creates a container + toast element', () => {
 		showToast( { message: 'hello' } );
-		const container = document.querySelector( '.wp-desktop-toast-container' );
+		const container = document.querySelector( 'wpd-toast-container' );
 		expect( container ).not.toBeNull();
-		const toast = container?.querySelector( '.wp-desktop-toast' );
+		const toast = container?.querySelector( 'wpd-toast' );
 		expect( toast ).not.toBeNull();
 		expect( toast?.textContent?.includes( 'hello' ) ).toBe( true );
 	} );
@@ -29,36 +33,36 @@ describe( 'toast.ts', () => {
 		showToast( { message: 'one' } );
 		showToast( { message: 'two' } );
 		const containers = document.querySelectorAll(
-			'.wp-desktop-toast-container',
+			'wpd-toast-container',
 		);
 		expect( containers ).toHaveLength( 1 );
-		const toasts = containers[ 0 ].querySelectorAll( '.wp-desktop-toast' );
+		const toasts = containers[ 0 ].querySelectorAll( 'wpd-toast' );
 		expect( toasts ).toHaveLength( 2 );
 	} );
 
 	test( 'auto-dismisses after the default duration', () => {
 		showToast( { message: 'bye' } );
-		const container = document.querySelector( '.wp-desktop-toast-container' )!;
-		expect( container.querySelectorAll( '.wp-desktop-toast' ) ).toHaveLength( 1 );
+		const container = document.querySelector( 'wpd-toast-container' )!;
+		expect( container.querySelectorAll( 'wpd-toast' ) ).toHaveLength( 1 );
 
 		// Default duration (4000 ms) kicks the fade; fade takes 200 ms
 		// to complete and remove the element.
 		vi.advanceTimersByTime( 4000 );
 		vi.advanceTimersByTime( 200 );
-		expect( container.querySelectorAll( '.wp-desktop-toast' ) ).toHaveLength( 0 );
+		expect( container.querySelectorAll( 'wpd-toast' ) ).toHaveLength( 0 );
 	} );
 
 	test( 'custom duration is honored', () => {
 		showToast( { message: 'quick', duration: 500 } );
-		const container = document.querySelector( '.wp-desktop-toast-container' )!;
+		const container = document.querySelector( 'wpd-toast-container' )!;
 		vi.advanceTimersByTime( 400 );
-		expect( container.querySelectorAll( '.wp-desktop-toast' ) ).toHaveLength( 1 );
+		expect( container.querySelectorAll( 'wpd-toast' ) ).toHaveLength( 1 );
 		// Advance past (500 duration + 200 fade) to guarantee removal.
 		vi.advanceTimersByTime( 400 );
-		expect( container.querySelectorAll( '.wp-desktop-toast' ) ).toHaveLength( 0 );
+		expect( container.querySelectorAll( 'wpd-toast' ) ).toHaveLength( 0 );
 	} );
 
-	test( 'action button renders and fires the callback on click', () => {
+	test( 'action dispatches wpd-toast-action + fires the callback on click', async () => {
 		let clicked = false;
 		showToast( {
 			message: 'retry?',
@@ -69,11 +73,18 @@ describe( 'toast.ts', () => {
 				},
 			},
 		} );
-		const button = document.querySelector< HTMLButtonElement >(
-			'.wp-desktop-toast__action',
+		// Drain the component's first render so the shadow-DOM
+		// button exists to query + click.
+		vi.useRealTimers();
+		await Promise.resolve();
+		vi.useFakeTimers();
+
+		const toast = document.querySelector( 'wpd-toast' )!;
+		const button = toast.shadowRoot!.querySelector< HTMLButtonElement >(
+			'button',
 		);
 		expect( button ).not.toBeNull();
-		expect( button?.textContent ).toBe( 'Retry' );
+		expect( button?.textContent?.trim() ).toBe( 'Retry' );
 
 		button?.click();
 		expect( clicked ).toBe( true );
@@ -81,17 +92,17 @@ describe( 'toast.ts', () => {
 		// After the action callback fires, the toast starts fading.
 		vi.advanceTimersByTime( 200 );
 		expect(
-			document.querySelectorAll( '.wp-desktop-toast' ),
+			document.querySelectorAll( 'wpd-toast' ),
 		).toHaveLength( 0 );
 	} );
 
 	test( 'the returned dismiss function removes the toast early', () => {
 		const dismiss = showToast( { message: 'ephemeral', duration: 10000 } );
-		const container = document.querySelector( '.wp-desktop-toast-container' )!;
-		expect( container.querySelectorAll( '.wp-desktop-toast' ) ).toHaveLength( 1 );
+		const container = document.querySelector( 'wpd-toast-container' )!;
+		expect( container.querySelectorAll( 'wpd-toast' ) ).toHaveLength( 1 );
 		dismiss();
 		vi.advanceTimersByTime( 250 );
-		expect( container.querySelectorAll( '.wp-desktop-toast' ) ).toHaveLength( 0 );
+		expect( container.querySelectorAll( 'wpd-toast' ) ).toHaveLength( 0 );
 	} );
 
 	test( 'calling dismiss twice is a no-op (idempotent)', () => {

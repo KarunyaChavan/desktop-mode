@@ -266,28 +266,578 @@ var wpDesktop = function(exports) {
     let i = 0;
     return format.replace(/%[sd]/g, () => String(args[i++] ?? ""));
   }
-  const CONTAINER_CLASS = "wp-desktop-toast-container";
+  function html(strings, ...values) {
+    return { __wpdHtml: true, strings, values };
+  }
+  const MARKER_PREFIX = "$$wpd$$";
+  const MARKER_RE = /\$\$wpd\$\$(\d+)\$\$/g;
+  function joinWithMarkers(strings) {
+    let out = strings[0];
+    for (let i = 1; i < strings.length; i++) {
+      out += `${MARKER_PREFIX}${i - 1}$$` + strings[i];
+    }
+    return out;
+  }
+  const compiledCache = /* @__PURE__ */ new WeakMap();
+  function compile(strings) {
+    const cached = compiledCache.get(strings);
+    if (cached) {
+      return cached;
+    }
+    const template = document.createElement("template");
+    template.innerHTML = joinWithMarkers(strings);
+    const recipes = [];
+    const walk = (node, path) => {
+      if (node.nodeType === Node.ELEMENT_NODE) {
+        const el = node;
+        for (const attr of Array.from(el.attributes)) {
+          const rawName = attr.name;
+          const rawValue = attr.value;
+          const prefix = rawName[0];
+          if (MARKER_RE.test(rawValue)) {
+            MARKER_RE.lastIndex = 0;
+            if (prefix === "@") {
+              const match = MARKER_RE.exec(rawValue);
+              MARKER_RE.lastIndex = 0;
+              recipes.push({
+                path,
+                kind: "event",
+                name: rawName.slice(1),
+                valueIndex: match ? Number(match[1]) : 0
+              });
+              el.removeAttribute(rawName);
+            } else if (prefix === ".") {
+              const match = MARKER_RE.exec(rawValue);
+              MARKER_RE.lastIndex = 0;
+              recipes.push({
+                path,
+                kind: "prop",
+                name: rawName.slice(1),
+                valueIndex: match ? Number(match[1]) : 0
+              });
+              el.removeAttribute(rawName);
+            } else if (prefix === "?") {
+              const match = MARKER_RE.exec(rawValue);
+              MARKER_RE.lastIndex = 0;
+              recipes.push({
+                path,
+                kind: "bool",
+                name: rawName.slice(1),
+                valueIndex: match ? Number(match[1]) : 0
+              });
+              el.removeAttribute(rawName);
+            } else {
+              const fragments = [];
+              const indices = [];
+              let lastEnd = 0;
+              let m;
+              MARKER_RE.lastIndex = 0;
+              while ((m = MARKER_RE.exec(rawValue)) !== null) {
+                fragments.push(rawValue.slice(lastEnd, m.index));
+                indices.push(Number(m[1]));
+                lastEnd = m.index + m[0].length;
+              }
+              fragments.push(rawValue.slice(lastEnd));
+              recipes.push({
+                path,
+                kind: "attr",
+                name: rawName,
+                template: fragments,
+                valueIndices: indices
+              });
+              el.setAttribute(rawName, "");
+            }
+          }
+        }
+      }
+      const children = Array.from(node.childNodes);
+      for (let i = 0; i < children.length; i++) {
+        const child = children[i];
+        if (child.nodeType === Node.TEXT_NODE) {
+          const text = child.textContent || "";
+          if (!MARKER_RE.test(text)) {
+            MARKER_RE.lastIndex = 0;
+            continue;
+          }
+          MARKER_RE.lastIndex = 0;
+          const parent = child.parentNode;
+          let lastEnd = 0;
+          let m;
+          const newNodes = [];
+          const newRecipes = [];
+          MARKER_RE.lastIndex = 0;
+          while ((m = MARKER_RE.exec(text)) !== null) {
+            if (m.index > lastEnd) {
+              newNodes.push(document.createTextNode(text.slice(lastEnd, m.index)));
+            }
+            const placeholder = document.createTextNode("");
+            newNodes.push(placeholder);
+            newRecipes.push({
+              path: [...path, i + newNodes.length - 1],
+              kind: "node",
+              valueIndex: Number(m[1])
+            });
+            lastEnd = m.index + m[0].length;
+          }
+          if (lastEnd < text.length) {
+            newNodes.push(document.createTextNode(text.slice(lastEnd)));
+          }
+          for (const nn of newNodes) {
+            parent.insertBefore(nn, child);
+          }
+          parent.removeChild(child);
+          i += newNodes.length - 1;
+          recipes.push(...newRecipes);
+        } else {
+          walk(child, [...path, i]);
+        }
+      }
+    };
+    walk(template.content, []);
+    const buildParts = (fragment) => {
+      const out = [];
+      for (const r of recipes) {
+        let node = fragment;
+        for (const idx of r.path) {
+          node = node.childNodes[idx];
+        }
+        if (r.kind === "node") {
+          out.push({
+            kind: "node",
+            valueIndex: r.valueIndex,
+            node
+          });
+        } else if (r.kind === "attr") {
+          out.push({
+            kind: "attr",
+            element: node,
+            name: r.name,
+            template: r.template,
+            valueIndices: r.valueIndices
+          });
+        } else if (r.kind === "event") {
+          out.push({
+            kind: "event",
+            valueIndex: r.valueIndex,
+            element: node,
+            name: r.name
+          });
+        } else if (r.kind === "prop") {
+          out.push({
+            kind: "prop",
+            valueIndex: r.valueIndex,
+            element: node,
+            name: r.name
+          });
+        } else if (r.kind === "bool") {
+          out.push({
+            kind: "bool",
+            valueIndex: r.valueIndex,
+            element: node,
+            name: r.name
+          });
+        }
+      }
+      return out;
+    };
+    const entry = { template, buildParts };
+    compiledCache.set(strings, entry);
+    return entry;
+  }
+  const mountState = /* @__PURE__ */ new WeakMap();
+  function render(result, container) {
+    const existing = mountState.get(container);
+    if (existing && existing.strings === result.strings) {
+      applyValues(existing.parts, result.values);
+      return;
+    }
+    const compiled = compile(result.strings);
+    const fragment = compiled.template.content.cloneNode(true);
+    const parts = compiled.buildParts(fragment);
+    while (container.firstChild) {
+      container.removeChild(container.firstChild);
+    }
+    container.appendChild(fragment);
+    applyValues(parts, result.values);
+    mountState.set(container, { strings: result.strings, parts });
+  }
+  function applyValues(parts, values) {
+    for (const part of parts) {
+      if (part.kind === "node") {
+        const next = values[part.valueIndex];
+        if (next !== part.last) {
+          part.last = next;
+          part.node.textContent = formatText(next);
+        }
+      } else if (part.kind === "attr") {
+        let composed = part.template[0];
+        for (let i = 0; i < part.valueIndices.length; i++) {
+          composed += formatText(values[part.valueIndices[i]]);
+          composed += part.template[i + 1];
+        }
+        if (composed !== part.last) {
+          part.last = composed;
+          if (composed === "") {
+            part.element.removeAttribute(part.name);
+          } else {
+            part.element.setAttribute(part.name, composed);
+          }
+        }
+      } else if (part.kind === "event") {
+        const next = values[part.valueIndex];
+        if (next !== part.current) {
+          if (part.current) {
+            part.element.removeEventListener(part.name, part.current);
+          }
+          if (next) {
+            part.element.addEventListener(part.name, next);
+          }
+          part.current = next;
+        }
+      } else if (part.kind === "prop") {
+        const next = values[part.valueIndex];
+        if (next !== part.last) {
+          part.last = next;
+          part.element[part.name] = next;
+        }
+      } else if (part.kind === "bool") {
+        const next = !!values[part.valueIndex];
+        if (next !== part.last) {
+          part.last = next;
+          if (next) {
+            part.element.setAttribute(part.name, "");
+          } else {
+            part.element.removeAttribute(part.name);
+          }
+        }
+      }
+    }
+  }
+  function formatText(v) {
+    if (v === null || v === void 0 || v === false) {
+      return "";
+    }
+    if (Array.isArray(v)) {
+      return v.map(formatText).join("");
+    }
+    return String(v);
+  }
+  const _Component = class _Component extends HTMLElement {
+    constructor() {
+      super();
+      this._renderScheduled = false;
+      this._propValues = {};
+      const ctor = this.constructor;
+      if (ctor.shadow) {
+        this.attachShadow({ mode: "open" });
+        this._renderRoot = this.shadowRoot;
+      } else {
+        this._renderRoot = this;
+      }
+      this._installPropAccessors();
+    }
+    static get observedAttributes() {
+      return this.props.map(kebab);
+    }
+    connectedCallback() {
+      this._adoptStyles();
+      this._scheduleRender();
+    }
+    attributeChangedCallback(name, oldValue, newValue) {
+      if (oldValue === newValue) {
+        return;
+      }
+      const prop = camel(name);
+      this._propValues[prop] = newValue;
+      this._scheduleRender();
+    }
+    /**
+     * Request a re-render explicitly. Components rarely need this —
+     * declare state via props + attribute observers and the render
+     * loop picks up changes automatically.
+     */
+    requestUpdate() {
+      this._scheduleRender();
+    }
+    /**
+     * Dispatch a `CustomEvent` with a `detail`. Bubbles + composed
+     * by default (matches typical WC UX — events cross shadow
+     * boundaries, parents can listen without knowing about internal
+     * structure).
+     */
+    emit(name, detail) {
+      return this.dispatchEvent(
+        new CustomEvent(name, {
+          detail,
+          bubbles: true,
+          composed: true
+        })
+      );
+    }
+    // ------------------------------------------------------------------
+    // Internals
+    // ------------------------------------------------------------------
+    /**
+     * Wire every `static props` entry to a matched property getter +
+     * setter on the element. Setting the property reflects into the
+     * attribute (so downstream observers + CSS selectors see it);
+     * reading the property falls back to the attribute.
+     */
+    _installPropAccessors() {
+      const ctor = this.constructor;
+      for (const prop of ctor.props) {
+        if (Object.getOwnPropertyDescriptor(this, prop)) {
+          continue;
+        }
+        const attr = kebab(prop);
+        Object.defineProperty(this, prop, {
+          get: () => {
+            if (prop in this._propValues) {
+              return this._propValues[prop];
+            }
+            return this.getAttribute(attr);
+          },
+          set: (value) => {
+            const str = value === null || value === void 0 ? null : String(value);
+            this._propValues[prop] = str;
+            if (str === null) {
+              this.removeAttribute(attr);
+            } else {
+              this.setAttribute(attr, str);
+            }
+            this._scheduleRender();
+          },
+          enumerable: true,
+          configurable: true
+        });
+      }
+    }
+    /**
+     * Schedule a render on the next microtask. Multiple property
+     * assignments in the same tick collapse into a single render.
+     */
+    _scheduleRender() {
+      if (this._renderScheduled || !this.isConnected) {
+        return;
+      }
+      this._renderScheduled = true;
+      queueMicrotask(() => {
+        this._renderScheduled = false;
+        if (!this.isConnected) {
+          return;
+        }
+        render(this.render(), this._renderRoot);
+      });
+    }
+    /**
+     * Mount adoptable stylesheets onto the shadow root (via
+     * `adoptedStyleSheets`) or the light DOM (via one `<style>`
+     * tag per def). No-op if `static styles` is empty.
+     */
+    _adoptStyles() {
+      const ctor = this.constructor;
+      if (ctor.styles.length === 0) {
+        return;
+      }
+      if (ctor.shadow && this.shadowRoot) {
+        const sheets = ctor.styles.map((s) => s.sheet).filter((s) => s !== null);
+        this.shadowRoot.adoptedStyleSheets = sheets;
+        if (sheets.length !== ctor.styles.length) {
+          for (const s of ctor.styles) {
+            if (!s.sheet) {
+              const tag = document.createElement("style");
+              tag.textContent = s.cssText;
+              this.shadowRoot.appendChild(tag);
+            }
+          }
+        }
+      } else {
+        this._adoptLightStyles(ctor);
+      }
+    }
+    _adoptLightStyles(ctor) {
+      if (_Component._lightStylesAdopted.has(ctor)) {
+        return;
+      }
+      _Component._lightStylesAdopted.add(ctor);
+      for (const s of ctor.styles) {
+        const tag = document.createElement("style");
+        tag.dataset.wpdUi = this.tagName.toLowerCase();
+        tag.textContent = s.cssText;
+        document.head.appendChild(tag);
+      }
+    }
+  };
+  _Component.props = [];
+  _Component.styles = [];
+  _Component.shadow = true;
+  _Component._lightStylesAdopted = /* @__PURE__ */ new WeakSet();
+  let Component = _Component;
+  function defineComponent(tag, ctor) {
+    if (customElements.get(tag)) {
+      return;
+    }
+    customElements.define(tag, ctor);
+  }
+  function kebab(s) {
+    return s.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
+  }
+  function camel(s) {
+    return s.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+  }
+  const SUPPORTS_CONSTRUCTABLE_SHEETS = (() => {
+    try {
+      const s = new CSSStyleSheet();
+      return typeof s.replaceSync === "function";
+    } catch {
+      return false;
+    }
+  })();
+  function css(strings, ...values) {
+    let text = strings[0];
+    for (let i = 1; i < strings.length; i++) {
+      const v = values[i - 1];
+      if (typeof v === "string" || typeof v === "number") {
+        text += String(v);
+      } else if (v && v.__wpdCss) {
+        text += v.cssText;
+      } else {
+        throw new TypeError(
+          "[wpd-ui] css`` interpolations must be strings, numbers, or other css`` results. Got: " + typeof v
+        );
+      }
+      text += strings[i];
+    }
+    if (SUPPORTS_CONSTRUCTABLE_SHEETS) {
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync(text);
+      return { __wpdCss: true, sheet, cssText: text };
+    }
+    return { __wpdCss: true, sheet: null, cssText: text };
+  }
+  const containerStyles = css`
+	:host {
+		position: fixed;
+		top: calc( var( --wp-admin--admin-bar--height, 32px ) + 16px );
+		inset-inline-end: 16px;
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		z-index: calc( var( --wp-desktop-z-fullscreen, 99999 ) + 10 );
+		pointer-events: none;
+	}
+`;
+  const toastStyles = css`
+	:host {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		min-width: 280px;
+		max-width: 420px;
+		padding: 10px 14px;
+		background: #1d2327;
+		color: #fff;
+		border-radius: 8px;
+		box-shadow: 0 8px 24px rgba( 0, 0, 0, 0.2 ),
+			0 2px 6px rgba( 0, 0, 0, 0.1 );
+		font-size: 13px;
+		line-height: 1.4;
+		opacity: 0;
+		transform: translateY( -8px );
+		transition: opacity 0.18s ease, transform 0.18s ease;
+		pointer-events: auto;
+	}
+	:host( [ state='in' ] ) {
+		opacity: 1;
+		transform: translateY( 0 );
+	}
+	:host( [ state='out' ] ) {
+		opacity: 0;
+		transform: translateY( -8px );
+	}
+	.wpd-toast__label {
+		flex: 1;
+	}
+	button {
+		flex-shrink: 0;
+		padding: 4px 10px;
+		border: none;
+		border-radius: 4px;
+		background: rgba( 255, 255, 255, 0.12 );
+		color: #fff;
+		font: inherit;
+		font-size: 12px;
+		font-weight: 500;
+		cursor: pointer;
+		transition: background-color 0.12s ease;
+	}
+	button:hover {
+		background: rgba( 255, 255, 255, 0.22 );
+	}
+	button:focus-visible {
+		outline: 2px solid rgba( 255, 255, 255, 0.6 );
+		outline-offset: 2px;
+	}
+	@media ( prefers-reduced-motion: reduce ) {
+		:host {
+			transition-duration: 0.01ms;
+		}
+	}
+`;
+  const _WpdToastContainer = class _WpdToastContainer extends Component {
+    connectedCallback() {
+      super.connectedCallback();
+      this.setAttribute("aria-live", "polite");
+    }
+    render() {
+      return html`<slot></slot>`;
+    }
+  };
+  _WpdToastContainer.styles = [containerStyles];
+  let WpdToastContainer = _WpdToastContainer;
+  defineComponent("wpd-toast-container", WpdToastContainer);
+  const _WpdToast = class _WpdToast extends Component {
+    connectedCallback() {
+      super.connectedCallback();
+      if (!this.hasAttribute("role")) {
+        this.setAttribute("role", "status");
+      }
+    }
+    render() {
+      const action = this.action || "";
+      return html`
+			<span class="wpd-toast__label"><slot></slot></span>
+			<button
+				type="button"
+				?hidden=${!action}
+				@click=${(e) => this._onAction(e)}
+			>
+				${action}
+			</button>
+		`;
+    }
+    _onAction(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      this.emit("wpd-toast-action", {});
+    }
+  };
+  _WpdToast.props = ["action", "state"];
+  _WpdToast.styles = [toastStyles];
+  let WpdToast = _WpdToast;
+  defineComponent("wpd-toast", WpdToast);
   const DEFAULT_DURATION_MS = 4e3;
   const FADE_OUT_MS = 200;
   function showToast(options) {
     const container = ensureContainer();
-    const toast = document.createElement("div");
-    toast.className = "wp-desktop-toast";
-    toast.setAttribute("role", "status");
-    const label = document.createElement("span");
-    label.className = "wp-desktop-toast__label";
-    label.textContent = options.message;
-    toast.appendChild(label);
+    const toast = document.createElement("wpd-toast");
+    toast.textContent = options.message;
     if (options.action) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "wp-desktop-toast__action";
-      btn.textContent = options.action.label;
-      btn.addEventListener("click", () => {
+      toast.setAttribute("action", options.action.label);
+      toast.addEventListener("wpd-toast-action", () => {
         options.action?.onClick();
         dismiss();
       });
-      toast.appendChild(btn);
     }
     container.appendChild(toast);
     let dismissed = false;
@@ -301,13 +851,13 @@ var wpDesktop = function(exports) {
         window.clearTimeout(dismissTimer);
         dismissTimer = null;
       }
-      toast.classList.add("wp-desktop-toast--out");
+      toast.setAttribute("state", "out");
       window.setTimeout(() => {
         toast.remove();
       }, FADE_OUT_MS);
     };
     requestAnimationFrame(() => {
-      toast.classList.add("wp-desktop-toast--in");
+      toast.setAttribute("state", "in");
     });
     dismissTimer = window.setTimeout(
       dismiss,
@@ -317,14 +867,12 @@ var wpDesktop = function(exports) {
   }
   function ensureContainer() {
     const existing = document.querySelector(
-      `.${CONTAINER_CLASS}`
+      "wpd-toast-container"
     );
     if (existing) {
       return existing;
     }
-    const el = document.createElement("div");
-    el.className = CONTAINER_CLASS;
-    el.setAttribute("aria-live", "polite");
+    const el = document.createElement("wpd-toast-container");
     document.body.appendChild(el);
     return el;
   }
@@ -645,6 +1193,12 @@ var wpDesktop = function(exports) {
      */
     bindEvents() {
       this.element.addEventListener("pointerdown", () => {
+        if (this.element.classList.contains("wp-desktop-window--overview")) {
+          return;
+        }
+        this.onFocusRequest?.(this);
+      });
+      this.element.addEventListener("focusin", () => {
         if (this.element.classList.contains("wp-desktop-window--overview")) {
           return;
         }
@@ -1060,6 +1614,11 @@ var wpDesktop = function(exports) {
       }
       if (data.type === "wp-desktop-title-change" && typeof data.title === "string") {
         this.setTitle(data.title);
+      }
+      if (data.type === "wp-desktop-focus-request") {
+        if (!this.element.classList.contains("wp-desktop-window--overview")) {
+          this.onFocusRequest?.(this);
+        }
       }
       if (data.type === "wp-desktop-screen-meta" && Array.isArray(data.panels)) {
         this.addScreenMetaButtons(data.panels);
@@ -1750,6 +2309,52 @@ var wpDesktop = function(exports) {
         );
         this.desktopResizeObserver.observe(desktop);
       }
+      this.installIframeFocusBridge();
+    }
+    /**
+     * Clicks inside an iframe don't cross the browsing-context
+     * boundary — pointerdown / focusin in the iframe's document
+     * never reach the parent. BUT the parent `window` does lose
+     * focus, because focus moves to the iframe's content window.
+     *
+     * We use that signal: listen for `window.blur` on the parent,
+     * check `document.activeElement` — if it's an iframe, walk up
+     * to its owning `.wp-desktop-window`, find the matching Window
+     * in our stack, and focus it. Covers clicks on the primary
+     * iframe AND any external-tab sub-iframes mounted as
+     * descendants of the window element.
+     *
+     * One listener at the window level is cheaper than N per-window
+     * listeners and doesn't require passing anything through Window
+     * instances that aren't already exposed.
+     */
+    installIframeFocusBridge() {
+      window.addEventListener("blur", () => {
+        window.setTimeout(() => {
+          const active2 = this.desktop.ownerDocument?.activeElement ?? null;
+          if (!active2 || active2.tagName !== "IFRAME") {
+            return;
+          }
+          const winEl = active2.closest(
+            ".wp-desktop-window"
+          );
+          if (!winEl) {
+            return;
+          }
+          const id = winEl.id.replace(/^wp-window-/, "");
+          const win = this.getById(id);
+          if (!win) {
+            return;
+          }
+          if (this.overviewActive) {
+            return;
+          }
+          if (this.getFocused() === win) {
+            return;
+          }
+          this.focus(win);
+        }, 0);
+      });
     }
     /**
      * Re-apply maximize bounds to any window currently in
@@ -3335,6 +3940,552 @@ var wpDesktop = function(exports) {
     }
     return false;
   }
+  const styles$6 = css`
+	:host {
+		display: block;
+		margin-block-end: 28px;
+	}
+	:host( [ hidden ] ) {
+		display: none;
+	}
+	.wpd-section__heading {
+		margin: 0 0 2px;
+		font-size: 14px;
+		font-weight: 600;
+		color: var( --wp-desktop-text, #1d2327 );
+	}
+	.wpd-section__description {
+		margin: 0 0 14px;
+		font-size: 12px;
+		color: var( --wp-desktop-muted, #646970 );
+		line-height: 1.45;
+	}
+	/* Collapse the description node when no text was
+	 * supplied — avoids stray margin under the heading. */
+	.wpd-section__description:empty {
+		display: none;
+	}
+`;
+  const _WpdSection = class _WpdSection extends Component {
+    render() {
+      const heading = this.heading || "";
+      const description = this.description || "";
+      return html`
+			<h3 class="wpd-section__heading">${heading}</h3>
+			<p class="wpd-section__description">${description}</p>
+			<slot></slot>
+		`;
+    }
+  };
+  _WpdSection.props = ["heading", "description"];
+  _WpdSection.styles = [styles$6];
+  let WpdSection = _WpdSection;
+  defineComponent("wpd-section", WpdSection);
+  const styles$5 = css`
+	:host {
+		display: inline-flex;
+	}
+	button {
+		appearance: none;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 6px;
+		padding: 6px 12px;
+		border-radius: 6px;
+		font: inherit;
+		font-weight: 500;
+		cursor: pointer;
+		transition: background-color 0.12s ease, color 0.12s ease,
+			border-color 0.12s ease;
+		/* Ghost (default) */
+		background: transparent;
+		color: var( --wp-desktop-text, #1d2327 );
+		border: 1px solid var( --wp-desktop-border, #c3c4c7 );
+	}
+	button:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+	button:hover:not( :disabled ) {
+		background: rgba( 0, 0, 0, 0.04 );
+	}
+	/* Primary */
+	:host( [ variant='primary' ] ) button {
+		background: var( --wp-admin-theme-color, #2271b1 );
+		color: #fff;
+		border: 1px solid transparent;
+	}
+	:host( [ variant='primary' ] ) button:hover:not( :disabled ) {
+		filter: brightness( 1.06 );
+		background: var( --wp-admin-theme-color, #2271b1 );
+	}
+	/* Danger */
+	:host( [ variant='danger' ] ) button {
+		background: transparent;
+		color: #d63638;
+		border: 1px solid currentColor;
+	}
+	:host( [ variant='danger' ] ) button:hover:not( :disabled ) {
+		background: #d63638;
+		color: #fff;
+	}
+	/* Link */
+	:host( [ variant='link' ] ) button {
+		background: transparent;
+		color: var( --wp-admin-theme-color, #2271b1 );
+		border: 0;
+		padding: 0;
+		text-decoration: underline;
+	}
+	:host( [ busy ] ) button {
+		pointer-events: none;
+		opacity: 0.75;
+	}
+`;
+  const _WpdButton = class _WpdButton extends Component {
+    render() {
+      const disabled = this.disabled !== null;
+      const type = this.type || "button";
+      return html`
+			<button type=${type} ?disabled=${disabled}>
+				<slot></slot>
+			</button>
+		`;
+    }
+  };
+  _WpdButton.props = ["variant", "disabled", "type", "busy"];
+  _WpdButton.styles = [styles$5];
+  let WpdButton = _WpdButton;
+  defineComponent("wpd-button", WpdButton);
+  const styles$4 = css`
+	:host {
+		display: block;
+		width: 100%;
+		aspect-ratio: 4 / 3;
+	}
+	:host( [ size='small' ] ) {
+		display: inline-block;
+		width: 32px;
+		height: 32px;
+		aspect-ratio: 1 / 1;
+		flex: 0 0 auto;
+	}
+	button {
+		appearance: none;
+		width: 100%;
+		height: 100%;
+		padding: 0;
+		border-radius: 10px;
+		border: 2px solid transparent;
+		cursor: pointer;
+		background-color: #eee;
+		background-size: cover;
+		background-position: center;
+		transition: transform 0.15s ease, border-color 0.15s ease,
+			box-shadow 0.15s ease;
+	}
+	:host( [ size='small' ] ) button {
+		border-radius: 50%;
+	}
+	button:hover {
+		transform: scale( 1.04 );
+	}
+	button[ aria-pressed='true' ] {
+		border-color: var( --wp-admin-theme-color, #2271b1 );
+		box-shadow: 0 0 0 2px var( --wp-admin-theme-color, #2271b1 );
+	}
+`;
+  const _WpdSwatch = class _WpdSwatch extends Component {
+    render() {
+      const selected = this.selected !== null;
+      const label = this.label || "";
+      const preview = this.preview || "";
+      return html`
+			<button
+				type="button"
+				aria-pressed=${selected ? "true" : "false"}
+				aria-label=${label}
+				title=${label}
+				style="background: ${preview}"
+				@click=${() => this._onPick()}
+			></button>
+		`;
+    }
+    _onPick() {
+      this.emit("wpd-pick", {
+        value: this.value
+      });
+    }
+  };
+  _WpdSwatch.props = ["value", "label", "selected", "preview", "size"];
+  _WpdSwatch.styles = [styles$4];
+  let WpdSwatch = _WpdSwatch;
+  defineComponent("wpd-swatch", WpdSwatch);
+  const styles$3 = css`
+	:host {
+		display: grid;
+		grid-template-columns: repeat(
+			var( --wpd-swatch-grid-cols, 4 ),
+			1fr
+		);
+		gap: 12px;
+	}
+	:host( [ mode='row' ] ) {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 10px;
+	}
+`;
+  const _WpdSwatchGrid = class _WpdSwatchGrid extends Component {
+    render() {
+      const label = this.label || "";
+      const cols = this.columns || "";
+      if (cols) {
+        this.style.setProperty("--wpd-swatch-grid-cols", cols);
+      }
+      this.setAttribute("role", "radiogroup");
+      if (label) {
+        this.setAttribute("aria-label", label);
+      }
+      return html`<slot></slot>`;
+    }
+  };
+  _WpdSwatchGrid.props = ["label", "columns", "mode"];
+  _WpdSwatchGrid.styles = [styles$3];
+  let WpdSwatchGrid = _WpdSwatchGrid;
+  defineComponent("wpd-swatch-grid", WpdSwatchGrid);
+  const segmentedStyles = css`
+	:host {
+		display: inline-flex;
+		padding: 3px;
+		background: rgba( 0, 0, 0, 0.05 );
+		border-radius: 7px;
+		gap: 2px;
+	}
+`;
+  const segmentStyles = css`
+	:host {
+		flex: 1;
+	}
+	button {
+		appearance: none;
+		display: block;
+		width: 100%;
+		padding: 8px 12px;
+		background: transparent;
+		border: 0;
+		font: inherit;
+		font-size: 13px;
+		color: var( --wp-desktop-muted, #646970 );
+		cursor: pointer;
+		border-radius: 5px;
+		transition: background-color 0.12s ease, color 0.12s ease;
+	}
+	:host( [ aria-checked='true' ] ) button {
+		background: var( --wp-desktop-window-bg, #fff );
+		color: var( --wp-desktop-text, #1d2327 );
+		box-shadow: 0 1px 3px rgba( 0, 0, 0, 0.12 );
+		font-weight: 500;
+	}
+`;
+  const _WpdSegment = class _WpdSegment extends Component {
+    render() {
+      this.setAttribute("role", "radio");
+      return html`
+			<button type="button" @click=${() => this._onPick()}>
+				<slot></slot>
+			</button>
+		`;
+    }
+    _onPick() {
+      this.emit("wpd-segment-pick", {
+        value: this.value
+      });
+    }
+  };
+  _WpdSegment.props = ["value"];
+  _WpdSegment.styles = [segmentStyles];
+  let WpdSegment = _WpdSegment;
+  defineComponent("wpd-segment", WpdSegment);
+  const _WpdSegmented = class _WpdSegmented extends Component {
+    connectedCallback() {
+      super.connectedCallback();
+      this.addEventListener("wpd-segment-pick", (e) => {
+        const detail = e.detail;
+        e.stopPropagation();
+        this.value = detail.value;
+        this.emit("wpd-pick", { value: detail.value });
+      });
+    }
+    render() {
+      const label = this.label || "";
+      if (label) {
+        this.setAttribute("aria-label", label);
+      }
+      this.setAttribute("role", "radiogroup");
+      const current = this.value;
+      queueMicrotask(() => {
+        const segs = this.querySelectorAll("wpd-segment");
+        for (const seg of Array.from(segs)) {
+          const v = seg.getAttribute("value");
+          seg.setAttribute(
+            "aria-checked",
+            v === current ? "true" : "false"
+          );
+        }
+      });
+      return html`<slot></slot>`;
+    }
+  };
+  _WpdSegmented.props = ["value", "label"];
+  _WpdSegmented.styles = [segmentedStyles];
+  let WpdSegmented = _WpdSegmented;
+  defineComponent("wpd-segmented", WpdSegmented);
+  const styles$2 = css`
+	:host {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		font-size: 12px;
+		color: var( --wp-desktop-muted, #646970 );
+	}
+	label {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+	}
+	input[ type='color' ] {
+		width: 28px;
+		height: 28px;
+		padding: 0;
+		border: 1px solid var( --wp-desktop-border, #c3c4c7 );
+		border-radius: 6px;
+		background: transparent;
+		cursor: pointer;
+	}
+`;
+  const _WpdColorField = class _WpdColorField extends Component {
+    render() {
+      const label = this.label || "";
+      const value = this.value || "#000000";
+      return html`
+			<label>
+				<span class="wpd-color-field__label">${label}</span>
+				<input
+					type="color"
+					.value=${value}
+					@input=${(e) => this._onInput(e)}
+				/>
+			</label>
+		`;
+    }
+    _onInput(e) {
+      const input = e.target;
+      this.value = input.value;
+      this.emit("wpd-color-change", { value: input.value });
+    }
+  };
+  _WpdColorField.props = ["label", "value"];
+  _WpdColorField.styles = [styles$2];
+  let WpdColorField = _WpdColorField;
+  defineComponent("wpd-color-field", WpdColorField);
+  const styles$1 = css`
+	:host {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		font-size: 12px;
+		color: var( --wp-desktop-muted, #646970 );
+	}
+	input[ type='range' ] {
+		flex: 1;
+		accent-color: var( --wp-admin-theme-color, #2271b1 );
+	}
+	.wpd-range-field__value {
+		min-width: 3ch;
+		text-align: end;
+		font-variant-numeric: tabular-nums;
+		color: var( --wp-desktop-text, #1d2327 );
+	}
+`;
+  const _WpdRangeField = class _WpdRangeField extends Component {
+    render() {
+      const label = this.label || "";
+      const value = this.value || "0";
+      const min = this.min || "0";
+      const max = this.max || "100";
+      const step2 = this.step || "1";
+      const suffix = this.suffix || "";
+      return html`
+			<label class="wpd-range-field__label">${label}</label>
+			<input
+				type="range"
+				min=${min}
+				max=${max}
+				step=${step2}
+				.value=${value}
+				@input=${(e) => this._onInput(e)}
+			/>
+			<span class="wpd-range-field__value">${value}${suffix}</span>
+		`;
+    }
+    _onInput(e) {
+      const input = e.target;
+      const n = parseFloat(input.value);
+      if (!Number.isFinite(n)) {
+        return;
+      }
+      this.value = String(n);
+      this.emit("wpd-range-change", { value: n });
+    }
+  };
+  _WpdRangeField.props = ["label", "value", "min", "max", "step", "suffix"];
+  _WpdRangeField.styles = [styles$1];
+  let WpdRangeField = _WpdRangeField;
+  defineComponent("wpd-range-field", WpdRangeField);
+  const styles = css`
+	:host {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 12px;
+		color: var( --wp-desktop-text, #1d2327 );
+		cursor: pointer;
+	}
+	label {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		cursor: pointer;
+	}
+	input[ type='checkbox' ] {
+		accent-color: var( --wp-admin-theme-color, #2271b1 );
+		cursor: pointer;
+	}
+`;
+  const _WpdCheckboxLabel = class _WpdCheckboxLabel extends Component {
+    render() {
+      const label = this.label || "";
+      const checked = this.checked !== null;
+      return html`
+			<label>
+				<input
+					type="checkbox"
+					?checked=${checked}
+					@change=${(e) => this._onChange(e)}
+				/>
+				<span class="wpd-checkbox-label__text">${label}</span>
+			</label>
+		`;
+    }
+    _onChange(e) {
+      const next = e.target.checked;
+      if (next) {
+        this.setAttribute("checked", "");
+      } else {
+        this.removeAttribute("checked");
+      }
+      this.emit("wpd-checkbox-change", { checked: next });
+    }
+  };
+  _WpdCheckboxLabel.props = ["label", "checked"];
+  _WpdCheckboxLabel.styles = [styles];
+  let WpdCheckboxLabel = _WpdCheckboxLabel;
+  defineComponent("wpd-checkbox-label", WpdCheckboxLabel);
+  const tabsStyles = css`
+	:host {
+		display: flex;
+		gap: 4px;
+		margin-bottom: 10px;
+		border-bottom: 1px solid var( --wp-desktop-border, #dcdcde );
+	}
+`;
+  const tabStyles = css`
+	:host {
+		display: inline-block;
+	}
+	button {
+		appearance: none;
+		padding: 6px 10px;
+		border: none;
+		background: transparent;
+		color: var( --wp-desktop-muted, #50575e );
+		font: inherit;
+		font-size: 12px;
+		font-weight: 500;
+		cursor: pointer;
+		border-bottom: 2px solid transparent;
+		margin-bottom: -1px;
+		transition: color 0.15s ease, border-color 0.15s ease;
+	}
+	button:hover {
+		color: var( --wp-admin-theme-color, #2271b1 );
+	}
+	button:focus-visible {
+		outline: 2px solid var( --wp-admin-theme-color, #2271b1 );
+		outline-offset: 2px;
+	}
+	:host( [ aria-selected='true' ] ) button {
+		color: var( --wp-admin-theme-color, #2271b1 );
+		border-bottom-color: var( --wp-admin-theme-color, #2271b1 );
+	}
+`;
+  const _WpdTab = class _WpdTab extends Component {
+    render() {
+      this.setAttribute("role", "tab");
+      return html`
+			<button type="button" @click=${() => this._onPick()}>
+				<slot></slot>
+			</button>
+		`;
+    }
+    _onPick() {
+      this.emit("wpd-tab-pick", {
+        value: this.value
+      });
+    }
+  };
+  _WpdTab.props = ["value"];
+  _WpdTab.styles = [tabStyles];
+  let WpdTab = _WpdTab;
+  defineComponent("wpd-tab", WpdTab);
+  const _WpdTabs = class _WpdTabs extends Component {
+    connectedCallback() {
+      super.connectedCallback();
+      this.addEventListener("wpd-tab-pick", (e) => {
+        const detail = e.detail;
+        e.stopPropagation();
+        this.value = detail.value;
+        this.emit("wpd-tab-change", { value: detail.value });
+      });
+    }
+    render() {
+      this.setAttribute("role", "tablist");
+      const label = this.label || "";
+      if (label) {
+        this.setAttribute("aria-label", label);
+      }
+      const current = this.value;
+      queueMicrotask(() => {
+        const tabs = this.querySelectorAll("wpd-tab");
+        for (const tab of Array.from(tabs)) {
+          const v = tab.getAttribute("value");
+          tab.setAttribute(
+            "aria-selected",
+            v === current ? "true" : "false"
+          );
+          tab.setAttribute("tabindex", v === current ? "0" : "-1");
+        }
+      });
+      return html`<slot></slot>`;
+    }
+  };
+  _WpdTabs.props = ["value", "label"];
+  _WpdTabs.styles = [tabsStyles];
+  let WpdTabs = _WpdTabs;
+  defineComponent("wpd-tabs", WpdTabs);
   const STORAGE_KEY$1 = "wp-desktop-os-settings";
   const HD_MIN_WIDTH = 1920;
   const HD_MIN_HEIGHT = 1080;
@@ -3509,8 +4660,10 @@ var wpDesktop = function(exports) {
     // Wallpaper section — registry-driven grid + editor slot + image UI
     // ------------------------------------------------------------------
     buildWallpaperSection(body) {
-      const section = this.buildSection(
-        __("Wallpaper"),
+      const section = document.createElement("wpd-section");
+      section.setAttribute("heading", __("Wallpaper"));
+      section.setAttribute(
+        "description",
         __(
           "The backdrop behind your windows. Pick a preset, mix your own gradient, or drop in an image."
         )
@@ -3701,7 +4854,7 @@ var wpDesktop = function(exports) {
       };
     }
     syncGradientPreviewSwatch(editorEl) {
-      const section = editorEl.closest(".wp-desktop-os-settings__section");
+      const section = editorEl.closest("wpd-section");
       const preview = section?.querySelector(
         `[data-wallpaper-id="${CUSTOM_GRADIENT_ID}"]`
       );
@@ -3723,52 +4876,40 @@ var wpDesktop = function(exports) {
       heading.className = "wp-desktop-os-settings__uploader-heading";
       heading.textContent = __("Or use your own image");
       wrap.appendChild(heading);
-      const tabList = document.createElement("div");
-      tabList.className = "wp-desktop-os-settings__tabs";
-      tabList.setAttribute("role", "tablist");
+      const tabDefs = [];
       const pane = document.createElement("div");
       pane.className = "wp-desktop-os-settings__tab-pane";
-      const tabs = [];
       if (this.config.canUpload) {
-        tabs.push({
+        tabDefs.push({
           key: "upload",
           label: __("Upload new"),
           render: () => this.renderUploadPane(pane, body)
         });
       }
-      tabs.push({
+      tabDefs.push({
         key: "library",
         label: __("Media Library"),
         render: () => this.renderLibraryPane(pane, body)
       });
-      const tabButtons = /* @__PURE__ */ new Map();
-      let activeTab = tabs[0].key;
-      const activateTab = (key) => {
-        activeTab = key;
-        for (const [k, btn] of tabButtons) {
-          const isActive = k === key;
-          btn.classList.toggle("wp-desktop-os-settings__tab--active", isActive);
-          btn.setAttribute("aria-selected", isActive ? "true" : "false");
-          btn.tabIndex = isActive ? 0 : -1;
-        }
-        const def = tabs.find((t) => t.key === key);
-        def?.render();
-      };
-      for (const tab of tabs) {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "wp-desktop-os-settings__tab";
-        btn.setAttribute("role", "tab");
-        btn.textContent = tab.label;
-        btn.addEventListener("click", () => activateTab(tab.key));
-        tabButtons.set(tab.key, btn);
-        tabList.appendChild(btn);
+      const initialKey = tabDefs[0].key;
+      const tabsEl = document.createElement("wpd-tabs");
+      tabsEl.setAttribute("value", initialKey);
+      tabsEl.setAttribute("label", __("Image source"));
+      for (const def of tabDefs) {
+        const tab = document.createElement("wpd-tab");
+        tab.setAttribute("value", def.key);
+        tab.textContent = def.label;
+        tabsEl.appendChild(tab);
       }
-      if (tabs.length > 1) {
-        wrap.appendChild(tabList);
+      tabsEl.addEventListener("wpd-tab-change", (e) => {
+        const key = e.detail.value;
+        tabDefs.find((t) => t.key === key)?.render();
+      });
+      if (tabDefs.length > 1) {
+        wrap.appendChild(tabsEl);
       }
       wrap.appendChild(pane);
-      activateTab(activeTab);
+      tabDefs.find((t) => t.key === initialKey)?.render();
       return wrap;
     }
     renderUploadPane(pane, body) {
@@ -4184,86 +5325,79 @@ var wpDesktop = function(exports) {
       return { id: data.id, url: data.source_url };
     }
     // ------------------------------------------------------------------
-    // Accent + dock-size sections (unchanged)
+    // Accent + dock-size sections — composed from wpd-ui atoms
+    // (<wpd-section>, <wpd-swatch>, <wpd-swatch-grid>, <wpd-segmented>,
+    // <wpd-segment>). Previously hand-rolled DOM; the atoms cover the
+    // grid layout, selection state, a11y semantics, and event wiring.
     // ------------------------------------------------------------------
     buildAccentSection() {
-      const section = this.buildSection(
-        __("Accent color"),
+      const section = document.createElement("wpd-section");
+      section.setAttribute("heading", __("Accent color"));
+      section.setAttribute(
+        "description",
         __("Used in focused window title bars, buttons, and focus rings.")
       );
-      const grid = document.createElement("div");
-      grid.className = "wp-desktop-os-settings__grid wp-desktop-os-settings__grid--accents";
+      const grid = document.createElement("wpd-swatch-grid");
+      grid.setAttribute("label", __("Accent color"));
+      grid.setAttribute("mode", "row");
       for (const accent of ACCENTS) {
         const label = translateAccentLabel(accent.id, accent.label);
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "wp-desktop-os-settings__swatch wp-desktop-os-settings__swatch--accent";
-        btn.setAttribute("aria-label", label);
-        btn.setAttribute(
-          "aria-pressed",
-          this.state.accent === accent.id ? "true" : "false"
-        );
-        btn.dataset.id = accent.id;
-        btn.style.background = accent.value;
-        btn.title = label;
-        btn.addEventListener("click", () => {
-          this.state.accent = accent.id;
-          this.save();
-          this.apply();
-          this.refreshSelected(grid, accent.id);
-        });
-        grid.appendChild(btn);
+        const swatch = document.createElement("wpd-swatch");
+        swatch.setAttribute("value", accent.id);
+        swatch.setAttribute("label", label);
+        swatch.setAttribute("preview", accent.value);
+        swatch.setAttribute("size", "small");
+        if (this.state.accent === accent.id) {
+          swatch.setAttribute("selected", "");
+        }
+        grid.appendChild(swatch);
       }
+      grid.addEventListener("wpd-pick", (e) => {
+        const id = e.detail?.value ?? "";
+        if (!ACCENTS.some((a) => a.id === id)) {
+          return;
+        }
+        this.state.accent = id;
+        this.save();
+        this.apply();
+        for (const child of Array.from(grid.children)) {
+          if (child.getAttribute("value") === id) {
+            child.setAttribute("selected", "");
+          } else {
+            child.removeAttribute("selected");
+          }
+        }
+      });
       section.appendChild(grid);
       return section;
     }
     buildDockSizeSection() {
-      const section = this.buildSection(
-        __("Dock size"),
+      const section = document.createElement("wpd-section");
+      section.setAttribute("heading", __("Dock size"));
+      section.setAttribute(
+        "description",
         __("Width of the dock and size of its icons.")
       );
-      const group = document.createElement("div");
-      group.className = "wp-desktop-os-settings__segmented";
-      group.setAttribute("role", "radiogroup");
+      const group = document.createElement("wpd-segmented");
+      group.setAttribute("value", this.state.dockSize);
+      group.setAttribute("label", __("Dock size"));
       for (const size of DOCK_SIZES) {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "wp-desktop-os-settings__segment";
-        btn.setAttribute("role", "radio");
-        btn.setAttribute(
-          "aria-checked",
-          this.state.dockSize === size.id ? "true" : "false"
-        );
-        btn.dataset.id = size.id;
-        btn.textContent = translateDockSizeLabel(size.id, size.label);
-        btn.addEventListener("click", () => {
-          this.state.dockSize = size.id;
-          this.save();
-          this.apply();
-          this.refreshSelected(group, size.id, "aria-checked");
-        });
-        group.appendChild(btn);
+        const seg = document.createElement("wpd-segment");
+        seg.setAttribute("value", size.id);
+        seg.textContent = translateDockSizeLabel(size.id, size.label);
+        group.appendChild(seg);
       }
+      group.addEventListener("wpd-pick", (e) => {
+        const id = e.detail?.value ?? "";
+        if (!DOCK_SIZES.some((d) => d.id === id)) {
+          return;
+        }
+        this.state.dockSize = id;
+        this.save();
+        this.apply();
+      });
       section.appendChild(group);
       return section;
-    }
-    buildSection(title, description) {
-      const section = document.createElement("section");
-      section.className = "wp-desktop-os-settings__section";
-      const heading = document.createElement("h3");
-      heading.className = "wp-desktop-os-settings__heading";
-      heading.textContent = title;
-      section.appendChild(heading);
-      const desc = document.createElement("p");
-      desc.className = "wp-desktop-os-settings__desc";
-      desc.textContent = description;
-      section.appendChild(desc);
-      return section;
-    }
-    refreshSelected(container, id, attr = "aria-pressed") {
-      container.querySelectorAll("[data-id]").forEach((el) => {
-        el.setAttribute(attr, el.dataset.id === id ? "true" : "false");
-      });
     }
     // ------------------------------------------------------------------
     // Persistence
@@ -4343,12 +5477,12 @@ var wpDesktop = function(exports) {
     const d = item.media_details;
     return !!d && typeof d.width === "number" && typeof d.height === "number" && d.width > 0 && d.height > 0;
   }
-  function stripHtml(html) {
-    if (!html) {
+  function stripHtml(html2) {
+    if (!html2) {
       return "";
     }
     const el = document.createElement("div");
-    el.innerHTML = html;
+    el.innerHTML = html2;
     return el.textContent?.trim() || "";
   }
   function isPromise(value) {
@@ -5132,7 +6266,7 @@ var wpDesktop = function(exports) {
       const date = document.createElement("div");
       date.className = "wp-desktop-widget-clock__date";
       container.appendChild(date);
-      const render = () => {
+      const render2 = () => {
         const now = /* @__PURE__ */ new Date();
         time.textContent = now.toLocaleTimeString(void 0, {
           hour: "2-digit",
@@ -5144,12 +6278,12 @@ var wpDesktop = function(exports) {
           day: "numeric"
         });
       };
-      render();
+      render2();
       const msUntilNextSecond = 1e3 - Date.now() % 1e3;
       let interval = null;
       const kickoff = window.setTimeout(() => {
-        render();
-        interval = window.setInterval(render, 1e3);
+        render2();
+        interval = window.setInterval(render2, 1e3);
       }, msUntilNextSecond);
       return () => {
         window.clearTimeout(kickoff);

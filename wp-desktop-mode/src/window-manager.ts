@@ -75,6 +75,67 @@ export class WindowManager {
 			);
 			this.desktopResizeObserver.observe( desktop );
 		}
+		this.installIframeFocusBridge();
+	}
+
+	/**
+	 * Clicks inside an iframe don't cross the browsing-context
+	 * boundary — pointerdown / focusin in the iframe's document
+	 * never reach the parent. BUT the parent `window` does lose
+	 * focus, because focus moves to the iframe's content window.
+	 *
+	 * We use that signal: listen for `window.blur` on the parent,
+	 * check `document.activeElement` — if it's an iframe, walk up
+	 * to its owning `.wp-desktop-window`, find the matching Window
+	 * in our stack, and focus it. Covers clicks on the primary
+	 * iframe AND any external-tab sub-iframes mounted as
+	 * descendants of the window element.
+	 *
+	 * One listener at the window level is cheaper than N per-window
+	 * listeners and doesn't require passing anything through Window
+	 * instances that aren't already exposed.
+	 */
+	private installIframeFocusBridge(): void {
+		window.addEventListener( 'blur', () => {
+			// The blur happens BEFORE `document.activeElement` is
+			// fully updated in some engines. A 0-ms defer lines us
+			// up with the activeElement state after the browser has
+			// committed the focus shift.
+			window.setTimeout( () => {
+				// The WP lint rule prefers `ownerDocument.activeElement`
+				// over the global — our desktop element is a reliable
+				// handle back to the owning document.
+				const active =
+					this.desktop.ownerDocument?.activeElement ?? null;
+				if ( ! active || active.tagName !== 'IFRAME' ) {
+					return;
+				}
+				const winEl = active.closest<HTMLElement>(
+					'.wp-desktop-window',
+				);
+				if ( ! winEl ) {
+					return;
+				}
+				const id = winEl.id.replace( /^wp-window-/, '' );
+				const win = this.getById( id );
+				if ( ! win ) {
+					return;
+				}
+				// Skip while overview is active — pointer events
+				// are driven by the dedicated overview capture
+				// handler there.
+				if ( this.overviewActive ) {
+					return;
+				}
+				// Already focused? The focus() call reorders the
+				// stack as a no-op but still fires the action
+				// hook — skip that.
+				if ( this.getFocused() === win ) {
+					return;
+				}
+				this.focus( win );
+			}, 0 );
+		} );
 	}
 
 	/**

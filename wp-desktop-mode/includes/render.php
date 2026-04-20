@@ -548,6 +548,30 @@ function wpdm_chromeless_bridge_script() {
 		}
 	}, true );
 
+	/*
+	 * Focus-request bridge.
+	 *
+	 * Clicks inside an iframe don't cross the browsing-context
+	 * boundary — the parent shell's pointerdown / focusin listeners
+	 * never see them, so without this hook the only way to focus an
+	 * iframe window would be clicking its title bar chrome. Post a
+	 * `wp-desktop-focus-request` message on every pointerdown; the
+	 * parent Window class treats it as an onFocusRequest. Capture
+	 * phase so the signal fires before any stopPropagation inside
+	 * a page's own handlers.
+	 */
+	document.addEventListener( 'pointerdown', function () {
+		try {
+			window.parent.postMessage(
+				{ type: 'wp-desktop-focus-request' },
+				window.location.origin
+			);
+		} catch ( err ) {
+			/* cross-origin parent (shouldn't happen for chromeless
+			 * pages, but don't let a throw break the bridge) */
+		}
+	}, true );
+
 	var links = document.getElementById( 'screen-meta-links' );
 	if ( ! links ) {
 		return;

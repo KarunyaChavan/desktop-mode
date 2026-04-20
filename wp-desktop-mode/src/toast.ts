@@ -8,31 +8,33 @@
  * the URL in a real browser tab. Expected to pick up more callers
  * over time (save failures, shortcut reminders, etc.).
  *
- * Single shared container lives under `<body>`; each toast is an
- * absolutely-positioned card that fades in, sits for its duration,
- * then fades out and removes itself. No persistent queue — if two
- * toasts fire in quick succession, both show stacked.
+ * Rendering lives in the `<wpd-toast-container>` + `<wpd-toast>`
+ * web components under `src/ui/components/wpd-toast/`. This file
+ * owns only the public `showToast()` API + the lifecycle (fade
+ * in / stay / fade out / remove).
  *
  * @since 0.7.0
  */
 
-/** Class on the shared container; also the CSS anchor for stacking. */
-const CONTAINER_CLASS = 'wp-desktop-toast-container';
+import './ui/components/wpd-toast/wpd-toast';
 
 /** Default how-long-it-stays duration in ms. */
 const DEFAULT_DURATION_MS = 4000;
 
-/** Fade-out transition duration in ms — keeps JS + CSS in sync. */
+/**
+ * Fade-out transition duration in ms — keeps JS + CSS in sync.
+ * Must match the `:host` transition on `<wpd-toast>`.
+ */
 const FADE_OUT_MS = 200;
 
 export interface ToastOptions {
 	/** Short human-readable message. */
 	message: string;
 	/**
-	 * Optional secondary action — when set, renders a clickable link
-	 * at the toast's right edge. Great for "Retry", "Open in new tab",
-	 * "Undo" affordances. Clicking fires the callback and dismisses
-	 * the toast.
+	 * Optional secondary action — when set, renders a clickable
+	 * button at the toast's right edge. Great for "Retry", "Open
+	 * in new tab", "Undo" affordances. Clicking fires the callback
+	 * and dismisses the toast.
 	 */
 	action?: {
 		label: string;
@@ -48,25 +50,15 @@ export interface ToastOptions {
  */
 export function showToast( options: ToastOptions ): () => void {
 	const container = ensureContainer();
-	const toast = document.createElement( 'div' );
-	toast.className = 'wp-desktop-toast';
-	toast.setAttribute( 'role', 'status' );
-
-	const label = document.createElement( 'span' );
-	label.className = 'wp-desktop-toast__label';
-	label.textContent = options.message;
-	toast.appendChild( label );
+	const toast = document.createElement( 'wpd-toast' );
+	toast.textContent = options.message;
 
 	if ( options.action ) {
-		const btn = document.createElement( 'button' );
-		btn.type = 'button';
-		btn.className = 'wp-desktop-toast__action';
-		btn.textContent = options.action.label;
-		btn.addEventListener( 'click', () => {
+		toast.setAttribute( 'action', options.action.label );
+		toast.addEventListener( 'wpd-toast-action', () => {
 			options.action?.onClick();
 			dismiss();
 		} );
-		toast.appendChild( btn );
 	}
 
 	container.appendChild( toast );
@@ -82,16 +74,16 @@ export function showToast( options: ToastOptions ): () => void {
 			window.clearTimeout( dismissTimer );
 			dismissTimer = null;
 		}
-		toast.classList.add( 'wp-desktop-toast--out' );
+		toast.setAttribute( 'state', 'out' );
 		window.setTimeout( () => {
 			toast.remove();
 		}, FADE_OUT_MS );
 	};
 
-	// Enter animation — add the class on the next frame so the browser
-	// has painted the initial (hidden) state, guaranteeing a transition.
+	// Enter animation — flip `state` to `'in'` on the next frame so
+	// the browser has painted the initial (hidden) state first.
 	requestAnimationFrame( () => {
-		toast.classList.add( 'wp-desktop-toast--in' );
+		toast.setAttribute( 'state', 'in' );
 	} );
 
 	dismissTimer = window.setTimeout(
@@ -102,16 +94,19 @@ export function showToast( options: ToastOptions ): () => void {
 	return dismiss;
 }
 
+/**
+ * Lazy-construct the shared container. Querying by tag name (vs
+ * by class) keeps us aligned with how web components are
+ * identified everywhere else in the codebase.
+ */
 function ensureContainer(): HTMLElement {
 	const existing = document.querySelector<HTMLElement>(
-		`.${ CONTAINER_CLASS }`,
+		'wpd-toast-container',
 	);
 	if ( existing ) {
 		return existing;
 	}
-	const el = document.createElement( 'div' );
-	el.className = CONTAINER_CLASS;
-	el.setAttribute( 'aria-live', 'polite' );
+	const el = document.createElement( 'wpd-toast-container' );
 	document.body.appendChild( el );
 	return el;
 }

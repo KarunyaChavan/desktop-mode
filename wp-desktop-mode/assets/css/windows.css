@@ -659,25 +659,20 @@
 	color: #50575e;
 }
 
-.wp-desktop-os-settings__section {
+/*
+ * Card styling for each OS-Settings section. `<wpd-section>`'s
+ * shadow DOM handles the heading + description; the outer card
+ * (padding, background, border) lives here because it's a
+ * per-surface visual choice, not a property of the component
+ * itself. Targets the tag so shadow-DOM internals stay private.
+ */
+.wp-desktop-os-settings wpd-section {
+	display: block;
 	margin: 0 0 20px;
 	padding: 16px 16px 18px;
 	background: #f6f7f7;
 	border: 1px solid #dcdcde;
 	border-radius: 8px;
-}
-
-.wp-desktop-os-settings__heading {
-	margin: 0 0 4px;
-	font-size: 14px;
-	font-weight: 600;
-	color: #1d2327;
-}
-
-.wp-desktop-os-settings__desc {
-	margin: 0 0 12px;
-	color: #646970;
-	font-size: 12px;
 }
 
 .wp-desktop-os-settings__grid {
@@ -718,57 +713,37 @@
 	box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.9) inset;
 }
 
-.wp-desktop-os-settings__swatch--accent {
-	width: 36px;
-	height: 36px;
-	border-radius: 50%;
-	padding: 0;
-}
-
+/*
+ * Wallpaper preset label — sits above the gradient/image preview.
+ * Presets span the full tonal range (graphite dark, mono near-
+ * black, aurora blue, sunset hot pink) so neither pure white nor
+ * pure black text is universally readable. A frosted glass chip
+ * behind the text gives the label its own local contrast that's
+ * legible on every preset and respects the tile's visual language
+ * (rounded pill shape matches the selected-state corners).
+ */
 .wp-desktop-os-settings__swatch-label {
-	color: #fff;
+	display: inline-block;
+	padding: 3px 10px;
 	font-size: 11px;
 	font-weight: 600;
-	text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
-}
-
-.wp-desktop-os-settings__segmented {
-	display: inline-flex;
-	background: #fff;
-	border: 1px solid #dcdcde;
-	border-radius: 6px;
-	overflow: hidden;
-}
-
-.wp-desktop-os-settings__segment {
-	padding: 6px 14px;
-	border: none;
-	background: transparent;
-	color: #50575e;
-	font: inherit;
-	font-size: 12px;
-	cursor: pointer;
-	transition: background-color 0.15s ease, color 0.15s ease;
-}
-
-.wp-desktop-os-settings__segment + .wp-desktop-os-settings__segment {
-	border-inline-start: 1px solid #dcdcde;
-}
-
-.wp-desktop-os-settings__segment:hover {
-	background: rgba(0, 0, 0, 0.04);
-	color: #1d2327;
-}
-
-.wp-desktop-os-settings__segment[aria-checked="true"] {
-	background: var(--wp-admin-theme-color, #2271b1);
 	color: #fff;
+	background: rgba(0, 0, 0, 0.45);
+	backdrop-filter: blur(8px) saturate(160%);
+	-webkit-backdrop-filter: blur(8px) saturate(160%);
+	border-radius: 999px;
+	text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+	letter-spacing: 0.01em;
+	/* Stop the chip from hugging the swatch edge — the 6 8 padding
+	 * on the parent already gives a gap, but this keeps things
+	 * consistent if the parent padding is ever tuned. */
+	pointer-events: none;
 }
 
-.wp-desktop-os-settings__segment:focus-visible {
-	outline: 2px solid var(--wp-admin-theme-color, #2271b1);
-	outline-offset: -2px;
-}
+/* Accent swatches now render as `<wpd-swatch>` via `<wpd-swatch-grid>`.
+ * The old `__swatch--accent` / `__swatch-label` / `__segmented` /
+ * `__segment` rules moved into those component shadow-DOM
+ * stylesheets; nothing at host level needs to override them. */
 
 .wp-desktop-os-settings__footer {
 	display: flex;
@@ -807,7 +782,13 @@
  * Firefox 128+). On older engines the transition is simply skipped —
  * the editor still appears, just without the glide.
  * --------------------------------------------------------------- */
-.wp-desktop-os-settings__gradient-editor {
+/*
+ * Editor slot — the per-wallpaper panel that slides in below the
+ * swatch grid when a wallpaper with `renderEditor` is selected.
+ * Collapses via the grid-template-rows 0fr → 1fr trick; TS drives
+ * the `[data-expanded]` attribute on the slot wrapper.
+ */
+.wp-desktop-os-settings__editor-slot {
 	display: grid;
 	grid-template-rows: 0fr;
 	margin-top: 0;
@@ -818,19 +799,30 @@
 		opacity 0.2s ease;
 }
 
-.wp-desktop-os-settings__gradient-editor[data-expanded="true"] {
+.wp-desktop-os-settings__editor-slot[data-expanded="true"] {
 	grid-template-rows: 1fr;
 	margin-top: 12px;
 	opacity: 1;
 }
 
-.wp-desktop-os-settings__gradient-editor-inner {
+.wp-desktop-os-settings__editor-slot-inner {
 	overflow: hidden;
 	min-height: 0;
 	padding: 12px;
 	background: #fff;
 	border: 1px solid #dcdcde;
 	border-radius: 6px;
+}
+
+/*
+ * Custom-gradient editor fills the inner slot. Kept as a separate
+ * class (vs. scoping to __editor-slot-inner) so a future plugin
+ * renderEditor can opt out of these per-control rules.
+ */
+.wp-desktop-os-settings__gradient-editor-inner {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
 }
 
 .wp-desktop-os-settings__gradient-row {
@@ -911,16 +903,6 @@
 	color: #50575e;
 	text-transform: uppercase;
 	letter-spacing: 0.04em;
-}
-
-.wp-desktop-os-settings__uploader-notice {
-	margin: 0;
-	padding: 12px;
-	background: #fff;
-	border: 1px dashed #dcdcde;
-	border-radius: 6px;
-	color: #646970;
-	font-size: 12px;
 }
 
 .wp-desktop-os-settings__file-input {
@@ -1067,48 +1049,10 @@
 	outline-offset: 2px;
 }
 
-/* ---------------------------------------------------------------
- * Tabs for the custom-image section (Upload / Media Library).
- *
- * WP-admin-native look: a horizontal list of underline-style tabs.
- * Deliberately understated — the heading above already tells the
- * user what the section is for.
- * --------------------------------------------------------------- */
-.wp-desktop-os-settings__tabs {
-	display: flex;
-	gap: 4px;
-	margin-bottom: 10px;
-	border-bottom: 1px solid #dcdcde;
-}
-
-.wp-desktop-os-settings__tab {
-	padding: 6px 10px;
-	border: none;
-	background: transparent;
-	color: #50575e;
-	font: inherit;
-	font-size: 12px;
-	font-weight: 500;
-	cursor: pointer;
-	border-bottom: 2px solid transparent;
-	margin-bottom: -1px;
-	transition: color 0.15s ease, border-color 0.15s ease;
-}
-
-.wp-desktop-os-settings__tab:hover {
-	color: var(--wp-admin-theme-color, #2271b1);
-}
-
-.wp-desktop-os-settings__tab:focus-visible {
-	outline: 2px solid var(--wp-admin-theme-color, #2271b1);
-	outline-offset: 2px;
-}
-
-.wp-desktop-os-settings__tab--active {
-	color: var(--wp-admin-theme-color, #2271b1);
-	border-bottom-color: var(--wp-admin-theme-color, #2271b1);
-}
-
+/* Tab strip moved into `<wpd-tabs>` + `<wpd-tab>`
+ * (src/ui/components/wpd-tabs/). Only the surrounding pane keeps
+ * a host-level rule — it's an OS-Settings layout choice, not
+ * component-intrinsic. */
 .wp-desktop-os-settings__tab-pane {
 	min-height: 140px;
 }
@@ -1306,15 +1250,13 @@
  * a glance rather than spread across each rule.
  * --------------------------------------------------------------- */
 @media (prefers-reduced-motion: reduce) {
-	.wp-desktop-os-settings__gradient-editor,
+	.wp-desktop-os-settings__editor-slot,
 	.wp-desktop-os-settings__swatch,
 	.wp-desktop-os-settings__upload-tile,
 	.wp-desktop-os-settings__upload-remove,
 	.wp-desktop-os-settings__library-tile,
 	.wp-desktop-os-settings__library-load-more,
-	.wp-desktop-os-settings__tab,
-	.wp-desktop-os-settings__reset,
-	.wp-desktop-os-settings__segment {
+	.wp-desktop-os-settings__reset {
 		transition-duration: 0.01ms !important;
 	}
 
@@ -1875,83 +1817,6 @@
 	cursor: nesw-resize;
 }
 
-/* ---------------------------------------------------------------
- * Toast — transient top-of-shell notification.
- *
- * Container lives under <body>; toasts stack vertically at the
- * top-right of the viewport. Each toast fades in on its first
- * paint (via the --in class added on rAF), sits for its duration,
- * then fades out (--out class triggers the transition).
- * --------------------------------------------------------------- */
-.wp-desktop-toast-container {
-	position: fixed;
-	top: calc( var( --wp-admin--admin-bar--height, 32px ) + 16px );
-	inset-inline-end: 16px;
-	display: flex;
-	flex-direction: column;
-	gap: 8px;
-	z-index: calc( var( --wp-desktop-z-fullscreen, 99999 ) + 10 );
-	pointer-events: none;
-}
-
-.wp-desktop-toast {
-	display: flex;
-	align-items: center;
-	gap: 12px;
-	min-width: 280px;
-	max-width: 420px;
-	padding: 10px 14px;
-	background: #1d2327;
-	color: #fff;
-	border-radius: 8px;
-	box-shadow: 0 8px 24px rgba( 0, 0, 0, 0.2 ), 0 2px 6px rgba( 0, 0, 0, 0.1 );
-	font-size: 13px;
-	line-height: 1.4;
-	opacity: 0;
-	transform: translateY( -8px );
-	transition: opacity 0.18s ease, transform 0.18s ease;
-	pointer-events: auto;
-}
-
-.wp-desktop-toast--in {
-	opacity: 1;
-	transform: translateY( 0 );
-}
-
-.wp-desktop-toast--out {
-	opacity: 0;
-	transform: translateY( -8px );
-}
-
-.wp-desktop-toast__label {
-	flex: 1;
-}
-
-.wp-desktop-toast__action {
-	flex-shrink: 0;
-	padding: 4px 10px;
-	border: none;
-	border-radius: 4px;
-	background: rgba( 255, 255, 255, 0.12 );
-	color: #fff;
-	font: inherit;
-	font-size: 12px;
-	font-weight: 500;
-	cursor: pointer;
-	transition: background-color 0.12s ease;
-}
-
-.wp-desktop-toast__action:hover {
-	background: rgba( 255, 255, 255, 0.22 );
-}
-
-.wp-desktop-toast__action:focus-visible {
-	outline: 2px solid rgba( 255, 255, 255, 0.6 );
-	outline-offset: 2px;
-}
-
-@media ( prefers-reduced-motion: reduce ) {
-	.wp-desktop-toast {
-		transition-duration: 0.01ms;
-	}
-}
+/* Toast styling moved into `<wpd-toast-container>` and `<wpd-toast>`
+ * (src/ui/components/wpd-toast/). The components own their shadow
+ * DOM styling; nothing at host level needs to reach inside. */

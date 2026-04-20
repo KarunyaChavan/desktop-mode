@@ -566,6 +566,19 @@ export class Window {
 			this.onFocusRequest?.( this );
 		} );
 
+		// Keyboard / tab-into-iframe path: `focusin` bubbles when the
+		// iframe ELEMENT itself receives focus in the parent's DOM
+		// (Tab key from outside, or the first keyboard focus of the
+		// session). Does NOT cover mouse clicks inside the iframe —
+		// those are handled by the shell-level window.blur listener
+		// below that inspects document.activeElement.
+		this.element.addEventListener( 'focusin', () => {
+			if ( this.element.classList.contains( 'wp-desktop-window--overview' ) ) {
+				return;
+			}
+			this.onFocusRequest?.( this );
+		} );
+
 		// Title bar drag.
 		this.titleBar.addEventListener( 'pointerdown', this.onDragStart.bind( this ) );
 
@@ -1111,6 +1124,17 @@ export class Window {
 
 		if ( data.type === 'wp-desktop-title-change' && typeof data.title === 'string' ) {
 			this.setTitle( data.title );
+		}
+
+		if ( data.type === 'wp-desktop-focus-request' ) {
+			// Sent from the chromeless bridge on every pointerdown
+			// inside the iframe — covers the "click inside iframe
+			// should focus this window" UX that isn't reachable via
+			// parent-side listeners (the click doesn't cross the
+			// browsing-context boundary).
+			if ( ! this.element.classList.contains( 'wp-desktop-window--overview' ) ) {
+				this.onFocusRequest?.( this );
+			}
 		}
 
 		if ( data.type === 'wp-desktop-screen-meta' && Array.isArray( data.panels ) ) {

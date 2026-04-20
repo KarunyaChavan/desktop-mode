@@ -16,7 +16,12 @@ export default defineConfig( {
 	test: {
 		environment: 'jsdom',
 		globals: false,
-		include: [ 'tests/vitest/**/*.test.ts' ],
+		// Two include paths:
+		// - `tests/vitest/` for cross-module integration / shell tests
+		// - `src/**/*.test.ts` for component-local specs that live
+		//   next to the code they test (one folder per component
+		//   keeps styles + logic + tests together)
+		include: [ 'tests/vitest/**/*.test.ts', 'src/**/*.test.ts' ],
 		// A fresh module graph per test file keeps registry state
 		// (hooks, wallpapers, modules) from leaking between
 		// top-level describes in different files.

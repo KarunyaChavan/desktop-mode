@@ -27,6 +27,10 @@ import type { WallpaperLayer } from './wallpapers/layer';
 import type { WallpaperDef, WallpaperTeardown } from './wallpapers/types';
 import * as registry from './wallpapers/registry';
 import { __, sprintf } from './i18n';
+// Side-effect import — registers every <wpd-*> tag with the
+// customElements registry so the sections below can just create
+// the tags in JS and trust they'll upgrade on connection.
+import './ui/components';
 
 /** localStorage key under which preferences are serialized. */
 const STORAGE_KEY = 'wp-desktop-os-settings';
@@ -343,8 +347,10 @@ export class OsSettings {
 	// ------------------------------------------------------------------
 
 	private buildWallpaperSection( body: HTMLElement ): HTMLElement {
-		const section = this.buildSection(
-			__( 'Wallpaper' ),
+		const section = document.createElement( 'wpd-section' );
+		section.setAttribute( 'heading', __( 'Wallpaper' ) );
+		section.setAttribute(
+			'description',
 			__(
 				'The backdrop behind your windows. Pick a preset, mix your own gradient, or drop in an image.',
 			),
@@ -600,7 +606,12 @@ export class OsSettings {
 	}
 
 	private syncGradientPreviewSwatch( editorEl: HTMLElement ): void {
-		const section = editorEl.closest( '.wp-desktop-os-settings__section' );
+		// The gradient editor is mounted inside the wallpaper
+		// `<wpd-section>`'s slot, alongside the swatch grid. Walking
+		// up to the wpd-section and querying for the custom-gradient
+		// swatch finds it regardless of DOM shuffles from a future
+		// refactor of the wallpaper section's internals.
+		const section = editorEl.closest( 'wpd-section' );
 		const preview = section?.querySelector<HTMLElement>(
 			`[data-wallpaper-id="${ CUSTOM_GRADIENT_ID }"]`,
 		);
@@ -627,61 +638,51 @@ export class OsSettings {
 		heading.textContent = __( 'Or use your own image' );
 		wrap.appendChild( heading );
 
-		const tabList = document.createElement( 'div' );
-		tabList.className = 'wp-desktop-os-settings__tabs';
-		tabList.setAttribute( 'role', 'tablist' );
-
+		type TabKey = 'upload' | 'library';
+		const tabDefs: { key: TabKey; label: string; render: () => void }[] = [];
 		const pane = document.createElement( 'div' );
 		pane.className = 'wp-desktop-os-settings__tab-pane';
 
-		type TabKey = 'upload' | 'library';
-		const tabs: { key: TabKey; label: string; render: () => void }[] = [];
-
 		if ( this.config.canUpload ) {
-			tabs.push( {
+			tabDefs.push( {
 				key: 'upload',
 				label: __( 'Upload new' ),
 				render: () => this.renderUploadPane( pane, body ),
 			} );
 		}
-		tabs.push( {
+		tabDefs.push( {
 			key: 'library',
 			label: __( 'Media Library' ),
 			render: () => this.renderLibraryPane( pane, body ),
 		} );
 
-		const tabButtons = new Map<TabKey, HTMLButtonElement>();
-		let activeTab: TabKey = tabs[ 0 ].key;
+		const initialKey = tabDefs[ 0 ].key;
+		const tabsEl = document.createElement( 'wpd-tabs' );
+		tabsEl.setAttribute( 'value', initialKey );
+		tabsEl.setAttribute( 'label', __( 'Image source' ) );
 
-		const activateTab = ( key: TabKey ): void => {
-			activeTab = key;
-			for ( const [ k, btn ] of tabButtons ) {
-				const isActive = k === key;
-				btn.classList.toggle( 'wp-desktop-os-settings__tab--active', isActive );
-				btn.setAttribute( 'aria-selected', isActive ? 'true' : 'false' );
-				btn.tabIndex = isActive ? 0 : -1;
-			}
-			const def = tabs.find( ( t ) => t.key === key );
-			def?.render();
-		};
-
-		for ( const tab of tabs ) {
-			const btn = document.createElement( 'button' );
-			btn.type = 'button';
-			btn.className = 'wp-desktop-os-settings__tab';
-			btn.setAttribute( 'role', 'tab' );
-			btn.textContent = tab.label;
-			btn.addEventListener( 'click', () => activateTab( tab.key ) );
-			tabButtons.set( tab.key, btn );
-			tabList.appendChild( btn );
+		for ( const def of tabDefs ) {
+			const tab = document.createElement( 'wpd-tab' );
+			tab.setAttribute( 'value', def.key );
+			tab.textContent = def.label;
+			tabsEl.appendChild( tab );
 		}
 
-		if ( tabs.length > 1 ) {
-			wrap.appendChild( tabList );
+		// Consumer owns pane rendering; wpd-tabs emits the switch
+		// event, we route it to the matching renderer.
+		tabsEl.addEventListener( 'wpd-tab-change', ( e ) => {
+			const key = ( e as CustomEvent ).detail.value as TabKey;
+			tabDefs.find( ( t ) => t.key === key )?.render();
+		} );
+
+		if ( tabDefs.length > 1 ) {
+			wrap.appendChild( tabsEl );
 		}
 		wrap.appendChild( pane );
 
-		activateTab( activeTab );
+		// Paint the initial pane synchronously so the panel doesn't
+		// flash empty before the first microtask flush.
+		tabDefs.find( ( t ) => t.key === initialKey )?.render();
 		return wrap;
 	}
 
@@ -1178,103 +1179,100 @@ export class OsSettings {
 	}
 
 	// ------------------------------------------------------------------
-	// Accent + dock-size sections (unchanged)
+	// Accent + dock-size sections — composed from wpd-ui atoms
+	// (<wpd-section>, <wpd-swatch>, <wpd-swatch-grid>, <wpd-segmented>,
+	// <wpd-segment>). Previously hand-rolled DOM; the atoms cover the
+	// grid layout, selection state, a11y semantics, and event wiring.
 	// ------------------------------------------------------------------
 
 	private buildAccentSection(): HTMLElement {
-		const section = this.buildSection(
-			__( 'Accent color' ),
+		const section = document.createElement( 'wpd-section' );
+		section.setAttribute( 'heading', __( 'Accent color' ) );
+		section.setAttribute(
+			'description',
 			__( 'Used in focused window title bars, buttons, and focus rings.' ),
 		);
-		const grid = document.createElement( 'div' );
-		grid.className = 'wp-desktop-os-settings__grid wp-desktop-os-settings__grid--accents';
+
+		const grid = document.createElement( 'wpd-swatch-grid' );
+		grid.setAttribute( 'label', __( 'Accent color' ) );
+		// Row mode + small circular chips — accents are "pick one
+		// of six colors" not "pick a background image," so uniform
+		// full-width cells aren't worth the vertical mass.
+		grid.setAttribute( 'mode', 'row' );
 
 		for ( const accent of ACCENTS ) {
 			const label = translateAccentLabel( accent.id, accent.label );
-			const btn = document.createElement( 'button' );
-			btn.type = 'button';
-			btn.className = 'wp-desktop-os-settings__swatch wp-desktop-os-settings__swatch--accent';
-			btn.setAttribute( 'aria-label', label );
-			btn.setAttribute(
-				'aria-pressed',
-				this.state.accent === accent.id ? 'true' : 'false',
-			);
-			btn.dataset.id = accent.id;
-			btn.style.background = accent.value;
-			btn.title = label;
-
-			btn.addEventListener( 'click', () => {
-				this.state.accent = accent.id;
-				this.save();
-				this.apply();
-				this.refreshSelected( grid, accent.id );
-			} );
-			grid.appendChild( btn );
+			const swatch = document.createElement( 'wpd-swatch' );
+			swatch.setAttribute( 'value', accent.id );
+			swatch.setAttribute( 'label', label );
+			swatch.setAttribute( 'preview', accent.value );
+			swatch.setAttribute( 'size', 'small' );
+			if ( this.state.accent === accent.id ) {
+				swatch.setAttribute( 'selected', '' );
+			}
+			grid.appendChild( swatch );
 		}
+
+		// Delegated pick handler — one listener on the grid covers
+		// every swatch. The `wpd-pick` event carries `{ value }`.
+		grid.addEventListener( 'wpd-pick', ( e ) => {
+			const id = ( ( e as CustomEvent ).detail?.value ?? '' ) as string;
+			if ( ! ACCENTS.some( ( a ) => a.id === id ) ) {
+				return;
+			}
+			this.state.accent = id as AccentId;
+			this.save();
+			this.apply();
+			// Reflect the new selection by toggling the `selected`
+			// attr on each child swatch — the component turns that
+			// into its own aria-pressed internally.
+			for ( const child of Array.from( grid.children ) ) {
+				if ( child.getAttribute( 'value' ) === id ) {
+					child.setAttribute( 'selected', '' );
+				} else {
+					child.removeAttribute( 'selected' );
+				}
+			}
+		} );
 
 		section.appendChild( grid );
 		return section;
 	}
 
 	private buildDockSizeSection(): HTMLElement {
-		const section = this.buildSection(
-			__( 'Dock size' ),
+		const section = document.createElement( 'wpd-section' );
+		section.setAttribute( 'heading', __( 'Dock size' ) );
+		section.setAttribute(
+			'description',
 			__( 'Width of the dock and size of its icons.' ),
 		);
-		const group = document.createElement( 'div' );
-		group.className = 'wp-desktop-os-settings__segmented';
-		group.setAttribute( 'role', 'radiogroup' );
+
+		const group = document.createElement( 'wpd-segmented' );
+		group.setAttribute( 'value', this.state.dockSize );
+		group.setAttribute( 'label', __( 'Dock size' ) );
 
 		for ( const size of DOCK_SIZES ) {
-			const btn = document.createElement( 'button' );
-			btn.type = 'button';
-			btn.className = 'wp-desktop-os-settings__segment';
-			btn.setAttribute( 'role', 'radio' );
-			btn.setAttribute(
-				'aria-checked',
-				this.state.dockSize === size.id ? 'true' : 'false',
-			);
-			btn.dataset.id = size.id;
-			btn.textContent = translateDockSizeLabel( size.id, size.label );
-
-			btn.addEventListener( 'click', () => {
-				this.state.dockSize = size.id;
-				this.save();
-				this.apply();
-				this.refreshSelected( group, size.id, 'aria-checked' );
-			} );
-			group.appendChild( btn );
+			const seg = document.createElement( 'wpd-segment' );
+			seg.setAttribute( 'value', size.id );
+			seg.textContent = translateDockSizeLabel( size.id, size.label );
+			group.appendChild( seg );
 		}
+
+		group.addEventListener( 'wpd-pick', ( e ) => {
+			const id = ( ( e as CustomEvent ).detail?.value ?? '' ) as string;
+			if ( ! DOCK_SIZES.some( ( d ) => d.id === id ) ) {
+				return;
+			}
+			this.state.dockSize = id as DockSizeId;
+			this.save();
+			this.apply();
+			// The segmented group internally flips aria-checked on
+			// its child <wpd-segment> elements when its `value` attr
+			// changes — no manual reflect needed here.
+		} );
 
 		section.appendChild( group );
 		return section;
-	}
-
-	private buildSection( title: string, description: string ): HTMLElement {
-		const section = document.createElement( 'section' );
-		section.className = 'wp-desktop-os-settings__section';
-
-		const heading = document.createElement( 'h3' );
-		heading.className = 'wp-desktop-os-settings__heading';
-		heading.textContent = title;
-		section.appendChild( heading );
-
-		const desc = document.createElement( 'p' );
-		desc.className = 'wp-desktop-os-settings__desc';
-		desc.textContent = description;
-		section.appendChild( desc );
-
-		return section;
-	}
-
-	private refreshSelected(
-		container: HTMLElement,
-		id: string,
-		attr: 'aria-pressed' | 'aria-checked' = 'aria-pressed',
-	): void {
-		container.querySelectorAll<HTMLElement>( '[data-id]' ).forEach( ( el ) => {
-			el.setAttribute( attr, el.dataset.id === id ? 'true' : 'false' );
-		} );
 	}
 
 	// ------------------------------------------------------------------

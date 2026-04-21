@@ -7691,11 +7691,35 @@ var wpDesktop = function(exports) {
     } else {
       seed$1.push(def);
     }
+    notify();
   }
   function unregister$1(id) {
     const idx = seed$1.findIndex((w) => w.id === id);
     if (idx >= 0) {
       seed$1.splice(idx, 1);
+      notify();
+    }
+  }
+  const listeners = /* @__PURE__ */ new Set();
+  function subscribe(cb) {
+    listeners.add(cb);
+    return () => {
+      listeners.delete(cb);
+    };
+  }
+  function notify() {
+    const snapshot = Array.from(listeners);
+    for (const cb of snapshot) {
+      try {
+        cb();
+      } catch (err) {
+        if (typeof console !== "undefined") {
+          console.error(
+            "[wp-desktop-mode] wallpaper registry listener threw:",
+            err
+          );
+        }
+      }
     }
   }
   function all$1() {
@@ -8991,6 +9015,17 @@ var wpDesktop = function(exports) {
     if (active2) {
       syncEditorSlot(ctx, editorSlot, editorInner, active2);
     }
+    const unsubscribe = subscribe(() => {
+      if (!wrapper.isConnected) {
+        unsubscribe();
+        return;
+      }
+      paint();
+      const now = get$1(ctx.state.wallpaper);
+      if (now) {
+        syncEditorSlot(ctx, editorSlot, editorInner, now);
+      }
+    });
     return wrapper;
   }
   class OsSettings {

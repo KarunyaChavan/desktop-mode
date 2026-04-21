@@ -330,5 +330,30 @@ export function buildWallpaperSection(
 	if ( active ) {
 		syncEditorSlot( ctx, editorSlot, editorInner, active );
 	}
+
+	// Live-update when plugins register or unregister wallpapers
+	// mid-session. The server-sync module fires register()/unregister()
+	// when `wp-desktop-plugins-changed` arrives from a plugins.php
+	// iframe; we re-paint so the swatch grid reflects reality without
+	// the user having to close and re-open the settings window.
+	//
+	// Self-unsubscribes when the wrapper is no longer in the DOM (the
+	// panel has been torn down), so stale listeners don't pile up
+	// across repeated settings-window opens.
+	const unsubscribe = registry.subscribe( () => {
+		if ( ! wrapper.isConnected ) {
+			unsubscribe();
+			return;
+		}
+		paint();
+		// Re-sync the editor slot too, in case the currently active
+		// wallpaper's def just arrived (plugin activation with the
+		// user's saved selection pointing at the new wallpaper).
+		const now = registry.get( ctx.state.wallpaper );
+		if ( now ) {
+			syncEditorSlot( ctx, editorSlot, editorInner, now );
+		}
+	} );
+
 	return wrapper;
 }

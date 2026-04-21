@@ -50,6 +50,7 @@ export function register( def: WallpaperDef ): void {
 	} else {
 		seed.push( def );
 	}
+	notify();
 }
 
 /** Remove a wallpaper by id. Rare, but keeps symmetry with `register`. */
@@ -57,6 +58,58 @@ export function unregister( id: string ): void {
 	const idx = seed.findIndex( ( w ) => w.id === id );
 	if ( idx >= 0 ) {
 		seed.splice( idx, 1 );
+		notify();
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Change subscription
+//
+// UI surfaces that render wallpaper lists (OS Settings picker) need to
+// re-paint when a plugin is activated mid-session and registers its
+// wallpaper, or when it's deactivated and the registry shrinks. This
+// subscribe() API is how they hear about it.
+// ---------------------------------------------------------------------------
+
+type RegistryListener = () => void;
+const listeners = new Set< RegistryListener >();
+
+/**
+ * Subscribe to registry changes. The callback fires after every
+ * successful `register()` or `unregister()` call. Returns an
+ * unsubscribe function the caller should invoke when the UI surface
+ * is torn down (or can be left to self-clean via `isConnected`
+ * checks inside the callback).
+ *
+ * @since 0.14.0
+ *
+ * @param cb Listener to invoke on change.
+ * @return Unsubscribe function.
+ */
+export function subscribe( cb: RegistryListener ): () => void {
+	listeners.add( cb );
+	return () => {
+		listeners.delete( cb );
+	};
+}
+
+/** Notify all subscribers. Listeners that throw don't break the others. */
+function notify(): void {
+	// Snapshot before iterating — listeners may unsubscribe themselves
+	// during their callback, and mutating a Set mid-iteration is
+	// defined but awkward.
+	const snapshot = Array.from( listeners );
+	for ( const cb of snapshot ) {
+		try {
+			cb();
+		} catch ( err ) {
+			if ( typeof console !== 'undefined' ) {
+				console.error(
+					'[wp-desktop-mode] wallpaper registry listener threw:',
+					err,
+				);
+			}
+		}
 	}
 }
 

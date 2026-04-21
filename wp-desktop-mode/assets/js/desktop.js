@@ -5132,12 +5132,13 @@ var wpDesktop = function(exports) {
       primary.className = "wp-desktop-dock__item-primary";
       primary.setAttribute("type", "button");
       primary.setAttribute("aria-label", item.title);
-      const iconEl = this.resolveIcon(item.icon, item.title);
+      const iconEl = this.resolveIcon(item.icon, item.title, item.url);
       primary.appendChild(iconEl);
       if (item.badge > 0) {
+        const displayCount = item.badge > 99 ? "99+" : String(item.badge);
         const badge = document.createElement("span");
         badge.className = "wp-desktop-dock__badge";
-        badge.textContent = String(item.badge);
+        badge.textContent = displayCount;
         badge.setAttribute(
           "aria-label",
           sprintf(
@@ -5205,8 +5206,8 @@ var wpDesktop = function(exports) {
      * @param title Human-readable title, used when falling back to a
      *              letter badge.
      */
-    resolveIcon(icon, title) {
-      if (icon.startsWith("dashicons-")) {
+    resolveIcon(icon, title, url) {
+      if (icon.startsWith("dashicons-") && icon !== "dashicons-admin-generic") {
         const el = document.createElement("span");
         el.className = `dashicons ${icon}`;
         el.setAttribute("aria-hidden", "true");
@@ -5215,18 +5216,10 @@ var wpDesktop = function(exports) {
       if (icon.startsWith("data:image/svg+xml;base64,")) {
         const base64Part = icon.slice("data:image/svg+xml;base64,".length);
         if (/^[A-Za-z0-9+/=]+$/.test(base64Part)) {
-          const el = document.createElement("span");
-          el.className = "wp-desktop-dock__item-svg";
-          el.style.backgroundImage = `url("${icon}")`;
-          el.style.backgroundSize = "contain";
-          el.style.backgroundRepeat = "no-repeat";
-          el.style.backgroundPosition = "center";
-          el.setAttribute("aria-hidden", "true");
-          return el;
+          return this._makeSvgIcon(icon);
         }
-        return this.createLetterBadge(title);
       }
-      if (icon && icon !== "none" && icon !== "div") {
+      if (icon.startsWith("http://") || icon.startsWith("https://")) {
         const img = document.createElement("img");
         img.className = "wp-desktop-dock__item-img";
         img.src = icon;
@@ -5234,7 +5227,105 @@ var wpDesktop = function(exports) {
         img.setAttribute("aria-hidden", "true");
         return img;
       }
+      if (url) {
+        const native = this._extractNativeMenuIcon(url);
+        if (native) {
+          return native;
+        }
+      }
+      if (icon === "dashicons-admin-generic") {
+        const el = document.createElement("span");
+        el.className = "dashicons dashicons-admin-generic";
+        el.setAttribute("aria-hidden", "true");
+        return el;
+      }
       return this.createLetterBadge(title);
+    }
+    /**
+     * Build an SVG-background icon tile. Shared between the data-URI
+     * branch of {@link resolveIcon} and the native-menu extractor.
+     */
+    _makeSvgIcon(bgValue) {
+      const el = document.createElement("span");
+      el.className = "wp-desktop-dock__item-svg";
+      el.style.backgroundImage = bgValue.startsWith("url(") ? bgValue : `url("${bgValue}")`;
+      el.style.backgroundSize = "contain";
+      el.style.backgroundRepeat = "no-repeat";
+      el.style.backgroundPosition = "center";
+      el.setAttribute("aria-hidden", "true");
+      return el;
+    }
+    /**
+     * Extract a plugin's icon from the hidden `#adminmenu` that still
+     * exists in the parent shell DOM (display:none'd by desktop.css).
+     * Handles the three shapes plugins commonly use when the menu-page
+     * icon_url is 'none' or 'div':
+     *
+     *   (a) `<img src="...">` nested inside `.wp-menu-image`
+     *   (b) a dashicon class on `.wp-menu-image` itself
+     *   (c) a CSS background-image on `.wp-menu-image::before` (the
+     *       `menu-icon-XYZ` pattern Yoast, WooCommerce, Jetpack, etc. use)
+     *
+     * Returns null when the URL doesn't match any admin-menu entry or
+     * none of the three shapes are detectable.
+     */
+    _extractNativeMenuIcon(url) {
+      const adminMenu = document.getElementById("adminmenu");
+      if (!adminMenu) {
+        return null;
+      }
+      let target;
+      try {
+        const u = new URL(url, window.location.href);
+        const filename = u.pathname.split("/").pop() || "";
+        target = filename + u.search;
+      } catch {
+        return null;
+      }
+      if (!target) {
+        return null;
+      }
+      const links = adminMenu.querySelectorAll("li.menu-top > a");
+      let matchLi = null;
+      for (const link of Array.from(links)) {
+        if (link.href.endsWith(target)) {
+          matchLi = link.closest("li.menu-top");
+          break;
+        }
+      }
+      if (!matchLi) {
+        return null;
+      }
+      const imgWrap = matchLi.querySelector(".wp-menu-image");
+      if (!imgWrap) {
+        return null;
+      }
+      const img = imgWrap.querySelector("img");
+      if (img && img.src) {
+        const el = document.createElement("img");
+        el.className = "wp-desktop-dock__item-img";
+        el.src = img.src;
+        el.alt = "";
+        el.setAttribute("aria-hidden", "true");
+        return el;
+      }
+      const dashMatch = imgWrap.className.match(/\bdashicons-[\w-]+\b/);
+      if (dashMatch && dashMatch[0] !== "dashicons-before") {
+        const el = document.createElement("span");
+        el.className = `dashicons ${dashMatch[0]}`;
+        el.setAttribute("aria-hidden", "true");
+        return el;
+      }
+      const before = window.getComputedStyle(imgWrap, "::before");
+      const bg = before.backgroundImage;
+      if (bg && bg !== "none" && !bg.includes('url("")')) {
+        return this._makeSvgIcon(bg);
+      }
+      const bgWrap = window.getComputedStyle(imgWrap).backgroundImage;
+      if (bgWrap && bgWrap !== "none" && !bgWrap.includes('url("")')) {
+        return this._makeSvgIcon(bgWrap);
+      }
+      return null;
     }
     /**
      * Create a letter-badge icon — a rounded square tinted with a
@@ -10933,6 +11024,48 @@ var wpDesktop = function(exports) {
       }
     }
   }
+  function escapeHtmlForMd(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  function renderInlineMd(s) {
+    return s.replace(
+      /\[([^\]]+)\]\(([^)]+)\)/g,
+      (_m, label, url) => {
+        if (!/^https?:\/\//i.test(url.trim())) {
+          return label;
+        }
+        return `<a href="${url.trim()}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+      }
+    ).replace(/\*\*([^*\n]+?)\*\*/g, "<strong>$1</strong>").replace(/(?<![*\w])\*([^*\n]+?)\*(?![*\w])/g, "<em>$1</em>").replace(/(?<![_\w])_([^_\n]+?)_(?![_\w])/g, "<em>$1</em>").replace(/`([^`\n]+?)`/g, "<code>$1</code>");
+  }
+  function renderMarkdown(md) {
+    if (!md) {
+      return "";
+    }
+    const safe = escapeHtmlForMd(md);
+    const blocks = safe.split(/\n\s*\n/);
+    const out = [];
+    for (const raw of blocks) {
+      const lines = raw.split(/\n/).map((l) => l.trim()).filter((l) => l !== "");
+      if (lines.length === 0) continue;
+      const isUL = lines.every((l) => /^[-*]\s+/.test(l));
+      const isOL = lines.every((l) => /^\d+\.\s+/.test(l));
+      if (isUL) {
+        const items = lines.map(
+          (l) => `<li>${renderInlineMd(l.replace(/^[-*]\s+/, ""))}</li>`
+        );
+        out.push(`<ul>${items.join("")}</ul>`);
+      } else if (isOL) {
+        const items = lines.map(
+          (l) => `<li>${renderInlineMd(l.replace(/^\d+\.\s+/, ""))}</li>`
+        );
+        out.push(`<ol>${items.join("")}</ol>`);
+      } else {
+        out.push(`<p>${renderInlineMd(lines.join("<br>"))}</p>`);
+      }
+    }
+    return out.join("");
+  }
   const ICON_SPARKLE = `<svg viewBox="0 0 20 20" width="15" height="15" aria-hidden="true" focusable="false" fill="currentColor">
 	<path d="M10 2 L11.8 7.8 L17.5 9.5 L11.8 11.2 L10 17 L8.2 11.2 L2.5 9.5 L8.2 7.8 Z"/>
 </svg>`;
@@ -11249,7 +11382,7 @@ var wpDesktop = function(exports) {
       const messageHtml = `
 			<div class="wp-desktop-ai__bubble">
 				<span class="wp-desktop-ai__bubble-icon">${ICON_SPARKLE}</span>
-				<p class="wp-desktop-ai__bubble-text">${this._esc(data.message || "")}</p>
+				<div class="wp-desktop-ai__bubble-text">${renderMarkdown(data.message || "")}</div>
 			</div>
 		`;
       let bodyHtml = "";

@@ -202,22 +202,67 @@
 	opacity: 1;
 }
 
-/* Badge (update count). */
+/* ---------------------------------------------------------------------------
+ * Notification badge — iOS/macOS-style pill that peeks out of the
+ * icon's top-right corner instead of sitting on top of the icon.
+ *
+ * Three design moves:
+ *
+ *   1. Negative offsets (top/inset-inline-end: -3px) so the badge
+ *      straddles the icon edge. The icon stays fully legible.
+ *
+ *   2. Ring in the dock's background color (box-shadow spread) creates
+ *      a "punched-out" look — clean separation from whatever sits
+ *      behind (a white Yoast SVG, a colorful WooCommerce icon, a dark
+ *      dashicon). The ring is what makes iOS badges feel polished.
+ *
+ *   3. Subtle top-lit gradient + fine drop shadow give it dimensional
+ *      depth so it reads as a pinned element rather than a flat paint.
+ *
+ * Shape is an auto-rounded pill: perfectly circular for single-digit
+ * counts, smoothly oval for 2-digit / "99+" via border-radius: 999px.
+ * ------------------------------------------------------------------------- */
 .wp-desktop-dock__badge {
 	position: absolute;
-	top: 2px;
-	inset-inline-end: 2px;
+	top: -3px;
+	inset-inline-end: -3px;
 	min-width: 16px;
 	height: 16px;
-	padding: 0 4px;
-	border-radius: 8px;
-	background: #d63638;
+	padding: 0 5px;
+	box-sizing: border-box;
+	border-radius: 999px;
+
+	/* Two-tone red — lighter at the top, deeper at the bottom. Reads
+	   as a crisp ruby on any icon background. */
+	background: linear-gradient( 180deg, #ff5a5a 0%, #d63638 100% );
 	color: #fff;
+
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+
 	font-size: 10px;
-	font-weight: 600;
-	line-height: 16px;
+	font-weight: 700;
+	line-height: 1;
+	letter-spacing: 0.01em;
 	text-align: center;
+	font-variant-numeric: tabular-nums;
+
+	/* Ring + shadow. The ring spread matches the dock bg color so
+	   there's a clean halo between the badge and the icon behind it. */
+	box-shadow:
+		0 0 0 1.5px var( --wp-desktop-dock-bg, rgba( 0, 0, 0, 0.4 ) ),
+		0 1px 3px rgba( 0, 0, 0, 0.35 );
+
 	pointer-events: none;
+	/* A hair of scale-up on hover of the tile, just to add a touch of
+	   life when the user is browsing. Uses the parent tile's :hover. */
+	transition: transform 0.15s ease;
+}
+
+.wp-desktop-dock__item:hover .wp-desktop-dock__badge {
+	transform: scale( 1.05 );
+	top: -4px;
 }
 
 /* Tooltip — appears on hover, to the right of the dock. */

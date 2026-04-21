@@ -469,6 +469,11 @@ function wpdm_sanitize_dock_icon( $icon ) {
 
 	$icon = trim( $icon );
 
+	// 'none' and 'div' tell WordPress to render an empty div for the
+	// admin-menu icon (the plugin styles it from CSS). We pass the
+	// fallback through; the JS dock has a getComputedStyle-based
+	// extractor that pulls the real icon from the hidden #adminmenu
+	// for these cases.
 	if ( 'none' === $icon || 'div' === $icon ) {
 		return $fallback;
 	}
@@ -480,10 +485,23 @@ function wpdm_sanitize_dock_icon( $icon ) {
 		return preg_replace( '/[^a-z0-9_-]/', '', $icon );
 	}
 
-	// Any scheme other than http/https is rejected. In particular
-	// `data:`, `javascript:`, `vbscript:`, and `file:` never reach the
-	// DOM — even an SVG data URI can run script when rendered as a CSS
-	// background, which made the previous allowlist a footgun.
+	// SVG data URI — the JS dock renders these as CSS background-image,
+	// which does NOT execute script in any currently shipping browser
+	// (Chrome/Firefox/Safari all treat SVG-in-CSS-background as an
+	// image-only context since ~2017). Strict validation on the base64
+	// payload prevents anything other than proper base64 from reaching
+	// the DOM; any other data:* scheme (javascript:, text/html, etc.)
+	// is rejected outright by the prefix check.
+	$svg_prefix = 'data:image/svg+xml;base64,';
+	if ( 0 === stripos( $icon, $svg_prefix ) ) {
+		$payload = substr( $icon, strlen( $svg_prefix ) );
+		if ( preg_match( '/^[A-Za-z0-9+\/=]+$/', $payload ) ) {
+			return $icon;
+		}
+		return $fallback;
+	}
+
+	// http/https URL — the icon is a hosted image.
 	if ( 0 === stripos( $icon, 'http://' ) || 0 === stripos( $icon, 'https://' ) ) {
 		$clean = esc_url_raw( $icon, array( 'http', 'https' ) );
 		return $clean ? $clean : $fallback;

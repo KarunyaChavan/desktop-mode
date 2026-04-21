@@ -291,6 +291,8 @@ export class Dock {
 		primary.setAttribute( 'aria-label', item.title );
 
 		primary.appendChild( this.resolveIcon( item.icon, item.title ) );
+		// System items don't have a native admin-menu counterpart; the
+		// third arg is intentionally omitted.
 		primary.addEventListener( 'click', () => item.onOpen() );
 
 		tile.appendChild( primary );
@@ -322,13 +324,17 @@ export class Dock {
 		primary.setAttribute( 'type', 'button' );
 		primary.setAttribute( 'aria-label', item.title );
 
-		const iconEl = this.resolveIcon( item.icon, item.title );
+		const iconEl = this.resolveIcon( item.icon, item.title, item.url );
 		primary.appendChild( iconEl );
 
 		if ( item.badge > 0 ) {
+			// Cap the rendered count at 99 — anything higher reads as
+			// "99+" so the badge stays a clean pill instead of
+			// stretching to three or four digits.
+			const displayCount = item.badge > 99 ? '99+' : String( item.badge );
 			const badge = document.createElement( 'span' );
 			badge.className = 'wp-desktop-dock__badge';
-			badge.textContent = String( item.badge );
+			badge.textContent = displayCount;
 			badge.setAttribute(
 				'aria-label',
 				sprintf(
@@ -418,39 +424,32 @@ export class Dock {
 	 * @param title Human-readable title, used when falling back to a
 	 *              letter badge.
 	 */
-	private resolveIcon( icon: string, title: string ): HTMLElement {
-		if ( icon.startsWith( 'dashicons-' ) ) {
-			// Dashicon.
+	private resolveIcon( icon: string, title: string, url?: string ): HTMLElement {
+		// 1. Specific dashicon — trust what the server gave us, UNLESS
+		//    it's the generic gear fallback. When the server hands us
+		//    dashicons-admin-generic it usually means the plugin uses
+		//    'none'/'div' for its icon and styles it from CSS — in that
+		//    case we try harder via the native-menu extractor below.
+		if ( icon.startsWith( 'dashicons-' ) && icon !== 'dashicons-admin-generic' ) {
 			const el = document.createElement( 'span' );
 			el.className = `dashicons ${ icon }`;
 			el.setAttribute( 'aria-hidden', 'true' );
 			return el;
 		}
 
+		// 2. Inline SVG data URI — render as a CSS background-image.
+		//    PHP already validated the base64 payload shape; we re-verify
+		//    here because icons registered from JS never cross the sanitizer.
 		if ( icon.startsWith( 'data:image/svg+xml;base64,' ) ) {
-			// Inline SVG data URI — render as a CSS background.
-			// Validate that the base64 payload contains only valid characters.
 			const base64Part = icon.slice( 'data:image/svg+xml;base64,'.length );
 			if ( /^[A-Za-z0-9+/=]+$/.test( base64Part ) ) {
-				const el = document.createElement( 'span' );
-				el.className = 'wp-desktop-dock__item-svg';
-				el.style.backgroundImage = `url("${ icon }")`;
-				el.style.backgroundSize = 'contain';
-				el.style.backgroundRepeat = 'no-repeat';
-				el.style.backgroundPosition = 'center';
-				el.setAttribute( 'aria-hidden', 'true' );
-				return el;
+				return this._makeSvgIcon( icon );
 			}
-			// Malformed SVG data URI — short-circuit straight to the
-			// letter badge. Falling through would match the generic
-			// "treat as image URL" branch below and render a broken
-			// <img> (the browser would try to load the bogus data
-			// URL, fail, and show a broken-image glyph).
-			return this.createLetterBadge( title );
+			// Malformed — skip this case and try native-menu extraction.
 		}
 
-		if ( icon && icon !== 'none' && icon !== 'div' ) {
-			// URL to an image.
+		// 3. http(s) URL — direct image.
+		if ( icon.startsWith( 'http://' ) || icon.startsWith( 'https://' ) ) {
 			const img = document.createElement( 'img' );
 			img.className = 'wp-desktop-dock__item-img';
 			img.src = icon;
@@ -459,9 +458,135 @@ export class Dock {
 			return img;
 		}
 
-		// Letter-badge fallback — first letter of the title on a
-		// deterministically-hued tile.
+		// 4. NATIVE-MENU FALLBACK — the server couldn't produce a usable
+		//    icon, but WP's hidden #adminmenu in the parent page IS
+		//    rendering this plugin's icon perfectly. Copy from there.
+		if ( url ) {
+			const native = this._extractNativeMenuIcon( url );
+			if ( native ) {
+				return native;
+			}
+		}
+
+		// 5. If the server said "dashicons-admin-generic" explicitly and
+		//    native extraction failed, honour the gear — matches the
+		//    historical behaviour so core menu items without icons still
+		//    render as gears rather than letter badges.
+		if ( icon === 'dashicons-admin-generic' ) {
+			const el = document.createElement( 'span' );
+			el.className = 'dashicons dashicons-admin-generic';
+			el.setAttribute( 'aria-hidden', 'true' );
+			return el;
+		}
+
+		// 6. Nothing matched — first-letter tile on a deterministic hue.
 		return this.createLetterBadge( title );
+	}
+
+	/**
+	 * Build an SVG-background icon tile. Shared between the data-URI
+	 * branch of {@link resolveIcon} and the native-menu extractor.
+	 */
+	private _makeSvgIcon( bgValue: string ): HTMLElement {
+		const el = document.createElement( 'span' );
+		el.className = 'wp-desktop-dock__item-svg';
+		el.style.backgroundImage = bgValue.startsWith( 'url(' )
+			? bgValue
+			: `url("${ bgValue }")`;
+		el.style.backgroundSize = 'contain';
+		el.style.backgroundRepeat = 'no-repeat';
+		el.style.backgroundPosition = 'center';
+		el.setAttribute( 'aria-hidden', 'true' );
+		return el;
+	}
+
+	/**
+	 * Extract a plugin's icon from the hidden `#adminmenu` that still
+	 * exists in the parent shell DOM (display:none'd by desktop.css).
+	 * Handles the three shapes plugins commonly use when the menu-page
+	 * icon_url is 'none' or 'div':
+	 *
+	 *   (a) `<img src="...">` nested inside `.wp-menu-image`
+	 *   (b) a dashicon class on `.wp-menu-image` itself
+	 *   (c) a CSS background-image on `.wp-menu-image::before` (the
+	 *       `menu-icon-XYZ` pattern Yoast, WooCommerce, Jetpack, etc. use)
+	 *
+	 * Returns null when the URL doesn't match any admin-menu entry or
+	 * none of the three shapes are detectable.
+	 */
+	private _extractNativeMenuIcon( url: string ): HTMLElement | null {
+		const adminMenu = document.getElementById( 'adminmenu' );
+		if ( ! adminMenu ) {
+			return null;
+		}
+
+		// Match the admin-menu link by the "filename?query" suffix of
+		// its href. Works for both core slugs (edit.php, upload.php,
+		// options-general.php) and plugin slugs (admin.php?page=wpseo).
+		let target: string;
+		try {
+			const u = new URL( url, window.location.href );
+			const filename = u.pathname.split( '/' ).pop() || '';
+			target = filename + u.search;
+		} catch {
+			return null;
+		}
+		if ( ! target ) {
+			return null;
+		}
+
+		const links = adminMenu.querySelectorAll< HTMLAnchorElement >( 'li.menu-top > a' );
+		let matchLi: HTMLElement | null = null;
+		for ( const link of Array.from( links ) ) {
+			if ( link.href.endsWith( target ) ) {
+				matchLi = link.closest( 'li.menu-top' );
+				break;
+			}
+		}
+		if ( ! matchLi ) {
+			return null;
+		}
+
+		const imgWrap = matchLi.querySelector< HTMLElement >( '.wp-menu-image' );
+		if ( ! imgWrap ) {
+			return null;
+		}
+
+		// Shape (a): nested <img>
+		const img = imgWrap.querySelector( 'img' );
+		if ( img && img.src ) {
+			const el = document.createElement( 'img' );
+			el.className = 'wp-desktop-dock__item-img';
+			el.src = img.src;
+			el.alt = '';
+			el.setAttribute( 'aria-hidden', 'true' );
+			return el;
+		}
+
+		// Shape (b): dashicon class on the wrap div itself.
+		const dashMatch = imgWrap.className.match( /\bdashicons-[\w-]+\b/ );
+		if ( dashMatch && dashMatch[ 0 ] !== 'dashicons-before' ) {
+			const el = document.createElement( 'span' );
+			el.className = `dashicons ${ dashMatch[ 0 ] }`;
+			el.setAttribute( 'aria-hidden', 'true' );
+			return el;
+		}
+
+		// Shape (c): CSS background-image on ::before pseudo.
+		const before = window.getComputedStyle( imgWrap, '::before' );
+		const bg = before.backgroundImage;
+		if ( bg && bg !== 'none' && ! bg.includes( 'url("")' ) ) {
+			return this._makeSvgIcon( bg );
+		}
+
+		// Fallback within the native-menu branch: background-image on
+		// the wrap div itself (less common but some plugins do it).
+		const bgWrap = window.getComputedStyle( imgWrap ).backgroundImage;
+		if ( bgWrap && bgWrap !== 'none' && ! bgWrap.includes( 'url("")' ) ) {
+			return this._makeSvgIcon( bgWrap );
+		}
+
+		return null;
 	}
 
 	/**

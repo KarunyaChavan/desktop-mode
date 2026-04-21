@@ -97,6 +97,17 @@
 	margin-top: 12px;
 }
 
+/* Top-level tab strip separating Appearance from AI Settings.
+ * Don't add a `display` rule for `wpd-tabpanel` here — the component's
+ * shadow-DOM `:host([hidden]) { display: none }` has lower specificity
+ * than any outer descendant selector, and overriding it from outside
+ * breaks the auto-swap (hidden panels stay visible). The component's
+ * own `:host { display: block }` already handles the shown state. */
+.wp-desktop-os-settings > wpd-tabs {
+	display: block;
+	margin-bottom: 16px;
+}
+
 /* `__reset` now renders as `<wpd-button variant="ghost">`. */
 
 /* ---------------------------------------------------------------
@@ -497,4 +508,39 @@
 	.wp-desktop-os-settings__library-tile--skeleton {
 		animation: none;
 	}
+}
+
+/* AI settings section — error and saving feedback */
+.wp-desktop-ai-settings__error {
+	margin: 6px 0 0;
+	font-size: 12px;
+	color: #d63638;
+}
+
+.wp-desktop-ai-settings__saving {
+	margin: 6px 0 0;
+	font-size: 12px;
+	color: #646970;
+	font-style: italic;
+}
+
+/* Extended options section — hint paragraph + error/saving states */
+.wp-desktop-ext__hint {
+	margin: 6px 0 0;
+	font-size: 12px;
+	color: #646970;
+	line-height: 1.5;
+}
+
+.wp-desktop-ext__error {
+	margin: 6px 0 0;
+	font-size: 12px;
+	color: #d63638;
+}
+
+.wp-desktop-ext__saving {
+	margin: 6px 0 0;
+	font-size: 12px;
+	color: #646970;
+	font-style: italic;
 }

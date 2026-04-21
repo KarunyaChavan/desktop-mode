@@ -39,6 +39,8 @@ import {
 	type WindowLifecycleHandlers,
 } from './native-windows';
 import { renderDesktopIcons } from './desktop-icons';
+import { AiAssistant, type AiAssistantApi } from './ai-assistant';
+import { DragBridge, type DragBridgeApi } from './drag-bridge';
 
 /**
  * Origin snapshot taken at shell module load. Every same-origin gate
@@ -221,6 +223,27 @@ export interface WpDesktopPublicApi {
 	 * — useful for picking up `pluginUrl` and other PHP-sourced bits.
 	 */
 	config: DesktopConfig;
+	/**
+	 * AI Assistant spotlight overlay. Open it programmatically with
+	 * `wp.desktop.ai.open()`, or let the global Cmd+K shortcut handle
+	 * it. The admin-bar "Ask AI ⌘K" button dispatches the
+	 * `wp-desktop-open-ai` event on `document`, which the assistant
+	 * also listens for — no direct reference needed.
+	 *
+	 * @since 0.14.0
+	 */
+	ai: AiAssistantApi;
+	/**
+	 * Cross-window drag bridge — the authoritative carrier for
+	 * attachment payloads that cross iframe boundaries (Media Library
+	 * → post editor). Source iframes call `window.parent.postMessage`
+	 * with a `wp-desktop-drag-start` payload; this bridge stores it
+	 * and replies to `wp-desktop-drag-payload-request` messages from
+	 * receiver iframes during their drop handlers.
+	 *
+	 * @since 0.14.0
+	 */
+	dragBridge: DragBridgeApi;
 }
 
 declare global {
@@ -299,13 +322,35 @@ function init(): void {
 	// the wallpaper element (defensive; shouldn't happen in practice).
 	const osSettings = new OsSettings(
 		{
-			mediaUrl: config.mediaUrl,
-			restNonce: config.restNonce,
-			canUpload: !! config.canUpload,
+			mediaUrl:               config.mediaUrl,
+			restNonce:              config.restNonce,
+			canUpload:              !! config.canUpload,
+			isAdmin:                !! config.currentUserIsAdmin,
+			aiPlatformSettings:     config.aiPlatformSettings ?? null,
+			aiPlatformSettingsUrl:  config.aiPlatformSettingsUrl ?? '',
+			extendedOptions:        config.extendedOptions ?? null,
+			extendedOptionsUrl:     config.extendedOptionsUrl ?? '',
 		},
 		wallpaperLayer ?? new WallpaperLayer( document.createElement( 'div' ), pluginUrl ),
 	);
 	osSettings.apply();
+
+	// AI Assistant — mounts the spotlight overlay onto document.body and
+	// wires the global Cmd+K shortcut. aiSearchUrl comes from PHP config;
+	// falls back to an empty string when AI is not configured (the search
+	// will return a 403 from the permission gate and show an error).
+	const aiAssistant = new AiAssistant( {
+		aiSearchUrl:       config.aiSearchUrl ?? '',
+		aiSearchStreamUrl: config.aiSearchStreamUrl ?? '',
+		restNonce:         config.restNonce,
+	} );
+
+	// Cross-window drag bridge — stores the attachment payload the
+	// Media Library iframe sends on dragstart so drop-receiver iframes
+	// can request it back in their drop handler. Instantiated here
+	// (after shell DOM exists) so any iframe loading afterward sees
+	// a parent that's ready to receive messages.
+	const dragBridge = new DragBridge();
 
 	// Dock (left edge, CORE WP menus). `config.dockItems` was already
 	// filtered server-side to core items — anything that routes via
@@ -682,6 +727,8 @@ function init(): void {
 		setDefaultWindow,
 		refreshMenu,
 		config,
+		ai:         aiAssistant,
+		dragBridge,
 	};
 
 	// Fire `wp-desktop.init` — plugins can now register wallpapers

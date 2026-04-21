@@ -128,4 +128,17 @@ export const DEFAULTS: OsSettingsState = {
 	},
 	customImage: null,
 	libraryHdOnly: true,
+	ai: {
+		enabled: false,
+		provider: 'openai',
+		apiKey: '',
+	},
 };
+
+/**
+ * Available AI providers. Single-entry for now — the picker is still a
+ * `<wpd-select>` so adding the next provider is zero-UI-churn.
+ */
+export const AI_PROVIDERS = [
+	{ id: 'openai' as const, label: 'OpenAI' },
+] as const;

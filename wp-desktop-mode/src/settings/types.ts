@@ -33,6 +33,20 @@ export interface CustomImage {
 	url: string;
 }
 
+/**
+ * AI provider id. Kept as a plain string so new providers can be added
+ * without touching the sanitization ladder — only registered ids in the
+ * AI section's own picker are offered in the UI.
+ */
+export type AiProviderId = 'openai';
+
+/** AI integration preferences — provider choice + API key. */
+export interface AiSettings {
+	enabled: boolean;
+	provider: AiProviderId;
+	apiKey: string;
+}
+
 /** Shape of the persisted settings. Defaults merged on load. */
 export interface OsSettingsState {
 	wallpaper: string;
@@ -46,6 +60,7 @@ export interface OsSettingsState {
 	 * to cover the desktop.
 	 */
 	libraryHdOnly: boolean;
+	ai: AiSettings;
 }
 
 /**
@@ -73,6 +88,16 @@ export interface OsSettingsConfig {
 	mediaUrl: string;
 	restNonce: string;
 	canUpload: boolean;
+	/** Whether the current user has manage_options capability. */
+	isAdmin: boolean;
+	/** Platform-wide AI settings — null for non-admins. */
+	aiPlatformSettings: { enabled: boolean; provider: string; apiKey: string } | null;
+	/** REST endpoint for reading/writing platform AI settings. */
+	aiPlatformSettingsUrl: string;
+	/** Platform-wide extended options — null for non-admins. */
+	extendedOptions: { media_library_enhanced: boolean } | null;
+	/** REST endpoint for reading/writing extended options. */
+	extendedOptionsUrl: string;
 }
 
 /**

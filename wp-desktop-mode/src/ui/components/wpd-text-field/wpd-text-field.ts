@@ -15,6 +15,13 @@
  * ></wpd-text-field>
  * ```
  *
+ * Add the `reveal` attribute on `type="password"` fields to show an
+ * eye-icon toggle that switches between hidden and visible text:
+ *
+ * ```html
+ * <wpd-text-field type="password" reveal label="API key"></wpd-text-field>
+ * ```
+ *
  * Emits `wpd-input-change` with `{ value: string }` on every user
  * keystroke (debounced once per `input` event firing — same cadence
  * as `<wpd-range-field>`). Callers that need Enter-to-submit can
@@ -47,8 +54,12 @@ export class WpdTextField extends Component {
 		'name',
 		'suffix',
 		'invalid',
+		'reveal',
 	] as const;
 	static styles = [ textFieldStyles ];
+
+	/** Whether the password text is currently visible. Internal state, not reflected to an attribute. */
+	private _revealed = false;
 
 	connectedCallback(): void {
 		super.connectedCallback();
@@ -72,7 +83,7 @@ export class WpdTextField extends Component {
 		const autocomplete =
 			( this as unknown as { autocomplete: string | null } ).autocomplete ||
 			'off';
-		const type =
+		const declaredType =
 			( this as unknown as { type: string | null } ).type || 'text';
 		const maxLength = ( this as unknown as { maxlength: string | null } )
 			.maxlength;
@@ -86,6 +97,17 @@ export class WpdTextField extends Component {
 			( this as unknown as { suffix: string | null } ).suffix || '';
 		const invalid =
 			( this as unknown as { invalid: string | null } ).invalid !== null;
+		const reveal =
+			( this as unknown as { reveal: string | null } ).reveal !== null;
+
+		// When the reveal toggle is active and the user clicked "show",
+		// switch the input to text so the characters are visible.
+		const effectiveType =
+			reveal && this._revealed ? 'text' : declaredType;
+
+		const rowClass = reveal
+			? 'wpd-text-field__row wpd-text-field__row--has-reveal'
+			: 'wpd-text-field__row';
 
 		// Shadow-DOM <label for=…> pairing. `this.id` is populated
 		// by ensureAutoId on connect (or by the caller's own id).
@@ -101,10 +123,10 @@ export class WpdTextField extends Component {
 						for=${ inputId }
 					>${ label }</label>`
 				: html`` }
-			<span class="wpd-text-field__row">
+			<span class=${ rowClass }>
 				<input
 					id=${ inputId }
-					type=${ type }
+					type=${ effectiveType }
 					.value=${ value }
 					placeholder=${ placeholder }
 					?disabled=${ disabled }
@@ -123,8 +145,31 @@ export class WpdTextField extends Component {
 				${ suffix
 					? html`<span class="wpd-text-field__suffix">${ suffix }</span>`
 					: html`` }
+				${ reveal ? this._renderRevealButton( disabled ) : html`` }
 			</span>
 		`;
+	}
+
+	private _renderRevealButton( disabled: boolean ) {
+		const label = this._revealed ? 'Hide' : 'Show';
+		return html`
+			<button
+				type="button"
+				class="wpd-text-field__reveal"
+				aria-label=${ label }
+				aria-pressed=${ this._revealed ? 'true' : 'false' }
+				?disabled=${ disabled }
+				tabindex="0"
+				@click=${ () => this._onToggleReveal() }
+			>
+				${ this._revealed ? _iconEyeOff() : _iconEye() }
+			</button>
+		`;
+	}
+
+	private _onToggleReveal(): void {
+		this._revealed = ! this._revealed;
+		this.requestUpdate();
 	}
 
 	private _onInput( e: Event ): void {
@@ -150,3 +195,49 @@ export class WpdTextField extends Component {
 	}
 }
 defineComponent( 'wpd-text-field', WpdTextField );
+
+// ---------------------------------------------------------------------------
+// Icon helpers — inline SVG so they work inside shadow DOM without any
+// external font dependency (Dashicons can't cross the shadow boundary).
+// ---------------------------------------------------------------------------
+
+function _iconEye() {
+	return html`
+		<svg
+			viewBox="0 0 16 16"
+			width="14"
+			height="14"
+			fill="none"
+			stroke="currentColor"
+			stroke-width="1.5"
+			stroke-linecap="round"
+			stroke-linejoin="round"
+			aria-hidden="true"
+			focusable="false"
+		>
+			<path d="M1 8C1 8 3.5 3 8 3s7 5 7 5-2.5 5-7 5S1 8 1 8z" />
+			<circle cx="8" cy="8" r="2" />
+		</svg>
+	`;
+}
+
+function _iconEyeOff() {
+	return html`
+		<svg
+			viewBox="0 0 16 16"
+			width="14"
+			height="14"
+			fill="none"
+			stroke="currentColor"
+			stroke-width="1.5"
+			stroke-linecap="round"
+			stroke-linejoin="round"
+			aria-hidden="true"
+			focusable="false"
+		>
+			<path d="M1 8C1 8 3.5 3 8 3s7 5 7 5-2.5 5-7 5S1 8 1 8z" />
+			<circle cx="8" cy="8" r="2" />
+			<line x1="2" y1="2" x2="14" y2="14" />
+		</svg>
+	`;
+}

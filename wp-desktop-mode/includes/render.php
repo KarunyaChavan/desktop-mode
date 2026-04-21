@@ -80,6 +80,7 @@ function wpdm_enqueue_assets() {
 	wp_enqueue_style( 'wp-desktop' );
 	wp_enqueue_style( 'wp-desktop-windows' );
 	wp_enqueue_style( 'wp-desktop-dock' );
+	wp_enqueue_style( 'wp-desktop-ai-assistant' );
 
 	// JS.
 	wp_enqueue_script( 'wp-desktop' );
@@ -192,6 +193,15 @@ function wpdm_enqueue_assets() {
 			'canUpload'        => current_user_can( 'upload_files' ),
 			'pluginUrl'        => esc_url_raw( untrailingslashit( WPDM_URL ) ),
 			'restNonce'        => wp_create_nonce( 'wp_rest' ),
+			'osSettings'            => wpdm_get_os_settings( get_current_user_id() ),
+			'osSettingsUrl'         => esc_url_raw( rest_url( 'wp-desktop/v1/os-settings' ) ),
+			'aiSearchUrl'           => esc_url_raw( rest_url( 'wp-desktop/v1/ai/search' ) ),
+			'aiSearchStreamUrl'     => esc_url_raw( add_query_arg( 'action', 'wpdm_ai_search_stream', admin_url( 'admin-ajax.php' ) ) ),
+			'aiPlatformSettings'    => current_user_can( 'manage_options' ) ? wpdm_ai_get_platform_settings() : null,
+			'aiPlatformSettingsUrl' => esc_url_raw( rest_url( 'wp-desktop/v1/ai/platform-settings' ) ),
+			'extendedOptions'       => current_user_can( 'manage_options' ) ? wpdm_get_extended_options() : null,
+			'extendedOptionsUrl'    => esc_url_raw( rest_url( 'wp-desktop/v1/extended-options' ) ),
+			'currentUserIsAdmin'    => current_user_can( 'manage_options' ),
 			'portalUrl'        => esc_url( wpdm_portal_url() ),
 			'fromPortal'       => $from_portal,
 		)

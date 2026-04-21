@@ -62,7 +62,9 @@ import type {
 	SettingsCtx,
 } from './types';
 import { buildAccentSection } from './sections/accent';
+import { buildAiSection } from './sections/ai';
 import { buildDockSizeSection } from './sections/dock-size';
+import { buildExtendedSection } from './sections/extended';
 import {
 	buildWallpaperSection,
 	registerCustomGradient,
@@ -187,9 +189,28 @@ export class OsSettings implements SettingsCtx {
 		'Personalize your desktop. Changes apply instantly and are saved to this browser.',
 	) }
 				</p>
-				${ buildWallpaperSection( this, body ) }
-				${ buildAccentSection( this ) }
-				${ buildDockSizeSection( this ) }
+				<wpd-tabs value="appearance" label=${ __( 'Settings sections' ) }>
+					<wpd-tab value="appearance"
+						>${ __( 'Appearance' ) }</wpd-tab
+					>
+					<wpd-tab value="ai">${ __( 'AI Settings' ) }</wpd-tab>
+					${ this.config.isAdmin
+						? html`<wpd-tab value="extended">${ __( 'Extended Options' ) }</wpd-tab>`
+						: html`` }
+				</wpd-tabs>
+				<wpd-tabpanel for="appearance">
+					${ buildWallpaperSection( this, body ) }
+					${ buildAccentSection( this ) }
+					${ buildDockSizeSection( this ) }
+				</wpd-tabpanel>
+				<wpd-tabpanel for="ai">
+					${ buildAiSection( this ) }
+				</wpd-tabpanel>
+				${ this.config.isAdmin
+					? html`<wpd-tabpanel for="extended">
+							${ buildExtendedSection( this ) }
+						</wpd-tabpanel>`
+					: html`` }
 				<div class="wp-desktop-os-settings__footer">
 					<wpd-button variant="ghost" @click=${ onReset }
 						>${ __( 'Reset to defaults' ) }</wpd-button

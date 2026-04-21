@@ -51,6 +51,13 @@ function wpdm_register_assets() {
 		$version
 	);
 
+	wp_register_style(
+		'wp-desktop-ai-assistant',
+		WPDM_URL . 'assets/css/ai-assistant.css',
+		array( 'wp-desktop-variables' ),
+		$version
+	);
+
 	// Scripts.
 	//
 	// `wp-hooks` — the shell exposes a WordPress-style filter/action

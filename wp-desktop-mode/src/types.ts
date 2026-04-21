@@ -641,6 +641,63 @@ export interface DesktopConfig {
 	 * @since 0.11.0
 	 */
 	defaultWallpaper?: string;
+	/**
+	 * Saved OS settings for the current user, loaded from user meta by PHP
+	 * at boot. The JS layer reads this once to hydrate its local state,
+	 * then writes to localStorage for instant subsequent reads and POSTs
+	 * changes back to `osSettingsUrl` so user meta stays the durable source.
+	 *
+	 * Optional — absent on older PHP builds that predate this field.
+	 *
+	 * @since 0.14.0
+	 */
+	osSettings?: Record<string, unknown>;
+	/**
+	 * REST endpoint for reading/writing OS settings.
+	 * @since 0.14.0
+	 */
+	osSettingsUrl?: string;
+	/**
+	 * REST endpoint for the AI content search.
+	 * Shape: `wp-desktop/v1/ai/search`.
+	 * @since 0.14.0
+	 */
+	aiSearchUrl?: string;
+	/**
+	 * SSE streaming endpoint for the agentic search — admin-ajax.php with
+	 * `action=wpdm_ai_search_stream` pre-filled. The JS EventSource appends
+	 * &nonce= and &query= when connecting.
+	 * @since 0.14.0
+	 */
+	aiSearchStreamUrl?: string;
+	/**
+	 * Platform-wide AI settings — only present for admins (null for
+	 * non-admin users so the key is never leaked in the page source).
+	 * @since 0.14.0
+	 */
+	aiPlatformSettings?: { enabled: boolean; provider: string; apiKey: string } | null;
+	/**
+	 * REST endpoint for reading/writing platform AI settings (admin only).
+	 * @since 0.14.0
+	 */
+	aiPlatformSettingsUrl?: string;
+	/**
+	 * Whether the current user has the `manage_options` capability.
+	 * @since 0.14.0
+	 */
+	currentUserIsAdmin?: boolean;
+	/**
+	 * Platform-wide extended options (admin-only). Contains toggles
+	 * for optional site-level enhancements such as Media Library
+	 * drag-and-drop. Null for non-admin users.
+	 * @since 0.14.0
+	 */
+	extendedOptions?: { media_library_enhanced: boolean } | null;
+	/**
+	 * REST endpoint for reading/writing extended options (admin only).
+	 * @since 0.14.0
+	 */
+	extendedOptionsUrl?: string;
 }
 
 /**

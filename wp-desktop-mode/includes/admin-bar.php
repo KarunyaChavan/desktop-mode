@@ -55,6 +55,30 @@ function wpdm_admin_bar_toggle( $wp_admin_bar ) {
 		)
 	);
 
+	// AI Assistant trigger — shown when desktop mode is active AND the
+	// current user has AI features configured. Clicking (or pressing
+	// Cmd+K anywhere) opens the spotlight-style AI overlay.
+	if ( $is_active && function_exists( 'wpdm_ai_is_enabled' ) && wpdm_ai_is_enabled( get_current_user_id() ) ) {
+		// Use dashicons-admin-comments (speech bubble) — same rendering
+		// path as the toggle + arrange buttons, no SVG / HTML parsing
+		// issues in the admin-bar context. The ⌘K badge is added via
+		// a CSS ::after on the label so it never touches the DOM.
+		$wp_admin_bar->add_node(
+			array(
+				'parent' => 'top-secondary',
+				'id'     => 'desktop-ai-assistant',
+				'title'  => '<span class="ab-icon dashicons dashicons-admin-comments" aria-hidden="true"></span>'
+					. '<span class="ab-label">' . esc_html__( 'Ask AI', 'wp-desktop-mode' ) . '</span>',
+				'href'   => '#',
+				'meta'   => array(
+					'class'    => 'desktop-ai-btn',
+					'title'    => __( 'Open AI Assistant (Cmd+K)', 'wp-desktop-mode' ),
+					'tabindex' => 0,
+				),
+			)
+		);
+	}
+
 	// Layout menu — only surfaced when the user is actually viewing
 	// the desktop shell (the actions don't make sense in classic
 	// admin, which has no windows to arrange). Parent renders as a
@@ -247,6 +271,43 @@ function wpdm_enqueue_toggle_assets() {
 		@media screen and (max-width: 782px) {
 			#wp-admin-bar-desktop-mode-toggle .ab-label,
 			#wp-admin-bar-desktop-layout-menu .ab-label {
+				display: none;
+			}
+		}
+
+		/* AI Assistant admin-bar button — same icon/label pattern as the
+		   desktop-mode-toggle; ⌘K badge added via CSS ::after so we keep
+		   the title HTML clean and avoid admin-bar sanitisation edge-cases. */
+		#wp-admin-bar-desktop-ai-assistant .ab-icon.dashicons,
+		#wp-admin-bar-desktop-ai-assistant .ab-icon.dashicons {
+			font: normal 20px/1 dashicons;
+			-webkit-font-smoothing: antialiased;
+			-moz-osx-font-smoothing: grayscale;
+		}
+		#wp-admin-bar-desktop-ai-assistant .ab-icon.dashicons::before {
+			content: "\f101";
+			top: 2px;
+			position: relative;
+			color: #72aee6;
+		}
+		/* ⌘K badge rendered purely in CSS to the right of the label */
+		#wpadminbar #wp-admin-bar-desktop-ai-assistant .ab-label::after {
+			content: "\2318K";
+			display: inline-block;
+			margin-inline-start: 5px;
+			font-size: 10px;
+			line-height: 1;
+			padding: 2px 5px;
+			background: rgba( 255, 255, 255, 0.1 );
+			border: 1px solid rgba( 255, 255, 255, 0.18 );
+			border-radius: 3px;
+			color: rgba( 255, 255, 255, 0.55 );
+			vertical-align: middle;
+			font-weight: 400;
+			letter-spacing: 0;
+		}
+		@media screen and (max-width: 782px) {
+			#wp-admin-bar-desktop-ai-assistant .ab-label {
 				display: none;
 			}
 		}
@@ -487,6 +548,18 @@ function wpdm_enqueue_toggle_assets() {
 			document.activeElement.blur();
 		}
 	} );
+
+	// AI Assistant button — dispatches the `wp-desktop-open-ai` event that
+	// the AiAssistant class listens for. Using an event instead of a direct
+	// call decouples the admin-bar inline script (which runs early, before
+	// the desktop shell has initialised) from the AiAssistant instance.
+	var aiBtn = document.getElementById( 'wp-admin-bar-desktop-ai-assistant' );
+	if ( aiBtn ) {
+		aiBtn.addEventListener( 'click', function( e ) {
+			e.preventDefault();
+			document.dispatchEvent( new CustomEvent( 'wp-desktop-open-ai' ) );
+		} );
+	}
 } )();
 JS;
 	wp_add_inline_script( 'admin-bar', $js );

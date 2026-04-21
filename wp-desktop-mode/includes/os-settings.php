@@ -1,0 +1,271 @@
+<?php
+/**
+ * Desktop Mode — OS Settings Persistence.
+ *
+ * Persists each user's OS Settings preferences (wallpaper, accent color,
+ * dock size, custom gradient/image, HD-only toggle, and AI integration
+ * settings) to user meta so they survive across browsers, devices, and
+ * private/incognito sessions. The JS layer writes to localStorage on
+ * every change for instant read-back, then asynchronously syncs to this
+ * endpoint so user meta is the durable source of truth.
+ *
+ * @package WPDesktopMode
+ */
+
+defined( 'ABSPATH' ) || exit;
+
+/** User meta key for OS Settings. */
+const WPDM_OS_SETTINGS_META_KEY = 'wp_desktop_os_settings';
+
+/** Valid dock-size IDs — mirrors the TS `DOCK_SIZES` constant. */
+const WPDM_OS_SETTINGS_DOCK_SIZES = array( 'compact', 'default', 'large' );
+
+/** Valid AI provider IDs — mirrors the TS `AI_PROVIDERS` constant. */
+const WPDM_OS_SETTINGS_AI_PROVIDERS = array( 'openai' );
+
+/**
+ * Returns a well-shaped default OS settings array.
+ *
+ * Mirrors the TypeScript `DEFAULTS` constant so a fresh user account
+ * gets the same starting state in both environments.
+ *
+ * @since 0.14.0
+ *
+ * @return array
+ */
+function wpdm_default_os_settings() {
+	return array(
+		'wallpaper'    => 'dark',
+		'accent'       => 'wp-blue',
+		'dockSize'     => 'default',
+		'customGradient' => array(
+			'from'  => '#2271b1',
+			'to'    => '#7c3aed',
+			'angle' => 135,
+		),
+		'customImage'  => null,
+		'libraryHdOnly' => true,
+		'ai'           => array(
+			'enabled'  => false,
+			'provider' => 'openai',
+			'apiKey'   => '',
+		),
+	);
+}
+
+/**
+ * Retrieves the saved OS settings for a user.
+ *
+ * Always returns a fully-shaped array so the JS side doesn't need to
+ * defend against partial or missing keys.
+ *
+ * @since 0.14.0
+ *
+ * @param int $user_id The user ID.
+ * @return array
+ */
+function wpdm_get_os_settings( $user_id ) {
+	$user_id = (int) $user_id;
+	if ( $user_id <= 0 ) {
+		return wpdm_default_os_settings();
+	}
+
+	$raw = get_user_meta( $user_id, WPDM_OS_SETTINGS_META_KEY, true );
+	if ( ! is_array( $raw ) ) {
+		return wpdm_default_os_settings();
+	}
+
+	return wpdm_sanitize_os_settings( $raw );
+}
+
+/**
+ * Saves sanitized OS settings for a user.
+ *
+ * @since 0.14.0
+ *
+ * @param int   $user_id  The user ID.
+ * @param mixed $settings Raw settings payload from the client.
+ * @return bool True on success, false otherwise.
+ */
+function wpdm_save_os_settings( $user_id, $settings ) {
+	$user_id = (int) $user_id;
+	if ( $user_id <= 0 ) {
+		return false;
+	}
+
+	$clean = wpdm_sanitize_os_settings( $settings );
+	return false !== update_user_meta( $user_id, WPDM_OS_SETTINGS_META_KEY, $clean );
+}
+
+/**
+ * Sanitizes a raw OS settings payload.
+ *
+ * Unknown keys are ignored; known keys are coerced field-by-field so a
+ * partial save (e.g., only accent changed) merges cleanly with the
+ * defaults rather than wiping unset fields.
+ *
+ * @since 0.14.0
+ *
+ * @param mixed $raw Raw settings from the client or user meta.
+ * @return array Sanitized settings.
+ */
+function wpdm_sanitize_os_settings( $raw ) {
+	$defaults = wpdm_default_os_settings();
+
+	if ( ! is_array( $raw ) ) {
+		return $defaults;
+	}
+
+	// Wallpaper — any non-empty string; registry membership is validated
+	// client-side at apply time.
+	$wallpaper = isset( $raw['wallpaper'] ) && is_string( $raw['wallpaper'] ) && '' !== $raw['wallpaper']
+		? sanitize_key( $raw['wallpaper'] )
+		: $defaults['wallpaper'];
+
+	// Accent — non-empty string; swatch validity is enforced in the picker.
+	$accent = isset( $raw['accent'] ) && is_string( $raw['accent'] ) && '' !== $raw['accent']
+		? sanitize_key( $raw['accent'] )
+		: $defaults['accent'];
+
+	// Dock size — must be one of the three known values.
+	$dock_size = isset( $raw['dockSize'] ) && in_array( $raw['dockSize'], WPDM_OS_SETTINGS_DOCK_SIZES, true )
+		? (string) $raw['dockSize']
+		: $defaults['dockSize'];
+
+	// Custom gradient — { from, to: valid hex; angle: int 0–360 }.
+	$custom_gradient = $defaults['customGradient'];
+	if ( isset( $raw['customGradient'] ) && is_array( $raw['customGradient'] ) ) {
+		$cg = $raw['customGradient'];
+		if ( isset( $cg['from'] ) && is_string( $cg['from'] ) && preg_match( '/^#[0-9a-f]{3,8}$/i', $cg['from'] ) ) {
+			$custom_gradient['from'] = strtolower( $cg['from'] );
+		}
+		if ( isset( $cg['to'] ) && is_string( $cg['to'] ) && preg_match( '/^#[0-9a-f]{3,8}$/i', $cg['to'] ) ) {
+			$custom_gradient['to'] = strtolower( $cg['to'] );
+		}
+		if ( isset( $cg['angle'] ) && is_numeric( $cg['angle'] ) ) {
+			$angle = (int) $cg['angle'];
+			if ( $angle >= 0 && $angle <= 360 ) {
+				$custom_gradient['angle'] = $angle;
+			}
+		}
+	}
+
+	// Custom image — { id: positive int, url: valid https? URL } or null.
+	$custom_image = null;
+	if ( isset( $raw['customImage'] ) && is_array( $raw['customImage'] ) ) {
+		$ci = $raw['customImage'];
+		$ci_id  = isset( $ci['id'] ) && is_numeric( $ci['id'] ) ? (int) $ci['id'] : 0;
+		$ci_url = isset( $ci['url'] ) ? esc_url_raw( (string) $ci['url'] ) : '';
+		if ( $ci_id > 0 && '' !== $ci_url && preg_match( '/^https?:\/\//i', $ci_url ) ) {
+			$custom_image = array(
+				'id'  => $ci_id,
+				'url' => $ci_url,
+			);
+		}
+	}
+
+	// Library HD only — boolean.
+	$library_hd_only = isset( $raw['libraryHdOnly'] ) ? (bool) $raw['libraryHdOnly'] : $defaults['libraryHdOnly'];
+
+	// AI settings.
+	$ai = $defaults['ai'];
+	if ( isset( $raw['ai'] ) && is_array( $raw['ai'] ) ) {
+		$raw_ai = $raw['ai'];
+
+		if ( isset( $raw_ai['enabled'] ) ) {
+			$ai['enabled'] = (bool) $raw_ai['enabled'];
+		}
+
+		if (
+			isset( $raw_ai['provider'] ) &&
+			in_array( $raw_ai['provider'], WPDM_OS_SETTINGS_AI_PROVIDERS, true )
+		) {
+			$ai['provider'] = (string) $raw_ai['provider'];
+		}
+
+		// API key — strip tags and limit length. The key is opaque to us;
+		// we just store what the user gives. 512 chars is generous for any
+		// real API key while preventing runaway meta writes.
+		if ( isset( $raw_ai['apiKey'] ) && is_string( $raw_ai['apiKey'] ) ) {
+			$ai['apiKey'] = substr( sanitize_text_field( $raw_ai['apiKey'] ), 0, 512 );
+		}
+	}
+
+	return array(
+		'wallpaper'     => $wallpaper,
+		'accent'        => $accent,
+		'dockSize'      => $dock_size,
+		'customGradient' => $custom_gradient,
+		'customImage'   => $custom_image,
+		'libraryHdOnly' => $library_hd_only,
+		'ai'            => $ai,
+	);
+}
+
+/**
+ * Registers the REST routes for OS settings.
+ *
+ * @since 0.14.0
+ */
+function wpdm_register_os_settings_rest_routes() {
+	register_rest_route(
+		'wp-desktop/v1',
+		'/os-settings',
+		array(
+			array(
+				'methods'             => WP_REST_Server::READABLE,
+				'callback'            => 'wpdm_rest_get_os_settings',
+				'permission_callback' => 'wpdm_rest_os_settings_permission',
+			),
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => 'wpdm_rest_save_os_settings',
+				'permission_callback' => 'wpdm_rest_os_settings_permission',
+				'args'                => array(
+					'settings' => array(
+						'required' => true,
+						'type'     => 'object',
+					),
+				),
+			),
+		)
+	);
+}
+add_action( 'rest_api_init', 'wpdm_register_os_settings_rest_routes' );
+
+/**
+ * Permission gate for OS settings REST routes.
+ *
+ * @since 0.14.0
+ *
+ * @return bool
+ */
+function wpdm_rest_os_settings_permission() {
+	return is_user_logged_in() && current_user_can( 'read' );
+}
+
+/**
+ * GET /wp-desktop/v1/os-settings
+ *
+ * @since 0.14.0
+ *
+ * @return WP_REST_Response
+ */
+function wpdm_rest_get_os_settings() {
+	return rest_ensure_response( wpdm_get_os_settings( get_current_user_id() ) );
+}
+
+/**
+ * POST /wp-desktop/v1/os-settings
+ *
+ * @since 0.14.0
+ *
+ * @param WP_REST_Request $request The REST request.
+ * @return WP_REST_Response The saved settings (after sanitization).
+ */
+function wpdm_rest_save_os_settings( WP_REST_Request $request ) {
+	$user_id  = get_current_user_id();
+	$payload  = $request->get_param( 'settings' );
+	wpdm_save_os_settings( $user_id, $payload );
+	return rest_ensure_response( wpdm_get_os_settings( $user_id ) );
+}

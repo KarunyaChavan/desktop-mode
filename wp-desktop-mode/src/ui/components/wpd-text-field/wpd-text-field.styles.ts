@@ -69,6 +69,44 @@ export const textFieldStyles = css`
 		color: var( --wp-desktop-muted, #646970 );
 	}
 
+	/* Reveal (show/hide) toggle — only rendered on password-type fields
+	 * that carry the reveal attribute. Sits at the inline-end of the
+	 * row; the input grows extra padding when the button is present so
+	 * typed text doesn't slide under it. */
+	.wpd-text-field__row--has-reveal input {
+		padding-inline-end: 36px;
+	}
+
+	.wpd-text-field__reveal {
+		position: absolute;
+		inset-inline-end: 0;
+		top: 0;
+		bottom: 0;
+		width: 34px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0;
+		border: none;
+		background: transparent;
+		color: var( --wp-desktop-muted, #646970 );
+		cursor: pointer;
+		border-radius: 0 6px 6px 0;
+		transition: color 0.12s ease;
+	}
+	.wpd-text-field__reveal:hover {
+		color: var( --wp-admin-theme-color, #2271b1 );
+	}
+	.wpd-text-field__reveal:focus-visible {
+		outline: 2px solid var( --wp-admin-theme-color, #2271b1 );
+		outline-offset: -2px;
+		border-radius: 0 6px 6px 0;
+	}
+	.wpd-text-field__reveal:disabled {
+		opacity: 0.45;
+		cursor: not-allowed;
+	}
+
 	input:hover {
 		border-color: var( --wp-desktop-muted, #8c8f94 );
 	}

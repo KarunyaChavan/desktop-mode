@@ -27,6 +27,7 @@ require_once WPDM_DIR . 'includes/ajax.php';
 require_once WPDM_DIR . 'includes/assets.php';
 require_once WPDM_DIR . 'includes/admin-bar.php';
 require_once WPDM_DIR . 'includes/session.php';
+require_once WPDM_DIR . 'includes/os-settings.php';
 require_once WPDM_DIR . 'includes/portal.php';
 require_once WPDM_DIR . 'includes/default-window.php';
 require_once WPDM_DIR . 'includes/media-query.php';
@@ -36,6 +37,8 @@ require_once WPDM_DIR . 'includes/toast-types.php';
 require_once WPDM_DIR . 'includes/components.php';
 require_once WPDM_DIR . 'includes/wallpapers.php';
 require_once WPDM_DIR . 'includes/render.php';
+require_once WPDM_DIR . 'includes/extended-options.php';
+require_once WPDM_DIR . 'includes/ai-copilot/bootstrap.php';
 
 /**
  * Load the plugin's translations early so strings emitted on

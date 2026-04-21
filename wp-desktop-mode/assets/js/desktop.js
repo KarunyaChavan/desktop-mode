@@ -6255,6 +6255,44 @@ var wpDesktop = function(exports) {
 		color: var( --wp-desktop-muted, #646970 );
 	}
 
+	/* Reveal (show/hide) toggle — only rendered on password-type fields
+	 * that carry the reveal attribute. Sits at the inline-end of the
+	 * row; the input grows extra padding when the button is present so
+	 * typed text doesn't slide under it. */
+	.wpd-text-field__row--has-reveal input {
+		padding-inline-end: 36px;
+	}
+
+	.wpd-text-field__reveal {
+		position: absolute;
+		inset-inline-end: 0;
+		top: 0;
+		bottom: 0;
+		width: 34px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0;
+		border: none;
+		background: transparent;
+		color: var( --wp-desktop-muted, #646970 );
+		cursor: pointer;
+		border-radius: 0 6px 6px 0;
+		transition: color 0.12s ease;
+	}
+	.wpd-text-field__reveal:hover {
+		color: var( --wp-admin-theme-color, #2271b1 );
+	}
+	.wpd-text-field__reveal:focus-visible {
+		outline: 2px solid var( --wp-admin-theme-color, #2271b1 );
+		outline-offset: -2px;
+		border-radius: 0 6px 6px 0;
+	}
+	.wpd-text-field__reveal:disabled {
+		opacity: 0.45;
+		cursor: not-allowed;
+	}
+
 	input:hover {
 		border-color: var( --wp-desktop-muted, #8c8f94 );
 	}
@@ -6289,6 +6327,10 @@ var wpDesktop = function(exports) {
 	}
 `;
   const _WpdTextField = class _WpdTextField extends Component {
+    constructor() {
+      super(...arguments);
+      this._revealed = false;
+    }
     connectedCallback() {
       super.connectedCallback();
       ensureAutoId(this);
@@ -6300,13 +6342,16 @@ var wpDesktop = function(exports) {
       const disabled = this.disabled !== null;
       const readonly = this.readonly !== null;
       const autocomplete = this.autocomplete || "off";
-      const type = this.type || "text";
+      const declaredType = this.type || "text";
       const maxLength = this.maxlength;
       const minLength = this.minlength;
       const pattern = this.pattern || "";
       const name = this.name || "";
       const suffix = this.suffix || "";
       const invalid = this.invalid !== null;
+      const reveal = this.reveal !== null;
+      const effectiveType = reveal && this._revealed ? "text" : declaredType;
+      const rowClass = reveal ? "wpd-text-field__row wpd-text-field__row--has-reveal" : "wpd-text-field__row";
       const hostId = this.id || "wpd-unnamed";
       const inputId = `${hostId}__input`;
       return html`
@@ -6314,10 +6359,10 @@ var wpDesktop = function(exports) {
 						class="wpd-text-field__label"
 						for=${inputId}
 					>${label}</label>` : html``}
-			<span class="wpd-text-field__row">
+			<span class=${rowClass}>
 				<input
 					id=${inputId}
-					type=${type}
+					type=${effectiveType}
 					.value=${value}
 					placeholder=${placeholder}
 					?disabled=${disabled}
@@ -6334,8 +6379,29 @@ var wpDesktop = function(exports) {
 					@keydown=${(e) => this._onKeyDown(e)}
 				/>
 				${suffix ? html`<span class="wpd-text-field__suffix">${suffix}</span>` : html``}
+				${reveal ? this._renderRevealButton(disabled) : html``}
 			</span>
 		`;
+    }
+    _renderRevealButton(disabled) {
+      const label = this._revealed ? "Hide" : "Show";
+      return html`
+			<button
+				type="button"
+				class="wpd-text-field__reveal"
+				aria-label=${label}
+				aria-pressed=${this._revealed ? "true" : "false"}
+				?disabled=${disabled}
+				tabindex="0"
+				@click=${() => this._onToggleReveal()}
+			>
+				${this._revealed ? _iconEyeOff() : _iconEye()}
+			</button>
+		`;
+    }
+    _onToggleReveal() {
+      this._revealed = !this._revealed;
+      this.requestUpdate();
     }
     _onInput(e) {
       const input = e.target;
@@ -6366,11 +6432,51 @@ var wpDesktop = function(exports) {
     "pattern",
     "name",
     "suffix",
-    "invalid"
+    "invalid",
+    "reveal"
   ];
   _WpdTextField.styles = [textFieldStyles];
   let WpdTextField = _WpdTextField;
   defineComponent("wpd-text-field", WpdTextField);
+  function _iconEye() {
+    return html`
+		<svg
+			viewBox="0 0 16 16"
+			width="14"
+			height="14"
+			fill="none"
+			stroke="currentColor"
+			stroke-width="1.5"
+			stroke-linecap="round"
+			stroke-linejoin="round"
+			aria-hidden="true"
+			focusable="false"
+		>
+			<path d="M1 8C1 8 3.5 3 8 3s7 5 7 5-2.5 5-7 5S1 8 1 8z" />
+			<circle cx="8" cy="8" r="2" />
+		</svg>
+	`;
+  }
+  function _iconEyeOff() {
+    return html`
+		<svg
+			viewBox="0 0 16 16"
+			width="14"
+			height="14"
+			fill="none"
+			stroke="currentColor"
+			stroke-width="1.5"
+			stroke-linecap="round"
+			stroke-linejoin="round"
+			aria-hidden="true"
+			focusable="false"
+		>
+			<path d="M1 8C1 8 3.5 3 8 3s7 5 7 5-2.5 5-7 5S1 8 1 8z" />
+			<circle cx="8" cy="8" r="2" />
+			<line x1="2" y1="2" x2="14" y2="14" />
+		</svg>
+	`;
+  }
   const _WpdNumberField = class _WpdNumberField extends Component {
     connectedCallback() {
       super.connectedCallback();
@@ -7699,8 +7805,16 @@ var wpDesktop = function(exports) {
       angle: 135
     },
     customImage: null,
-    libraryHdOnly: true
+    libraryHdOnly: true,
+    ai: {
+      enabled: false,
+      provider: "openai",
+      apiKey: ""
+    }
   };
+  const AI_PROVIDERS = [
+    { id: "openai", label: "OpenAI" }
+  ];
   function isPromise(value) {
     return !!value && typeof value === "object" && typeof value.then === "function";
   }
@@ -7727,44 +7841,97 @@ var wpDesktop = function(exports) {
     return el.textContent?.trim() || "";
   }
   function loadState() {
-    try {
-      const raw = window.localStorage.getItem(STORAGE_KEY);
-      if (!raw) {
-        return structuredDefaults();
-      }
-      const parsed = JSON.parse(raw);
-      const accents = getAccents();
-      return {
-        // `wallpaper` is now any non-empty string — registry
-        // membership is validated at apply time rather than here,
-        // so a plugin that gets enqueued late still delivers its
-        // persisted selection. Missing persisted selection falls
-        // back to whatever the server said is the default (via
-        // `wp_desktop_default_wallpaper`), not the hard-coded TS
-        // constant — lets a theme set a site-wide first-boot
-        // wallpaper without forking the bundle.
-        wallpaper: typeof parsed.wallpaper === "string" && parsed.wallpaper !== "" ? parsed.wallpaper : getDefaultWallpaperId(),
-        accent: accents.some((a) => a.id === parsed.accent) ? parsed.accent : DEFAULTS.accent,
-        dockSize: DOCK_SIZES.some((d) => d.id === parsed.dockSize) ? parsed.dockSize : DEFAULTS.dockSize,
-        customGradient: sanitizeCustomGradient(parsed.customGradient),
-        customImage: sanitizeCustomImage(parsed.customImage),
-        libraryHdOnly: typeof parsed.libraryHdOnly === "boolean" ? parsed.libraryHdOnly : DEFAULTS.libraryHdOnly
-      };
-    } catch {
-      return structuredDefaults();
+    const serverRaw = _readServerSettings();
+    if (serverRaw) {
+      const state = _parseRaw(serverRaw);
+      _writeLocalStorage(state);
+      return state;
     }
+    try {
+      const cached = window.localStorage.getItem(STORAGE_KEY);
+      if (cached) {
+        return _parseRaw(JSON.parse(cached));
+      }
+    } catch {
+    }
+    return structuredDefaults();
   }
+  function _readServerSettings() {
+    const config = window.wpDesktopConfig;
+    const raw = config?.osSettings;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      return null;
+    }
+    return raw;
+  }
+  function _parseRaw(parsed) {
+    const accents = getAccents();
+    return {
+      wallpaper: typeof parsed.wallpaper === "string" && parsed.wallpaper !== "" ? parsed.wallpaper : getDefaultWallpaperId(),
+      accent: accents.some((a) => a.id === parsed.accent) ? parsed.accent : DEFAULTS.accent,
+      dockSize: DOCK_SIZES.some((d) => d.id === parsed.dockSize) ? parsed.dockSize : DEFAULTS.dockSize,
+      customGradient: sanitizeCustomGradient(parsed.customGradient),
+      customImage: sanitizeCustomImage(parsed.customImage),
+      libraryHdOnly: typeof parsed.libraryHdOnly === "boolean" ? parsed.libraryHdOnly : DEFAULTS.libraryHdOnly,
+      ai: sanitizeAi(parsed.ai)
+    };
+  }
+  let _syncTimer = null;
+  const SYNC_DEBOUNCE_MS = 1500;
   function saveState(state) {
+    _writeLocalStorage(state);
+    _scheduleSyncToServer(state);
+  }
+  function _writeLocalStorage(state) {
     try {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     } catch {
     }
   }
+  function _scheduleSyncToServer(state) {
+    if (_syncTimer !== null) {
+      clearTimeout(_syncTimer);
+    }
+    _syncTimer = setTimeout(() => {
+      _syncTimer = null;
+      _postToServer(state);
+    }, SYNC_DEBOUNCE_MS);
+  }
+  function _postToServer(state) {
+    const config = window.wpDesktopConfig;
+    const url = config?.osSettingsUrl;
+    const nonce = config?.restNonce;
+    if (!url || !nonce) {
+      return;
+    }
+    fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-WP-Nonce": nonce
+      },
+      body: JSON.stringify({ settings: state })
+    }).catch(() => {
+    });
+  }
   function structuredDefaults() {
     return {
       ...DEFAULTS,
       customGradient: { ...DEFAULTS.customGradient },
-      customImage: null
+      customImage: null,
+      ai: { ...DEFAULTS.ai }
+    };
+  }
+  function sanitizeAi(raw) {
+    if (!raw || typeof raw !== "object") {
+      return { ...DEFAULTS.ai };
+    }
+    const { enabled, provider, apiKey } = raw;
+    const validProvider = AI_PROVIDERS.some((p) => p.id === provider) ? provider : DEFAULTS.ai.provider;
+    return {
+      enabled: typeof enabled === "boolean" ? enabled : DEFAULTS.ai.enabled,
+      provider: validProvider,
+      apiKey: typeof apiKey === "string" ? apiKey : DEFAULTS.ai.apiKey
     };
   }
   function sanitizeCustomGradient(raw) {
@@ -7861,6 +8028,177 @@ var wpDesktop = function(exports) {
     paint();
     return wrapper;
   }
+  function buildAiSection(ctx) {
+    const wrapper = document.createElement("div");
+    const onToggle = (e) => {
+      const checked = e.detail?.checked === true;
+      ctx.state.ai = { ...ctx.state.ai, enabled: checked };
+      ctx.save();
+      paint();
+    };
+    const onProvider = (e) => {
+      const id = e.detail?.value ?? "";
+      if (!AI_PROVIDERS.some((p) => p.id === id)) return;
+      ctx.state.ai = { ...ctx.state.ai, provider: id };
+      ctx.save();
+    };
+    const onApiKey = (e) => {
+      const value = e.detail?.value ?? "";
+      ctx.state.ai = { ...ctx.state.ai, apiKey: value };
+      ctx.save();
+    };
+    const paint = () => {
+      const platformEnabled = ctx.config.aiPlatformSettings?.enabled === true && !!ctx.config.aiPlatformSettings?.apiKey;
+      render(
+        html`
+				<wpd-section
+					heading=${__("AI integration")}
+					description=${platformEnabled ? __("A platform-wide AI key is configured. You can optionally set a personal key below to override it.") : __("Connect an AI provider to power assistive features across the desktop.")}
+				>
+					<wpd-checkbox-label
+						label=${__("Enable AI features")}
+						?checked=${ctx.state.ai.enabled}
+						@wpd-checkbox-change=${onToggle}
+					></wpd-checkbox-label>
+
+					<wpd-select
+						label=${__("Provider")}
+						value=${ctx.state.ai.provider}
+						?disabled=${!ctx.state.ai.enabled}
+						@wpd-pick=${onProvider}
+					>
+						${AI_PROVIDERS.map(
+          (p) => html`<wpd-option value=${p.id}>${p.label}</wpd-option>`
+        )}
+					</wpd-select>
+
+					<wpd-text-field
+						label=${__("API key")}
+						type="password"
+						reveal
+						autocomplete="off"
+						placeholder=${platformEnabled ? __("Using platform key — enter to override") : __("sk-…")}
+						value=${ctx.state.ai.apiKey}
+						?disabled=${!ctx.state.ai.enabled}
+						@wpd-input-change=${onApiKey}
+					></wpd-text-field>
+				</wpd-section>
+
+				${ctx.config.isAdmin ? _buildGlobalSection(ctx) : html``}
+			`,
+        wrapper
+      );
+    };
+    paint();
+    return wrapper;
+  }
+  function _buildGlobalSection(ctx) {
+    const { aiPlatformSettingsUrl: url, restNonce: nonce, aiPlatformSettings: initial } = ctx.config;
+    const state = {
+      enabled: initial?.enabled ?? false,
+      provider: initial?.provider ?? "openai",
+      apiKey: initial?.apiKey ?? "",
+      saving: false,
+      error: ""
+    };
+    const el = document.createElement("div");
+    const save = async () => {
+      if (!url || !nonce || state.saving) return;
+      state.saving = true;
+      state.error = "";
+      paint();
+      try {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-WP-Nonce": nonce
+          },
+          body: JSON.stringify({
+            settings: {
+              enabled: state.enabled,
+              provider: state.provider,
+              apiKey: state.apiKey
+            }
+          })
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          state.error = err.message ?? `Error ${res.status}`;
+        } else {
+          const saved = await res.json().catch(() => null);
+          if (saved && typeof saved === "object") {
+            ctx.config.aiPlatformSettings = saved;
+          }
+        }
+      } catch {
+        state.error = __("Network error — check your connection.");
+      } finally {
+        state.saving = false;
+        paint();
+      }
+    };
+    const onToggle = (e) => {
+      state.enabled = e.detail?.checked === true;
+      save();
+    };
+    const onProvider = (e) => {
+      const id = e.detail?.value ?? "";
+      if (!AI_PROVIDERS.some((p) => p.id === id)) return;
+      state.provider = id;
+      save();
+    };
+    const onApiKey = (e) => {
+      state.apiKey = e.detail?.value ?? "";
+    };
+    const onApiKeyCommit = () => {
+      save();
+    };
+    const paint = () => render(
+      html`
+				<wpd-section
+					heading=${__("Global settings")}
+					description=${__("Platform-wide AI configuration. Applies to all users and to background jobs (cron, WP-CLI, anonymous comments). Individual users can override with their own key above.")}
+				>
+					<wpd-checkbox-label
+						label=${__("Enable AI for all users")}
+						?checked=${state.enabled}
+						@wpd-checkbox-change=${onToggle}
+					></wpd-checkbox-label>
+
+					<wpd-select
+						label=${__("Provider")}
+						value=${state.provider}
+						?disabled=${!state.enabled || state.saving}
+						@wpd-pick=${onProvider}
+					>
+						${AI_PROVIDERS.map(
+        (p) => html`<wpd-option value=${p.id}>${p.label}</wpd-option>`
+      )}
+					</wpd-select>
+
+					<wpd-text-field
+						label=${__("Platform API key")}
+						type="password"
+						reveal
+						autocomplete="off"
+						placeholder=${__("sk-…")}
+						value=${state.apiKey}
+						?disabled=${!state.enabled || state.saving}
+						@wpd-input-change=${onApiKey}
+						@wpd-input-commit=${onApiKeyCommit}
+						@wpd-submit=${onApiKeyCommit}
+					></wpd-text-field>
+
+					${state.error ? html`<p class="wp-desktop-ai-settings__error">${state.error}</p>` : html``}
+					${state.saving ? html`<p class="wp-desktop-ai-settings__saving">${__("Saving…")}</p>` : html``}
+				</wpd-section>
+			`,
+      el
+    );
+    paint();
+    return el;
+  }
   function buildDockSizeSection(ctx) {
     const onPick = (e) => {
       const id = e.detail?.value ?? "";
@@ -7896,6 +8234,83 @@ var wpDesktop = function(exports) {
     );
     paint();
     return wrapper;
+  }
+  function buildExtendedSection(ctx) {
+    const { extendedOptions, extendedOptionsUrl, restNonce } = ctx.config;
+    const state = {
+      media_library_enhanced: extendedOptions?.media_library_enhanced === true,
+      saving: false,
+      error: ""
+    };
+    const el = document.createElement("div");
+    const save = async () => {
+      if (!extendedOptionsUrl || !restNonce || state.saving) {
+        return;
+      }
+      state.saving = true;
+      state.error = "";
+      paint();
+      try {
+        const res = await fetch(extendedOptionsUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-WP-Nonce": restNonce
+          },
+          body: JSON.stringify({
+            options: {
+              media_library_enhanced: state.media_library_enhanced
+            }
+          })
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          state.error = err.message ?? `Error ${res.status}`;
+        } else {
+          const saved = await res.json().catch(() => null);
+          if (saved && typeof saved === "object") {
+            ctx.config.extendedOptions = saved;
+          }
+        }
+      } catch {
+        state.error = __("Network error — check your connection.");
+      } finally {
+        state.saving = false;
+        paint();
+      }
+    };
+    const onMediaToggle = (e) => {
+      state.media_library_enhanced = e.detail?.checked === true;
+      save();
+    };
+    const paint = () => render(
+      html`
+				<wpd-section
+					heading=${__("Extended options")}
+					description=${__(
+        "Site-wide enhancements that apply to every user. Toggling requires the affected page to be reloaded for the change to take effect."
+      )}
+				>
+					<wpd-checkbox-label
+						label=${__("Enable drag-and-drop in the Media Library")}
+						?checked=${state.media_library_enhanced}
+						@wpd-checkbox-change=${onMediaToggle}
+					></wpd-checkbox-label>
+
+					<p class="wp-desktop-ext__hint">
+						${__(
+        "Makes every item in the WordPress Media Library draggable. Drop a media item into text fields, rich-text editors, Gutenberg blocks, or any target that accepts images or files. No replacement of the library — just a drag-and-drop layer on top of the one you already know."
+      )}
+					</p>
+
+					${state.error ? html`<p class="wp-desktop-ext__error">${state.error}</p>` : html``}
+					${state.saving ? html`<p class="wp-desktop-ext__saving">${__("Saving…")}</p>` : html``}
+				</wpd-section>
+			`,
+      el
+    );
+    paint();
+    return el;
   }
   async function fetchMediaPage(config, page, search, hdOnly) {
     const url = new URL(config.mediaUrl);
@@ -8638,9 +9053,24 @@ var wpDesktop = function(exports) {
           "Personalize your desktop. Changes apply instantly and are saved to this browser."
         )}
 				</p>
-				${buildWallpaperSection(this, body)}
-				${buildAccentSection(this)}
-				${buildDockSizeSection(this)}
+				<wpd-tabs value="appearance" label=${__("Settings sections")}>
+					<wpd-tab value="appearance"
+						>${__("Appearance")}</wpd-tab
+					>
+					<wpd-tab value="ai">${__("AI Settings")}</wpd-tab>
+					${this.config.isAdmin ? html`<wpd-tab value="extended">${__("Extended Options")}</wpd-tab>` : html``}
+				</wpd-tabs>
+				<wpd-tabpanel for="appearance">
+					${buildWallpaperSection(this, body)}
+					${buildAccentSection(this)}
+					${buildDockSizeSection(this)}
+				</wpd-tabpanel>
+				<wpd-tabpanel for="ai">
+					${buildAiSection(this)}
+				</wpd-tabpanel>
+				${this.config.isAdmin ? html`<wpd-tabpanel for="extended">
+							${buildExtendedSection(this)}
+						</wpd-tabpanel>` : html``}
 				<div class="wp-desktop-os-settings__footer">
 					<wpd-button variant="ghost" @click=${onReset}
 						>${__("Reset to defaults")}</wpd-button
@@ -10468,6 +10898,534 @@ var wpDesktop = function(exports) {
       }
     }
   }
+  const ICON_SPARKLE = `<svg viewBox="0 0 20 20" width="15" height="15" aria-hidden="true" focusable="false" fill="currentColor">
+	<path d="M10 2 L11.8 7.8 L17.5 9.5 L11.8 11.2 L10 17 L8.2 11.2 L2.5 9.5 L8.2 7.8 Z"/>
+</svg>`;
+  const ICON_CLOSE = `<svg viewBox="0 0 14 14" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false">
+	<line x1="2" y1="2" x2="12" y2="12"/>
+	<line x1="12" y1="2" x2="2" y2="12"/>
+</svg>`;
+  const ICON_RETURN = `<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+	<polyline points="14,4 14,10 3,10"/>
+	<polyline points="6,7 3,10 6,13"/>
+</svg>`;
+  const ICON_SPINNER = `<svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="wp-desktop-ai__spinner-icon">
+	<circle cx="10" cy="10" r="7" stroke-opacity="0.25"/>
+	<path d="M10 3 A7 7 0 0 1 17 10" stroke-opacity="1"/>
+</svg>`;
+  const ICON_ARROW = `<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+	<polyline points="6,3 11,8 6,13"/>
+</svg>`;
+  const SUGGESTED_PROMPTS = [
+    "Find my post about…",
+    "Where can I see categories?",
+    "Do I have any spam comments?",
+    "Take me to plugin settings"
+  ];
+  class AiAssistant {
+    constructor(config) {
+      this._isOpen = false;
+      this._isSearching = false;
+      this._previousFocus = null;
+      this._currentStream = null;
+      this._aiSearchUrl = config.aiSearchUrl;
+      this._aiSearchStreamUrl = config.aiSearchStreamUrl;
+      this._restNonce = config.restNonce;
+      this._el = this._buildDOM();
+      document.body.appendChild(this._el);
+      this._input = this._el.querySelector(".wp-desktop-ai__input");
+      this._submitBtn = this._el.querySelector(".wp-desktop-ai__submit");
+      this._closeBtn = this._el.querySelector(".wp-desktop-ai__close");
+      this._resultsEl = this._el.querySelector(".wp-desktop-ai__results");
+      this._bindEvents();
+      this._renderSuggestions();
+    }
+    // ------------------------------------------------------------------
+    // Public API
+    // ------------------------------------------------------------------
+    open() {
+      if (this._isOpen) {
+        this._input.focus();
+        this._input.select();
+        return;
+      }
+      this._isOpen = true;
+      this._previousFocus = document.activeElement;
+      this._input.value = "";
+      this._submitBtn.classList.remove("has-value");
+      this._renderSuggestions();
+      this._el.removeAttribute("hidden");
+      void this._el.offsetHeight;
+      this._el.classList.add("is-open");
+      this._el.setAttribute("aria-hidden", "false");
+      requestAnimationFrame(() => this._input.focus());
+    }
+    close() {
+      if (!this._isOpen) return;
+      this._isOpen = false;
+      this._el.classList.remove("is-open");
+      this._el.setAttribute("aria-hidden", "true");
+      this._closeStream();
+      this._isSearching = false;
+      this._submitBtn.disabled = false;
+      this._input.disabled = false;
+      const onEnd = (e) => {
+        if (e.target !== this._el || e.propertyName !== "opacity") return;
+        this._el.setAttribute("hidden", "");
+        this._el.removeEventListener("transitionend", onEnd);
+        if (this._previousFocus instanceof HTMLElement) {
+          this._previousFocus.focus();
+        }
+      };
+      this._el.addEventListener("transitionend", onEnd);
+    }
+    toggle() {
+      this._isOpen ? this.close() : this.open();
+    }
+    get isOpen() {
+      return this._isOpen;
+    }
+    // ------------------------------------------------------------------
+    // Events
+    // ------------------------------------------------------------------
+    _bindEvents() {
+      document.addEventListener("keydown", (e) => {
+        if ((e.metaKey || e.ctrlKey) && e.key === "k" && !e.shiftKey && !e.altKey) {
+          e.preventDefault();
+          this.toggle();
+        }
+      }, true);
+      this._el.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") {
+          e.stopPropagation();
+          this.close();
+          return;
+        }
+      });
+      this._el.addEventListener("keydown", (e) => {
+        if (e.key !== "Tab") return;
+        const focusable = [this._closeBtn, this._input, this._submitBtn].filter((el) => !el.disabled);
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      });
+      document.addEventListener("wp-desktop-open-ai", () => this.open());
+      this._closeBtn.addEventListener("click", () => this.close());
+      this._submitBtn.addEventListener("click", () => this._onSubmit());
+      this._input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          this._onSubmit();
+        }
+      });
+      this._input.addEventListener("input", () => {
+        const hasValue = this._input.value.trim().length > 0;
+        this._submitBtn.classList.toggle("has-value", hasValue);
+        if (!hasValue) {
+          this._renderSuggestions();
+        }
+      });
+    }
+    // ------------------------------------------------------------------
+    // Flow
+    // ------------------------------------------------------------------
+    async _onSubmit() {
+      const query = this._input.value.trim();
+      if (!query || this._isSearching) return;
+      await this._runSearch(query, null, 0);
+    }
+    _runSearch(query, resumeTool, startOffset) {
+      if (this._isSearching) return;
+      this._isSearching = true;
+      this._submitBtn.disabled = true;
+      this._input.disabled = true;
+      this._showThinking("Thinking…");
+      if (typeof EventSource !== "undefined" && this._aiSearchStreamUrl) {
+        this._runSearchStream(query, resumeTool, startOffset);
+      } else {
+        this._runSearchFetch(query, resumeTool, startOffset);
+      }
+    }
+    /**
+     * EventSource-based streaming — the preferred path. Shows real-time
+     * progress messages as the agent picks tools and runs them.
+     */
+    _runSearchStream(query, resumeTool, startOffset) {
+      const url = new URL(this._aiSearchStreamUrl, window.location.origin);
+      url.searchParams.set("nonce", this._restNonce);
+      url.searchParams.set("query", query);
+      if (resumeTool) {
+        url.searchParams.set("resume_tool", resumeTool);
+        url.searchParams.set("start_offset", String(startOffset));
+      }
+      this._closeStream();
+      const es = new EventSource(url.toString());
+      this._currentStream = es;
+      const finish = () => {
+        es.close();
+        this._currentStream = null;
+        this._isSearching = false;
+        this._submitBtn.disabled = false;
+        this._input.disabled = false;
+        this._input.focus();
+      };
+      es.onmessage = (ev) => {
+        let data;
+        try {
+          data = JSON.parse(ev.data);
+        } catch {
+          return;
+        }
+        if (!data || typeof data !== "object") return;
+        switch (data.event) {
+          case "open":
+            break;
+          case "progress":
+            if (typeof data.message === "string") {
+              this._showThinking(data.message);
+            }
+            break;
+          case "done":
+            if (data.result) {
+              this._showResult(query, data.result);
+            }
+            finish();
+            break;
+          case "error":
+            this._showError(data.message ?? "Something went wrong.");
+            finish();
+            break;
+        }
+      };
+      es.onerror = () => {
+        if (this._currentStream === es) {
+          this._showError("Lost connection to the assistant. Please try again.");
+          finish();
+        }
+      };
+    }
+    /**
+     * Legacy fetch path — used when EventSource is not available.
+     */
+    async _runSearchFetch(query, resumeTool, startOffset) {
+      try {
+        const body = { query };
+        if (resumeTool) {
+          body.resume_tool = resumeTool;
+          body.start_offset = startOffset;
+        }
+        const res = await fetch(this._aiSearchUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-WP-Nonce": this._restNonce
+          },
+          body: JSON.stringify(body)
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          this._showError(err.message ?? `Server returned ${res.status}`);
+          return;
+        }
+        this._showResult(query, await res.json());
+      } catch {
+        this._showError("Network error — please check your connection and try again.");
+      } finally {
+        this._isSearching = false;
+        this._submitBtn.disabled = false;
+        this._input.disabled = false;
+        this._input.focus();
+      }
+    }
+    _closeStream() {
+      if (this._currentStream) {
+        this._currentStream.close();
+        this._currentStream = null;
+      }
+    }
+    // ------------------------------------------------------------------
+    // Open helpers — everything opens as a legacy iframe window, not a
+    // new browser tab, so the admin experience stays inside the desktop.
+    // ------------------------------------------------------------------
+    _getWindowManager() {
+      const wm = window.wp?.desktop?.windowManager;
+      return wm ?? null;
+    }
+    _openInLegacyWindow(url, title, icon) {
+      const wm = this._getWindowManager();
+      if (!wm) {
+        window.open(url, "_blank", "noopener");
+        return;
+      }
+      wm.open({ url, title, icon: icon ?? "dashicons-admin-generic" });
+      this.close();
+    }
+    // ------------------------------------------------------------------
+    // Rendering
+    // ------------------------------------------------------------------
+    _renderSuggestions() {
+      this._resultsEl.hidden = false;
+      this._resultsEl.innerHTML = `
+			<div class="wp-desktop-ai__suggestions">
+				<p class="wp-desktop-ai__suggestions-label">${this._esc("Try asking")}</p>
+				<div class="wp-desktop-ai__suggestions-list">
+					${SUGGESTED_PROMPTS.map(
+        (p) => `<button type="button" class="wp-desktop-ai__suggestion" data-prompt="${this._esc(p)}">
+							${this._esc(p)}
+						</button>`
+      ).join("")}
+				</div>
+			</div>
+		`;
+      this._resultsEl.querySelectorAll(".wp-desktop-ai__suggestion").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const prompt = btn.dataset.prompt ?? "";
+          this._input.value = prompt;
+          this._submitBtn.classList.add("has-value");
+          this._input.focus();
+        });
+      });
+    }
+    _showThinking(message = "Thinking…") {
+      this._resultsEl.hidden = false;
+      this._resultsEl.innerHTML = `
+			<div class="wp-desktop-ai__state wp-desktop-ai__state--thinking">
+				${ICON_SPINNER}
+				<span>${this._esc(message)}</span>
+			</div>
+		`;
+    }
+    _showError(message) {
+      this._resultsEl.hidden = false;
+      this._resultsEl.innerHTML = `
+			<div class="wp-desktop-ai__state wp-desktop-ai__state--error">
+				<span>${this._esc(message)}</span>
+			</div>
+		`;
+    }
+    _showResult(query, data) {
+      this._resultsEl.hidden = false;
+      const messageHtml = `
+			<div class="wp-desktop-ai__bubble">
+				<span class="wp-desktop-ai__bubble-icon">${ICON_SPARKLE}</span>
+				<p class="wp-desktop-ai__bubble-text">${this._esc(data.message || "")}</p>
+			</div>
+		`;
+      let bodyHtml = "";
+      if (data.answer_type === "entity" && data.entity) {
+        bodyHtml = this._renderEntityCard(data.entity);
+      } else if (data.answer_type === "navigation" && data.admin_links && data.admin_links.length > 0) {
+        bodyHtml = this._renderAdminLinks(data.admin_links);
+      }
+      if (data.continue) {
+        bodyHtml += `
+				<button type="button" class="wp-desktop-ai__continue-btn"
+					data-tool="${this._esc(data.continue.tool)}"
+					data-offset="${data.continue.offset}"
+					data-query="${this._esc(query)}">
+					${this._esc(data.continue.label)}
+				</button>
+			`;
+      }
+      this._resultsEl.innerHTML = messageHtml + bodyHtml;
+      this._resultsEl.querySelectorAll(
+        ".wp-desktop-ai__entity-open"
+      ).forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const url = btn.dataset.url ?? "";
+          const title = btn.dataset.title ?? "";
+          const icon = btn.dataset.icon ?? "dashicons-admin-generic";
+          if (url) this._openInLegacyWindow(url, title, icon);
+        });
+      });
+      this._resultsEl.querySelectorAll(
+        ".wp-desktop-ai__admin-link"
+      ).forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const url = btn.dataset.url ?? "";
+          const title = btn.dataset.title ?? "";
+          const icon = btn.dataset.icon ?? "dashicons-admin-generic";
+          if (url) this._openInLegacyWindow(url, title, icon);
+        });
+      });
+      const cont = this._resultsEl.querySelector(".wp-desktop-ai__continue-btn");
+      if (cont) {
+        cont.addEventListener("click", () => {
+          const tool = cont.dataset.tool ?? null;
+          const offset = parseInt(cont.dataset.offset ?? "0", 10);
+          const q = cont.dataset.query ?? query;
+          this._runSearch(q, tool, offset);
+        });
+      }
+    }
+    _renderEntityCard(e) {
+      const isComment = e.type === "comment";
+      const title = isComment ? `Comment on “${this._esc(e.post_title ?? "post")}”` : this._esc(e.title ?? "Untitled");
+      const summary = this._esc(e.ai_summary || e.excerpt || "");
+      const typeLabel = e.type.charAt(0).toUpperCase() + e.type.slice(1);
+      const topicChip = e.topic ? `<span class="wp-desktop-ai__entity-topic">${this._esc(e.topic)}</span>` : "";
+      const icon = isComment ? "dashicons-admin-comments" : e.type === "page" ? "dashicons-admin-page" : "dashicons-admin-post";
+      return `
+			<div class="wp-desktop-ai__entity">
+				<div class="wp-desktop-ai__entity-header">
+					${topicChip}
+					<span class="wp-desktop-ai__entity-type">${this._esc(typeLabel)}</span>
+				</div>
+				<h3 class="wp-desktop-ai__entity-title">${title}</h3>
+				<p class="wp-desktop-ai__entity-summary">${summary}</p>
+				<button type="button"
+					class="wp-desktop-ai__entity-open"
+					data-url="${this._esc(e.edit_url)}"
+					data-title="${this._esc(e.title ?? e.post_title ?? typeLabel)}"
+					data-icon="${icon}">
+					<span>${this._esc(`Open ${typeLabel.toLowerCase()} in desktop`)}</span>
+					${ICON_ARROW}
+				</button>
+			</div>
+		`;
+    }
+    _renderAdminLinks(links) {
+      const items = links.map((link) => `
+			<button type="button"
+				class="wp-desktop-ai__admin-link"
+				data-url="${this._esc(link.url)}"
+				data-title="${this._esc(link.title)}"
+				data-icon="${this._esc(link.icon)}">
+				<span class="wp-desktop-ai__admin-link-icon dashicons ${this._esc(link.icon)}" aria-hidden="true"></span>
+				<span class="wp-desktop-ai__admin-link-body">
+					<span class="wp-desktop-ai__admin-link-title">${this._esc(link.title)}</span>
+					<span class="wp-desktop-ai__admin-link-desc">${this._esc(link.description)}</span>
+				</span>
+				<span class="wp-desktop-ai__admin-link-arrow">${ICON_ARROW}</span>
+			</button>
+		`).join("");
+      return `<div class="wp-desktop-ai__admin-links">${items}</div>`;
+    }
+    /** Minimal HTML escaping for text interpolated into innerHTML. */
+    _esc(str) {
+      return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    }
+    // ------------------------------------------------------------------
+    // DOM scaffold
+    // ------------------------------------------------------------------
+    _buildDOM() {
+      const el = document.createElement("div");
+      el.id = "wp-desktop-ai-assistant";
+      el.className = "wp-desktop-ai";
+      el.setAttribute("role", "dialog");
+      el.setAttribute("aria-modal", "true");
+      el.setAttribute("aria-label", "AI Assistant");
+      el.setAttribute("aria-hidden", "true");
+      el.setAttribute("hidden", "");
+      el.innerHTML = `
+			<div class="wp-desktop-ai__backdrop" aria-hidden="true"></div>
+			<div class="wp-desktop-ai__panel">
+				<div class="wp-desktop-ai__header">
+					<span class="wp-desktop-ai__header-icon">${ICON_SPARKLE}</span>
+					<span class="wp-desktop-ai__header-label">AI Assistant</span>
+					<button type="button" class="wp-desktop-ai__close" aria-label="Close">
+						${ICON_CLOSE}
+					</button>
+				</div>
+				<div class="wp-desktop-ai__input-wrap">
+					<span class="wp-desktop-ai__input-icon">${ICON_SPARKLE}</span>
+					<input
+						class="wp-desktop-ai__input"
+						type="text"
+						placeholder="How can I help?"
+						autocomplete="off"
+						spellcheck="false"
+						aria-label="Ask the AI assistant"
+					/>
+					<button type="button" class="wp-desktop-ai__submit" aria-label="Send">
+						${ICON_RETURN}
+					</button>
+				</div>
+				<div class="wp-desktop-ai__results" hidden></div>
+				<div class="wp-desktop-ai__footer">
+					<span class="wp-desktop-ai__footer-hint">
+						Your assistant for finding content and navigating wp-admin
+					</span>
+					<span class="wp-desktop-ai__footer-keys" aria-hidden="true">
+						<kbd>&#8629;</kbd> ask
+					</span>
+				</div>
+			</div>
+		`;
+      return el;
+    }
+  }
+  const DRAG_BRIDGE_EVENTS = {
+    START: "wp-desktop-cross-frame-drag-start",
+    END: "wp-desktop-cross-frame-drag-end"
+  };
+  function isStart(m) {
+    return !!m && typeof m === "object" && m.type === "wp-desktop-drag-start" && !!m.payload && typeof m.payload === "object";
+  }
+  function isEnd(m) {
+    return !!m && typeof m === "object" && m.type === "wp-desktop-drag-end";
+  }
+  function isPayloadRequest(m) {
+    return !!m && typeof m === "object" && m.type === "wp-desktop-drag-payload-request";
+  }
+  class DragBridge {
+    constructor() {
+      this._payload = null;
+      this._onMessage = (e) => {
+        if (e.origin !== this._origin) {
+          return;
+        }
+        const msg = e.data;
+        if (isStart(msg)) {
+          this._startDrag(msg.payload, e.source ?? null);
+          return;
+        }
+        if (isEnd(msg)) {
+          this._endDrag();
+          return;
+        }
+        if (isPayloadRequest(msg) && this._payload && e.source) {
+          try {
+            e.source.postMessage(
+              { type: "wp-desktop-drag-payload", payload: this._payload },
+              this._origin
+            );
+          } catch {
+          }
+        }
+      };
+      this._origin = window.location.origin;
+      window.addEventListener("message", this._onMessage);
+    }
+    getPayload() {
+      return this._payload;
+    }
+    isDragging() {
+      return this._payload !== null;
+    }
+    _startDrag(payload, _source) {
+      this._payload = payload;
+      document.dispatchEvent(
+        new CustomEvent(DRAG_BRIDGE_EVENTS.START, { detail: { payload } })
+      );
+    }
+    _endDrag() {
+      if (this._payload === null) {
+        return;
+      }
+      const payload = this._payload;
+      this._payload = null;
+      document.dispatchEvent(
+        new CustomEvent(DRAG_BRIDGE_EVENTS.END, { detail: { payload } })
+      );
+    }
+  }
   const clock = {
     id: "clock",
     // Labels/descriptions on built-in defs stay string-literal at
@@ -11074,11 +12032,22 @@ var wpDesktop = function(exports) {
       {
         mediaUrl: config.mediaUrl,
         restNonce: config.restNonce,
-        canUpload: !!config.canUpload
+        canUpload: !!config.canUpload,
+        isAdmin: !!config.currentUserIsAdmin,
+        aiPlatformSettings: config.aiPlatformSettings ?? null,
+        aiPlatformSettingsUrl: config.aiPlatformSettingsUrl ?? "",
+        extendedOptions: config.extendedOptions ?? null,
+        extendedOptionsUrl: config.extendedOptionsUrl ?? ""
       },
       wallpaperLayer ?? new WallpaperLayer(document.createElement("div"), pluginUrl)
     );
     osSettings.apply();
+    const aiAssistant = new AiAssistant({
+      aiSearchUrl: config.aiSearchUrl ?? "",
+      aiSearchStreamUrl: config.aiSearchStreamUrl ?? "",
+      restNonce: config.restNonce
+    });
+    const dragBridge = new DragBridge();
     const dockEl = document.getElementById("wp-desktop-dock");
     let dock = null;
     if (dockEl && config.dockItems) {
@@ -11294,7 +12263,9 @@ var wpDesktop = function(exports) {
       whenReady,
       setDefaultWindow,
       refreshMenu,
-      config
+      config,
+      ai: aiAssistant,
+      dragBridge
     };
     doAction(HOOKS.COMPONENTS_REGISTERED, { tags: [...WPD_COMPONENT_TAGS] });
     doAction(HOOKS.INIT, { config });

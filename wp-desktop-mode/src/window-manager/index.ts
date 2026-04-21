@@ -482,6 +482,19 @@ export class WindowManager {
 		this._stack.push( win );
 		this._desktop.appendChild( win.element );
 		applyDesktopVisibility( this, win );
+
+		// Hydrate native windows AFTER mount. The plugin's render
+		// callback receives a body that's already connected to the
+		// document, so any `<wpd-*>` custom element the plugin
+		// creates or populates via declarative setters upgrades
+		// synchronously (HTML spec: elements upgrade on connection).
+		// Calling before mount would leave the body detached,
+		// which made `element.items = […]` stash an own data
+		// property on the pre-upgrade instance that shadowed the
+		// class setter after upgrade — empty `<wpd-select>`s in
+		// practice. No-op for iframe windows.
+		win.hydrateNative();
+
 		this.focus( win );
 
 		const openedDetail = {

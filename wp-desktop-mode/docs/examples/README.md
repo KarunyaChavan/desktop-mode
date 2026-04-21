@@ -20,6 +20,9 @@ defined( 'ABSPATH' ) || exit;
 - [Style a specific admin page inside the iframe](./chromeless-style-override.md)
 - [Inject data into `wpDesktopConfig`](./inject-shell-config.md)
 - [Register a wallpaper (CSS + canvas)](./register-wallpaper.md)
+- [Register a desktop icon (Jorvy)](./register-icon.md)
+- [Native window with tabs (auto-swap pattern)](./native-window-with-tabs.md)
+- [Layout primitives (body → panel → row → col)](./layout-primitives.md)
 - [Native windows — planned (Phase 7)](./native-windows.md)
 
 If your use case isn't here, check [Hooks Reference](../hooks-reference.md) and [JavaScript Reference](../javascript-reference.md) — everything we fire is documented there.

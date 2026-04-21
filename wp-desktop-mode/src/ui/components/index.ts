@@ -15,18 +15,24 @@ export { WpdButton } from './wpd-button/wpd-button';
 export { WpdSwatch } from './wpd-swatch/wpd-swatch';
 export { WpdSwatchGrid } from './wpd-swatch-grid/wpd-swatch-grid';
 export { WpdSegmented, WpdSegment } from './wpd-segmented/wpd-segmented';
+export { WpdSelect, WpdOption } from './wpd-select/wpd-select';
 export { WpdColorField } from './wpd-color-field/wpd-color-field';
 export { WpdRangeField } from './wpd-range-field/wpd-range-field';
+export { WpdTextField } from './wpd-text-field/wpd-text-field';
+export { WpdNumberField } from './wpd-number-field/wpd-number-field';
+export { WpdCheckbox } from './wpd-checkbox/wpd-checkbox';
 export { WpdCheckboxLabel } from './wpd-checkbox-label/wpd-checkbox-label';
 export { WpdToast, WpdToastContainer } from './wpd-toast/wpd-toast';
-export { WpdTabs, WpdTab } from './wpd-tabs/wpd-tabs';
+export { WpdTabs, WpdTab, WpdTabPanel } from './wpd-tabs/wpd-tabs';
 export { WpdWindowButton } from './wpd-window-button/wpd-window-button';
 export { WpdMenu, WpdMenuItem } from './wpd-menu/wpd-menu';
 export { WpdTabChip } from './wpd-tab-chip/wpd-tab-chip';
 export { WpdStack } from './wpd-stack/wpd-stack';
 export { WpdCluster } from './wpd-cluster/wpd-cluster';
 export { WpdIcon } from './wpd-icon/wpd-icon';
+export { WpdBody } from './wpd-body/wpd-body';
 export { WpdPanel } from './wpd-panel/wpd-panel';
+export { WpdRow } from './wpd-row/wpd-row';
 export { WpdGrid } from './wpd-grid/wpd-grid';
 export { WpdDisplay } from './wpd-display/wpd-display';
 export { WpdEmptyState } from './wpd-empty-state/wpd-empty-state';
@@ -44,13 +50,19 @@ export const WPD_COMPONENT_TAGS = [
 	'wpd-swatch-grid',
 	'wpd-segmented',
 	'wpd-segment',
+	'wpd-select',
+	'wpd-option',
 	'wpd-color-field',
 	'wpd-range-field',
+	'wpd-text-field',
+	'wpd-number-field',
+	'wpd-checkbox',
 	'wpd-checkbox-label',
 	'wpd-toast',
 	'wpd-toast-container',
 	'wpd-tabs',
 	'wpd-tab',
+	'wpd-tabpanel',
 	'wpd-window-button',
 	'wpd-menu',
 	'wpd-menu-item',
@@ -58,7 +70,9 @@ export const WPD_COMPONENT_TAGS = [
 	'wpd-stack',
 	'wpd-cluster',
 	'wpd-icon',
+	'wpd-body',
 	'wpd-panel',
+	'wpd-row',
 	'wpd-grid',
 	'wpd-display',
 	'wpd-empty-state',

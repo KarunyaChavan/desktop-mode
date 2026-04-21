@@ -117,6 +117,9 @@ function wpdm_enqueue_assets() {
 	$server_wallpapers = isset( $menu_payload['serverWallpapers'] )
 		? $menu_payload['serverWallpapers']
 		: array();
+	$desktop_icons     = isset( $menu_payload['desktopIcons'] )
+		? $menu_payload['desktopIcons']
+		: array();
 
 	// Build the current page URL from $pagenow + $_GET. Strip the portal
 	// marker so the derived window ID matches what the dock would produce
@@ -146,6 +149,10 @@ function wpdm_enqueue_assets() {
 	 *     @type array  $nativeWindows Server-declared native windows (via `wp_register_desktop_window`). Shell registers + syncs tiles based on this list — activation/deactivation is a diff without shell reload.
 	 *     @type array  $serverWidgets Server-declared right-column widgets (via `wp_register_desktop_widget`). Shell syncs the widget registry + dynamically loads plugin scripts so widgets appear in the picker without a shell reload.
 	 *     @type array  $serverWallpapers Server-declared wallpapers (via `wp_register_desktop_wallpaper`). Same lifecycle — shell loads the plugin's JS, reads the full `WallpaperDef` from `window.wpDesktopWallpapers[id]`, and registers / unregisters as plugins activate / deactivate.
+	 *     @type array  $desktopIcons     Server-declared desktop icons (via `wp_register_desktop_icon`). Rendered on the wallpaper as clickable shortcut tiles.
+	 *     @type array  $accentColors     Swatch list for the OS Settings accent picker. Filterable via `wp_desktop_accent_colors`.
+	 *     @type array  $toastTypes       Toast-notification type map. Filterable via `wp_desktop_toast_types`.
+	 *     @type string $defaultWallpaper Wallpaper slug applied on first boot. Filterable via `wp_desktop_default_wallpaper`.
 	 *     @type array  $session      Saved session (windows, focused, updated).
 	 *     @type string $sessionUrl       REST endpoint for saving the session.
 	 *     @type string $mediaUrl         REST endpoint for media uploads (wp/v2/media).
@@ -172,6 +179,10 @@ function wpdm_enqueue_assets() {
 			'nativeWindows'    => $native_windows,
 			'serverWidgets'    => $server_widgets,
 			'serverWallpapers' => $server_wallpapers,
+			'desktopIcons'     => $desktop_icons,
+			'accentColors'     => wpdm_get_accent_colors(),
+			'toastTypes'       => wpdm_get_toast_types(),
+			'defaultWallpaper' => wpdm_get_default_wallpaper(),
 			'session'          => wpdm_get_session( get_current_user_id() ),
 			'sessionUrl'       => esc_url_raw( rest_url( 'wp-desktop/v1/session' ) ),
 			'mediaUrl'         => esc_url_raw( rest_url( 'wp/v2/media' ) ),

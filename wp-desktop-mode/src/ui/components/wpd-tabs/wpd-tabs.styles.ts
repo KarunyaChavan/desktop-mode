@@ -1,8 +1,8 @@
 /**
- * Styles for `<wpd-tabs>` + `<wpd-tab>`. Two exported stylesheets
- * because each element adopts its own. Keeping them in one file
- * makes the visual decisions (underline accent, tight spacing)
- * side-by-side.
+ * Styles for `<wpd-tabs>` + `<wpd-tab>` + `<wpd-tabpanel>`. Three
+ * exported stylesheets because each element adopts its own. Keeping
+ * them in one file makes the visual decisions (underline accent,
+ * tight spacing, panel focus outline) side-by-side.
  */
 import { css } from '../../core';
 
@@ -12,6 +12,27 @@ export const tabsStyles = css`
 		gap: 4px;
 		margin-bottom: 10px;
 		border-bottom: 1px solid var( --wp-desktop-border, #dcdcde );
+	}
+`;
+
+export const tabPanelStyles = css`
+	/*
+	 * Shadow-DOM styles. :host targets the panel element; slotted
+	 * light children flow through the single <slot> in the render.
+	 * The :host([hidden]) rule spells out display: none because the
+	 * :host block above sets display: block and that would otherwise
+	 * beat the UA [hidden] { display: none } rule.
+	 */
+	:host {
+		display: block;
+	}
+	:host( [ hidden ] ) {
+		display: none;
+	}
+	:host( :focus-visible ) {
+		outline: 2px solid var( --wp-admin-theme-color, #2271b1 );
+		outline-offset: 4px;
+		border-radius: 4px;
 	}
 `;
 

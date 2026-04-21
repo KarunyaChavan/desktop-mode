@@ -7,7 +7,7 @@
  * defaults on next save.
  */
 
-import { ACCENTS, DEFAULTS, DOCK_SIZES, STORAGE_KEY } from './constants';
+import { DEFAULTS, DOCK_SIZES, STORAGE_KEY, getAccents, getDefaultWallpaperId } from './constants';
 import type {
 	AccentId,
 	CustomGradient,
@@ -24,16 +24,21 @@ export function loadState(): OsSettingsState {
 			return structuredDefaults();
 		}
 		const parsed = JSON.parse( raw ) as Partial<OsSettingsState>;
+		const accents = getAccents();
 		return {
 			// `wallpaper` is now any non-empty string — registry
 			// membership is validated at apply time rather than here,
 			// so a plugin that gets enqueued late still delivers its
-			// persisted selection.
+			// persisted selection. Missing persisted selection falls
+			// back to whatever the server said is the default (via
+			// `wp_desktop_default_wallpaper`), not the hard-coded TS
+			// constant — lets a theme set a site-wide first-boot
+			// wallpaper without forking the bundle.
 			wallpaper:
 				typeof parsed.wallpaper === 'string' && parsed.wallpaper !== ''
 					? parsed.wallpaper
-					: DEFAULTS.wallpaper,
-			accent: ACCENTS.some( ( a ) => a.id === parsed.accent )
+					: getDefaultWallpaperId(),
+			accent: accents.some( ( a ) => a.id === parsed.accent )
 				? ( parsed.accent as AccentId )
 				: DEFAULTS.accent,
 			dockSize: DOCK_SIZES.some( ( d ) => d.id === parsed.dockSize )

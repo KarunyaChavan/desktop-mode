@@ -1,0 +1,67 @@
+<?php
+/**
+ * Desktop Mode — Built-in wallpaper presets.
+ *
+ * The five gradient / solid presets that ship with the plugin, each
+ * registered through the same public API third-party plugins use
+ * (`wp_register_desktop_wallpaper()`). Dogfooding the registration
+ * surface for the built-ins is how we discover whether the API is
+ * expressive enough for plugin authors — if we couldn't describe our
+ * own presets through it, the API is broken.
+ *
+ * Hooked on `init` priority 5 so the presets land in the registry
+ * before the shell config is built (shell render runs on
+ * `admin_enqueue_scripts`, which fires after `init`), and before any
+ * late third-party plugin that wants to react via the
+ * `wp_desktop_wallpaper_registered` action.
+ *
+ * @package WPDesktopMode
+ * @since   0.11.0
+ */
+
+defined( 'ABSPATH' ) || exit;
+
+/**
+ * Registers the five built-in wallpaper presets.
+ *
+ * @since 0.11.0
+ */
+function wpdm_register_builtin_wallpapers() {
+	$presets = array(
+		array(
+			'id'    => 'dark',
+			'label' => __( 'Graphite', 'wp-desktop-mode' ),
+			'value' => 'linear-gradient(135deg, #1d2327 0%, #2c3338 50%, #1d2327 100%)',
+		),
+		array(
+			'id'    => 'aurora',
+			'label' => __( 'Aurora', 'wp-desktop-mode' ),
+			'value' => 'linear-gradient(135deg, #1a2980 0%, #26d0ce 100%)',
+		),
+		array(
+			'id'    => 'sunset',
+			'label' => __( 'Sunset', 'wp-desktop-mode' ),
+			'value' => 'linear-gradient(135deg, #ff512f 0%, #dd2476 100%)',
+		),
+		array(
+			'id'    => 'forest',
+			'label' => __( 'Forest', 'wp-desktop-mode' ),
+			'value' => 'linear-gradient(135deg, #134e5e 0%, #71b280 100%)',
+		),
+		array(
+			'id'    => 'mono',
+			'label' => __( 'Mono', 'wp-desktop-mode' ),
+			'value' => '#1d2327',
+		),
+	);
+
+	foreach ( $presets as $preset ) {
+		wp_register_desktop_wallpaper( $preset['id'], array(
+			'label'   => $preset['label'],
+			'preview' => $preset['value'],
+			'value'   => $preset['value'],
+			'type'    => 'css',
+		) );
+	}
+}
+add_action( 'init', 'wpdm_register_builtin_wallpapers', 5 );

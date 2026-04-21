@@ -52,6 +52,49 @@ export class WpdSegmented extends Component {
 		} );
 	}
 
+	/**
+	 * Declarative item-list setter. Replaces the existing
+	 * `<wpd-segment>` children with a fresh set built from a
+	 * `{ value, label }` array; preserves the current selection
+	 * when the value still matches an entry, otherwise falls back
+	 * to the first item.
+	 *
+	 * Collapses the pre-0.11 imperative dance (clear children,
+	 * `createElement`, set `textContent`, `appendChild`, then
+	 * `setAttribute('value', …)` on the group — order matters) to
+	 * a single assignment:
+	 *
+	 * ```js
+	 * segmented.items = [
+	 *   { value: 'm',  label: 'm' },
+	 *   { value: 'km', label: 'km' },
+	 * ];
+	 * ```
+	 *
+	 * @since 0.11.0
+	 */
+	set items( list: ReadonlyArray<{ value: string; label: string }> ) {
+		const existing = this.querySelectorAll( ':scope > wpd-segment' );
+		for ( const el of Array.from( existing ) ) {
+			el.remove();
+		}
+		for ( const item of list ) {
+			const seg = document.createElement( 'wpd-segment' );
+			seg.setAttribute( 'value', item.value );
+			seg.textContent = item.label;
+			this.appendChild( seg );
+		}
+		const current =
+			( this as unknown as { value: string | null } ).value;
+		const stillValid =
+			current !== null && list.some( ( i ) => i.value === current );
+		if ( ! stillValid && list.length > 0 ) {
+			( this as unknown as { value: string } ).value = list[ 0 ].value;
+		} else {
+			this.requestUpdate();
+		}
+	}
+
 	protected render() {
 		const label = ( this as unknown as { label: string | null } ).label || '';
 		if ( label ) {

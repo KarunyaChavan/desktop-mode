@@ -223,10 +223,26 @@ function wpdm_sanitize_session( $session ) {
 	}
 	// Always at least one desktop in the persisted shape — guards
 	// against a client clearing every desktop and saving an empty
-	// list.
+	// list, or omitting the key entirely.
 	if ( empty( $clean['desktops'] ) ) {
 		$clean['desktops'] = array( wpdm_default_desktop() );
-		$desktop_ids       = array( 'desktop-1' );
+	}
+	if ( empty( $desktop_ids ) ) {
+		// Rebuild ids from the authoritative desktops list so the
+		// per-window desktopId validation below has something to
+		// compare against — otherwise a client that omits `desktops`
+		// but sends windows would hit `$desktop_ids[0]` on an empty
+		// array.
+		$desktop_ids = array_map(
+			static function ( $d ) {
+				return isset( $d['id'] ) ? (string) $d['id'] : '';
+			},
+			$clean['desktops']
+		);
+		$desktop_ids = array_values( array_filter( $desktop_ids ) );
+		if ( empty( $desktop_ids ) ) {
+			$desktop_ids = array( 'desktop-1' );
+		}
 	}
 
 	// --- Active desktop ------------------------------------------
@@ -244,7 +260,6 @@ function wpdm_sanitize_session( $session ) {
 	}
 
 	if ( isset( $session['windows'] ) && is_array( $session['windows'] ) ) {
-		$admin_url = admin_url();
 		foreach ( $session['windows'] as $win ) {
 			if ( ! is_array( $win ) ) {
 				continue;
@@ -268,8 +283,9 @@ function wpdm_sanitize_session( $session ) {
 			// Only allow URLs that land inside our own wp-admin — both
 			// a safety net against storing arbitrary origins in user meta
 			// and a guarantee the restore path won't try to iframe a
-			// cross-origin page.
-			if ( '' === $url || 0 !== strpos( $url, $admin_url ) ) {
+			// cross-origin page. Host+path parsing rejects tricks like
+			// `//evil.com/wp-admin/…` that a raw prefix check would miss.
+			if ( '' === $url || ! wpdm_url_is_same_admin( $url ) ) {
 				continue;
 			}
 			// Strip transient/routing flags before storage. The chromeless
@@ -325,6 +341,14 @@ function wpdm_sanitize_session( $session ) {
 					if ( '' === $tab_url ) {
 						continue;
 					}
+					// Hard cap on URL length — a runaway client (or a
+					// malicious payload) could otherwise push many
+					// megabytes of URL into user meta. 2048 is the
+					// de-facto IE-legacy URL length limit and covers
+					// every real URL the shell restores.
+					if ( strlen( $tab_url ) > 2048 ) {
+						continue;
+					}
 					$label = isset( $tab['label'] ) ? wp_strip_all_tags( (string) $tab['label'] ) : '';
 					// Trim long labels server-side too, mirroring the
 					// client-side 80-char slice in the chromeless
@@ -360,11 +384,19 @@ function wpdm_sanitize_session( $session ) {
  * Clamps a numeric dimension into a sane range.
  *
  * Geometry coming from the client is untrusted. A malicious or buggy
- * payload could try to stash multi-million-pixel values in meta or
- * negative values that break the shell. This enforces integer type
- * and min/max bounds.
+ * payload could try to stash multi-million-pixel values in meta,
+ * negative values that break the shell, or non-numeric garbage
+ * (strings, arrays, objects). This enforces numeric type and min/max
+ * bounds, falling back to `$min` for anything non-numeric so the
+ * window restores to a sane geometry rather than colliding with 0.
+ *
+ * `INF`, `NAN`, and array/object input are rejected by `is_numeric()`
+ * before the `(int)` cast, eliminating any overflow or type-juggling
+ * surprise.
  *
  * @since 0.4.0
+ * @since 0.11.0 Rejects non-numeric input explicitly instead of
+ *               relying on PHP's permissive `(int)` cast.
  *
  * @param mixed $value The raw value.
  * @param int   $min   Minimum allowed value.
@@ -372,12 +404,18 @@ function wpdm_sanitize_session( $session ) {
  * @return int The clamped integer.
  */
 function wpdm_sanitize_session_dimension( $value, $min, $max ) {
+	if ( is_string( $value ) ) {
+		$value = trim( $value );
+	}
+	if ( ! is_numeric( $value ) ) {
+		return (int) $min;
+	}
 	$value = (int) $value;
 	if ( $value < $min ) {
-		return $min;
+		return (int) $min;
 	}
 	if ( $value > $max ) {
-		return $max;
+		return (int) $max;
 	}
 	return $value;
 }

@@ -1,27 +1,28 @@
 /**
- * Desktop Mode — Built-in wallpaper presets.
+ * Desktop Mode — Built-in wallpaper presets (server-declared).
  *
- * The five static gradient / solid presets that ship with the plugin,
- * registered via the same public API third-party plugins would use.
- * This is the dogfooding contract: if the registry is expressive
- * enough to power our own wallpapers, it's expressive enough for
- * plugins.
+ * Historically this module hard-coded five gradient/solid presets
+ * (dark, aurora, sunset, forest, mono) and shoved them into the JS
+ * registry at boot. As of 0.11.0 the presets live in PHP — see
+ * `includes/wallpapers.php` — and flow to the shell through the same
+ * `config.serverWallpapers` payload third-party plugins use. A theme
+ * can now add / remove / rename a built-in via `add_filter(
+ * 'wp_desktop_wallpapers', … )` in `functions.php` without rebuilding
+ * the bundle.
  *
- * Note that custom-gradient and custom-image aren't here — they
- * carry their own in-panel editors plus persisted user state that
- * lives in OS Settings. Custom-gradient will migrate to this file
- * (as a def with `renderEditor`) once the settings refactor lands;
- * custom-image stays in `settings.ts` for v1 while its multi-tab
- * upload + library UI gets generalized for the `renderEditor` API
- * in a follow-up.
+ * The file is kept so imports in `src/desktop.ts` don't break; the
+ * function is now a no-op. If a future preset needs JS-only behaviour
+ * (a canvas wallpaper, a dynamic gradient driven by the clock), add
+ * it here and register through the JS-side `register()` API.
  *
  * @since 0.6.0
+ * @since 0.11.0 Presets moved to PHP; function is now a no-op. The
+ *               compile-time `BUILT_IN_PRESET_IDS` tuple is kept as
+ *               a reference for code paths that still need a stable
+ *               fallback list.
  */
 
-import { __ } from '../i18n';
-import { register } from './registry';
-
-/** Preset ids kept in a stable order — matches the order in OS Settings. */
+/** Preset ids kept in a stable order — mirrors `includes/wallpapers.php`. */
 export const BUILT_IN_PRESET_IDS = [
 	'dark',
 	'aurora',
@@ -32,80 +33,12 @@ export const BUILT_IN_PRESET_IDS = [
 
 export type BuiltInPresetId = ( typeof BUILT_IN_PRESET_IDS )[ number ];
 
-interface Preset {
-	id: BuiltInPresetId;
-	label: string;
-	value: string;
-}
-
-const PRESETS: Preset[] = [
-	{
-		id: 'dark',
-		label: 'Graphite',
-		value: 'linear-gradient(135deg, #1d2327 0%, #2c3338 50%, #1d2327 100%)',
-	},
-	{
-		id: 'aurora',
-		label: 'Aurora',
-		value: 'linear-gradient(135deg, #1a2980 0%, #26d0ce 100%)',
-	},
-	{
-		id: 'sunset',
-		label: 'Sunset',
-		value: 'linear-gradient(135deg, #ff512f 0%, #dd2476 100%)',
-	},
-	{
-		id: 'forest',
-		label: 'Forest',
-		value: 'linear-gradient(135deg, #134e5e 0%, #71b280 100%)',
-	},
-	{
-		id: 'mono',
-		label: 'Mono',
-		value: '#1d2327',
-	},
-];
-
 /**
- * Register all built-in presets with the wallpaper registry.
- *
- * Called once from the shell boot — ordering matters only in that
- * built-ins register before `wp-desktop.init` fires, so plugins
- * hooking into the `wp-desktop.wallpapers` filter see the full
- * seed list.
+ * @deprecated Since 0.11.0. Retained as a no-op to avoid breaking
+ *             imports in `desktop.ts`. The five presets are now
+ *             declared in `includes/wallpapers.php` and arrive in
+ *             the shell config as `serverWallpapers`.
  */
 export function registerBuiltInWallpapers(): void {
-	// Labels are translated at registration time. `translatePresetLabel`
-	// centralises the string-literal map the extract-pot pass keys
-	// off — the `__()` calls live in one place so xgettext sees them
-	// exactly once per preset.
-	for ( const p of PRESETS ) {
-		register( {
-			id: p.id,
-			label: translatePresetLabel( p.id, p.label ),
-			type: 'css',
-			value: p.value,
-			preview: p.value,
-		} );
-	}
-}
-
-function translatePresetLabel(
-	id: BuiltInPresetId,
-	fallback: string,
-): string {
-	switch ( id ) {
-		case 'dark':
-			return __( 'Graphite' );
-		case 'aurora':
-			return __( 'Aurora' );
-		case 'sunset':
-			return __( 'Sunset' );
-		case 'forest':
-			return __( 'Forest' );
-		case 'mono':
-			return __( 'Mono' );
-		default:
-			return fallback;
-	}
+	// Intentionally empty — see file docblock.
 }

@@ -8,9 +8,16 @@
 
 import type { WallpaperLayer } from '../wallpapers/layer';
 import type { WallpaperTeardown } from '../wallpapers/types';
-import type { ACCENTS, DOCK_SIZES } from './constants';
+import type { DOCK_SIZES } from './constants';
 
-export type AccentId = ( typeof ACCENTS )[ number ][ 'id' ];
+/**
+ * Accent id. Historically derived from the built-in `ACCENTS` tuple,
+ * but accents now come from PHP (`wp_desktop_accent_colors`) and a
+ * theme can legitimately add its own swatch. String is the honest
+ * type — validation happens at runtime in `getAccents()` / state
+ * deserialization.
+ */
+export type AccentId = string;
 export type DockSizeId = ( typeof DOCK_SIZES )[ number ][ 'id' ];
 
 /** Two endpoints on the gradient, plus an angle in degrees (0–360). */

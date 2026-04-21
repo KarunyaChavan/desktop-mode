@@ -72,12 +72,48 @@ export function createWallpaperRegistrySync(
 		return globals[ id ] ?? null;
 	};
 
+	/**
+	 * Synthesize a `WallpaperDef` from a server entry without
+	 * requiring a JS global. Works for CSS wallpapers whose `value`
+	 * is a plain CSS string (gradient, color, `url(...)`) — the
+	 * built-in presets all register through this path now, and
+	 * third-party plugins that ship a purely-CSS wallpaper can skip
+	 * shipping a JS bundle entirely.
+	 */
+	const defFromCssEntry = (
+		entry: DesktopWallpaperServerEntry,
+	): WallpaperDef | null => {
+		if ( entry.type !== 'css' || entry.value === '' ) {
+			return null;
+		}
+		return {
+			id: entry.id,
+			label: entry.label,
+			type: 'css',
+			value: entry.value,
+			preview: entry.preview !== '' ? entry.preview : entry.value,
+		};
+	};
+
 	const registerEntry = async (
 		entry: DesktopWallpaperServerEntry,
 	): Promise< void > => {
 		if ( registered.has( entry.id ) ) {
 			return;
 		}
+
+		// Fast path for CSS wallpapers with a static value — no
+		// script load, no JS global read. The built-in presets
+		// travel through this path and third-party plugins can too
+		// when their wallpaper is pure CSS.
+		const cssDef = defFromCssEntry( entry );
+		if ( cssDef ) {
+			registry.register( cssDef );
+			registered.add( entry.id );
+			osSettings.apply();
+			return;
+		}
+
 		await ensureScript( entry );
 		const def = readDef( entry.id );
 		if ( ! def ) {

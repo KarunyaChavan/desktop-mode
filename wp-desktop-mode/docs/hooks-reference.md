@@ -84,6 +84,66 @@ add_action( 'wp_desktop_chromeless_styles', function () {
 
 ---
 
+### `wp_desktop_native_window_registered` — Stable
+
+Fires after `wp_register_desktop_window()` successfully stores a window. Does NOT fire when the registration returns a `WP_Error`.
+
+```php
+do_action( 'wp_desktop_native_window_registered', string $id, array $entry );
+```
+
+**Example — react when another plugin registers a window:**
+
+```php
+add_action( 'wp_desktop_native_window_registered', function ( $id, $entry ) {
+    if ( 'jorvy' === $id ) {
+        // Attach a companion behavior only when Jorvy is present.
+    }
+}, 10, 2 );
+```
+
+---
+
+### `wp_desktop_widget_registered` — Stable
+
+Fires after `wp_register_desktop_widget()` successfully stores a widget. Same contract as the native-window action.
+
+```php
+do_action( 'wp_desktop_widget_registered', string $id, array $entry );
+```
+
+---
+
+### `wp_desktop_wallpaper_registered` — Stable
+
+Fires after `wp_register_desktop_wallpaper()` successfully stores a wallpaper. Same contract.
+
+```php
+do_action( 'wp_desktop_wallpaper_registered', string $id, array $entry );
+```
+
+---
+
+### `wp_desktop_icon_registered` — Stable
+
+Fires after `wp_register_desktop_icon()` successfully stores a desktop shortcut tile. Same contract as the other registration actions — no fire on `WP_Error` return.
+
+```php
+do_action( 'wp_desktop_icon_registered', string $id, array $entry );
+```
+
+---
+
+### `wp_desktop_window_tab_registered` — Stable
+
+Fires after `wp_register_desktop_window_tab()` successfully attaches a tab to a native window. Useful for companion plugins that need to follow up (e.g. register a help overlay only when a Stats tab actually exists).
+
+```php
+do_action( 'wp_desktop_window_tab_registered', string $window_id, string $value, array $entry );
+```
+
+---
+
 ### `wp_desktop_chromeless_after` — Stable
 Fires in the `admin_footer` of chromeless iframe requests. Receives the current admin page's `$hook_suffix`.
 
@@ -425,6 +485,158 @@ apply_filters( 'wp_desktop_admin_redirect_to_portal', bool $redirect, int $user_
 
 ---
 
+### `wp_desktop_accent_colors` — Stable
+
+Extends or restricts the accent-color swatches shown in OS Settings. Applied to `--wp-admin-theme-color` on the shell's `<html>`. Each entry is `{ id: string, label: string, value: string }` — `id` is a stable slug persisted to `localStorage`, `label` is the picker tooltip, `value` is a hex color validated server-side via `sanitize_hex_color()`. Invalid entries are dropped; a filter that leaves the list empty falls back to the built-in six swatches.
+
+```php
+apply_filters( 'wp_desktop_accent_colors', array $colors );
+```
+
+**Example — add a brand swatch:**
+
+```php
+add_filter( 'wp_desktop_accent_colors', function ( $colors ) {
+    $colors[] = array(
+        'id'    => 'brand',
+        'label' => __( 'Brand', 'my-plugin' ),
+        'value' => '#ff00ff',
+    );
+    return $colors;
+} );
+```
+
+**Example — collapse to a single approved accent (compliance theme):**
+
+```php
+add_filter( 'wp_desktop_accent_colors', function () {
+    return array(
+        array( 'id' => 'corporate', 'label' => 'Corporate', 'value' => '#003366' ),
+    );
+} );
+```
+
+---
+
+### `wp_desktop_toast_types` — Stable
+
+Extends the toast-notification type map the shell consumes when a plugin calls `wp.desktop.toast( id, … )`. Each entry is `{ id, label, icon, tone }` where `tone` is one of `positive | warning | critical | neutral`. Entries with an unknown tone are dropped.
+
+```php
+apply_filters( 'wp_desktop_toast_types', array $types );
+```
+
+**Example — register an `update-available` toast style:**
+
+```php
+add_filter( 'wp_desktop_toast_types', function ( $types ) {
+    $types[] = array(
+        'id'    => 'update-available',
+        'label' => __( 'Update available', 'my-plugin' ),
+        'icon'  => 'dashicons-update',
+        'tone'  => 'neutral',
+    );
+    return $types;
+} );
+```
+
+---
+
+### `wp_desktop_default_wallpaper` — Stable
+
+Chooses the wallpaper slug applied on first boot for a new user (and as the fallback when a user's saved wallpaper was registered by a plugin that's since been deactivated). Return a registered wallpaper id. Output is normalised with `sanitize_key()`.
+
+```php
+apply_filters( 'wp_desktop_default_wallpaper', string $id );
+```
+
+**Example — ship `aurora` as the brand default:**
+
+```php
+add_filter( 'wp_desktop_default_wallpaper', fn () => 'aurora' );
+```
+
+---
+
+### `wp_desktop_wallpapers` — Stable
+
+Last-chance filter over the full wallpaper registry before it ships to the shell as `config.serverWallpapers`. Each entry is the shape stored by `wp_register_desktop_wallpaper()` (`id`, `label`, `preview`, `type`, `value`, `script`). Use this to reorder, rename, remove, or override wallpaper entries — including the built-in presets.
+
+Mirrors the client-side `wp-desktop.wallpapers` JS filter but runs earlier, before any wallpaper reaches the browser.
+
+```php
+apply_filters( 'wp_desktop_wallpapers', array $registry );
+```
+
+**Example — hide the `sunset` preset from this site:**
+
+```php
+add_filter( 'wp_desktop_wallpapers', function ( $registry ) {
+    unset( $registry['sunset'] );
+    return $registry;
+} );
+```
+
+**Example — rename the `dark` preset to match a brand:**
+
+```php
+add_filter( 'wp_desktop_wallpapers', function ( $registry ) {
+    if ( isset( $registry['dark'] ) ) {
+        $registry['dark']['label'] = __( 'Acme Dark', 'my-plugin' );
+    }
+    return $registry;
+} );
+```
+
+A filter that returns a non-array value drops the list entirely (empty `serverWallpapers` in the shell config). The built-in presets register on `init` priority 5, so any filter hooking later than that sees the full built-in set in its input.
+
+---
+
+### `wp_desktop_icons` — Stable
+
+Last-chance filter over the desktop-icon registry before it ships to the shell as `config.desktopIcons`. Each entry is the shape stored by `wp_register_desktop_icon()` (`id`, `title`, `icon`, `window`, `url`, `position`).
+
+```php
+apply_filters( 'wp_desktop_icons', array $registry );
+```
+
+**Example — hide a plugin's icon for users on a specific role:**
+
+```php
+add_filter( 'wp_desktop_icons', function ( $registry ) {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        unset( $registry['jorvy'] );
+    }
+    return $registry;
+} );
+```
+
+---
+
+### `wp_desktop_window_tabs` — Stable
+
+Last-chance filter over the ordered tab list for a native window. Each entry is `{ value, label, template, script, is_main, position }`. Lets a late-loading plugin reorder, hide, or relabel tabs another plugin registered (or the window's own main tab).
+
+```php
+apply_filters( 'wp_desktop_window_tabs', array $tabs, string $window_id );
+```
+
+**Example — hide the About tab on production sites:**
+
+```php
+add_filter( 'wp_desktop_window_tabs', function ( $tabs, $window_id ) {
+    if ( 'jorvy' !== $window_id || defined( 'WP_LOCAL_DEV' ) ) {
+        return $tabs;
+    }
+    return array_values( array_filter(
+        $tabs,
+        fn( $tab ) => 'about' !== $tab['value']
+    ) );
+}, 10, 2 );
+```
+
+---
+
 ## Planned (not yet fired)
 
 The filters and actions below are **reserved names** documented for forward compatibility. They will land with the phase indicated. Do not register listeners in production code until the status flips to Stable.
@@ -485,6 +697,61 @@ apply_filters( 'wp_desktop_drop_accepts',    bool  $accepts, array $payload, str
 apply_filters( 'wp_desktop_body_classes', string $classes );
 ```
 Currently the `wp-desktop-active` / `wp-desktop-chromeless` classes are added unfiltered via `admin_body_class`. A named filter is planned.
+
+---
+
+## Registration functions
+
+Shell extension points — windows, widgets, wallpapers — are declared through `wp_register_desktop_*()` PHP functions that mirror Core's `register_*` conventions. Every function returns `true` on success and `WP_Error` on any validation failure, with a stable error code callers can branch on.
+
+```php
+$result = wp_register_desktop_window( 'jorvy', array(
+    'title'    => 'Jorvy',
+    'template' => 'jorvy_render_template',
+    'script'   => 'jorvy-render',
+) );
+
+if ( is_wp_error( $result ) ) {
+    error_log( '[jorvy] registration failed: ' . $result->get_error_code() . ' — ' . $result->get_error_message() );
+}
+```
+
+### Backwards compatibility
+
+Prior to `0.11.0` these functions returned `bool`. `WP_Error` is an object and therefore truthy, so legacy `if ( wp_register_desktop_window( … ) )` guards continue to compile and reach their success branch. New code should use `is_wp_error()` to distinguish success from failure.
+
+### Error codes
+
+| Code | Raised by | Meaning |
+|---|---|---|
+| `wp_desktop_missing_id` | window / widget / wallpaper / icon | The `$id` argument was empty. |
+| `wp_desktop_missing_window_id` | `wp_register_desktop_window_tab` | The `$window_id` argument was empty. |
+| `wp_desktop_missing_title` | `wp_register_desktop_window`, `wp_register_desktop_icon` | The `title` field was empty. |
+| `wp_desktop_missing_label` | `wp_register_desktop_widget`, `wp_register_desktop_wallpaper`, `wp_register_desktop_window_tab` | The `label` field was empty. |
+| `wp_desktop_missing_script` | `wp_register_desktop_window`, `wp_register_desktop_wallpaper` (canvas) | The `script` handle was empty. |
+| `wp_desktop_missing_tab_value` | `wp_register_desktop_window_tab` | The `value` field was empty. |
+| `wp_desktop_reserved_tab_value` | `wp_register_desktop_window_tab` | Tab `value` was `main` (reserved for the window's own template tab). |
+| `wp_desktop_invalid_template` | `wp_register_desktop_window`, `wp_register_desktop_window_tab` | The `template` callback is not callable. |
+| `wp_desktop_missing_target` | `wp_register_desktop_icon` | Neither `window` nor `url` was declared. |
+| `wp_desktop_conflicting_target` | `wp_register_desktop_icon` | Both `window` and `url` were declared (pick one). |
+| `wp_desktop_invalid_url` | `wp_register_desktop_icon` | The `url` argument isn't a valid http(s) URL. |
+| `wp_desktop_capability_denied` | all five | Current user lacks a capability declared in `capabilities`. The offending cap is available on `get_error_data()['capability']`. |
+
+All five functions ship as **Stable** in `0.11.0`.
+
+### `wp_register_desktop_window_tab()`
+
+Attaches an additional tab to a native window. The window's own `template` becomes the first tab automatically (its label comes from `main_tab_label` on `wp_register_desktop_window()`, falling back to `title`); each call to this function adds another tab after the main one. Cross-plugin extension is supported — a companion plugin can attach a tab to someone else's window with no coordination other than knowing the window id.
+
+```php
+wp_register_desktop_window_tab( string $window_id, array $args );
+```
+
+**Args**: `value` (required, kebab slug, cannot be `main`), `label` (required), `template` (required callable), `script` (optional handle), `position` (optional int; lower renders earlier), `capabilities` (optional cap list).
+
+When at least one additional tab is registered, the shell wraps the entire window template in `<wpd-stack>` + `<wpd-tabs>` + one `<wpd-tabpanel>` per tab automatically — plugin authors stop hand-writing that markup. Single-pane windows (zero additional tabs) are unchanged.
+
+See [`docs/examples/native-window-with-tabs.md`](./examples/native-window-with-tabs.md) for a full walkthrough.
 
 ---
 

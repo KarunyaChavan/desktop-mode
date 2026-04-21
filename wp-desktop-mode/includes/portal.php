@@ -262,8 +262,7 @@ add_action( 'admin_init', 'wpdm_redirect_plain_admin_to_portal' );
  * @return string The admin URL to redirect to.
  */
 function wpdm_portal_entry_url( $user_id ) {
-	$session   = wpdm_get_session( $user_id );
-	$admin_url = admin_url();
+	$session = wpdm_get_session( $user_id );
 
 	// User's configured default-window preference. When disabled, we
 	// still have to forward SOMEWHERE (the portal is an HTTP redirect),
@@ -284,7 +283,7 @@ function wpdm_portal_entry_url( $user_id ) {
 		if ( $win['id'] !== $session['focused'] ) {
 			continue;
 		}
-		if ( 0 !== strpos( $win['url'], $admin_url ) ) {
+		if ( ! wpdm_url_is_same_admin( $win['url'] ) ) {
 			return $fallback;
 		}
 		return remove_query_arg( array( 'wp_desktop', WPDM_PORTAL_FLAG ), $win['url'] );
@@ -344,16 +343,17 @@ function wpdm_sanitize_portal_target( $raw ) {
 	if ( '' === $file ) {
 		$file = 'index.php';
 	}
-	// Disallow traversal and nested paths — the admin area is a single
-	// flat directory of .php files from WP's perspective.
-	if ( false !== strpos( $file, '..' ) || false !== strpos( $file, '/' ) ) {
-		return '';
-	}
-	if ( ! preg_match( '/^[a-z0-9_-]+\.php$/i', $file ) ) {
+
+	// Resolve + whitelist against the actual wp-admin directory. A
+	// regex alone would accept a plausible-looking filename that
+	// doesn't exist (e.g. `custom_admin_page.php`) and effectively
+	// become an open redirect to a 404 page served under the admin
+	// path; the file_exists gate closes that.
+	$target = wpdm_resolve_admin_target( $file );
+	if ( is_wp_error( $target ) ) {
 		return '';
 	}
 
-	$target = admin_url( $file );
 	if ( is_string( $query ) && '' !== $query ) {
 		parse_str( $query, $args );
 		unset( $args['wp_desktop'], $args[ WPDM_PORTAL_FLAG ], $args['target'] );

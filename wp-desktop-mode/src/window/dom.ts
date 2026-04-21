@@ -13,13 +13,22 @@ import { sanitizeClassName, urlMatchKey } from '../utils';
 import { __, sprintf } from '../i18n';
 
 /**
+ * Origin snapshot taken at module load. The same-origin gate in
+ * `withChromelessParam` compares against this value so a mutation of
+ * `window.location` after boot can't relax the cross-origin guard.
+ *
+ * @since 0.11.0
+ */
+const INITIAL_ORIGIN = window.location.origin;
+
+/**
  * Returns the URL with the chromeless query parameter set, so the iframe
  * keeps rendering without the admin shell. Returns null for cross-origin
  * URLs so the caller can refuse the navigation.
  */
 export function withChromelessParam( url: string ): string | null {
-	const parsed = new URL( url, window.location.origin );
-	if ( parsed.origin !== window.location.origin ) {
+	const parsed = new URL( url, INITIAL_ORIGIN );
+	if ( parsed.origin !== INITIAL_ORIGIN ) {
 		return null;
 	}
 	parsed.searchParams.set( 'wp_desktop', '1' );

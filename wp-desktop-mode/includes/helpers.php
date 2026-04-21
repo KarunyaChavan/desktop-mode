@@ -185,6 +185,152 @@ function wpdm_is_classic_request() {
 }
 
 /**
+ * Returns the default wallpaper id used when a user has no saved
+ * selection (or their saved selection was unregistered by a plugin
+ * deactivation).
+ *
+ * Exposed as a filter so themes/plugins can set a site-wide default
+ * without forking the TS build.
+ *
+ * ```php
+ * add_filter( 'wp_desktop_default_wallpaper', function () {
+ *     return 'my-plugin/brand';
+ * } );
+ * ```
+ *
+ * The returned string is passed through `sanitize_key()` so a filter
+ * that returns an invalid slug degrades to the empty string (and the
+ * shell falls back to its hard-coded `'dark'` preset).
+ *
+ * @since 0.11.0
+ *
+ * @return string Wallpaper id. Empty string if the filter returns
+ *                an invalid value.
+ */
+function wpdm_get_default_wallpaper() {
+	/**
+	 * Filters the wallpaper id loaded on first boot / new user.
+	 *
+	 * @since 0.11.0
+	 *
+	 * @param string $id Default wallpaper slug.
+	 */
+	$id = apply_filters( 'wp_desktop_default_wallpaper', 'dark' );
+	if ( ! is_string( $id ) ) {
+		return '';
+	}
+	return sanitize_key( $id );
+}
+
+/**
+ * Build a `WP_Error` for a desktop-mode registration failure.
+ *
+ * Centralises the error-code vocabulary used by every
+ * `wp_register_desktop_*()` function so plugin authors see a
+ * consistent contract. The canonical error-code list lives in
+ * `docs/hooks-reference.md`.
+ *
+ * @since 0.11.0
+ *
+ * @param string $code    Short error slug (e.g. `wp_desktop_missing_title`).
+ * @param string $message Human-readable message. Should be translated.
+ * @param array  $data    Optional extra context attached to the error.
+ * @return WP_Error
+ */
+function wpdm_registration_error( $code, $message, $data = array() ) {
+	return new WP_Error(
+		(string) $code,
+		(string) $message,
+		is_array( $data ) ? $data : array()
+	);
+}
+
+/**
+ * Returns true when `$url` is a same-origin admin URL.
+ *
+ * Uses parsed-URL host + path comparison rather than a prefix `strpos`
+ * check so `//evil.com/wp-admin/…` or an URL whose normalization
+ * happens to share the admin-URL prefix can't sneak through.
+ *
+ * An empty string returns false — a missing URL is never "same-origin
+ * admin" for the purposes of any caller.
+ *
+ * @since 0.11.0
+ *
+ * @param string $url URL to test.
+ * @return bool
+ */
+function wpdm_url_is_same_admin( $url ) {
+	if ( ! is_string( $url ) || '' === $url ) {
+		return false;
+	}
+
+	$parts       = wp_parse_url( $url );
+	$admin_parts = wp_parse_url( admin_url() );
+	if ( ! is_array( $parts ) || ! is_array( $admin_parts ) ) {
+		return false;
+	}
+
+	// Host comparison is case-insensitive per RFC 3986. Missing host on
+	// the tested URL (relative or scheme-only) is a reject — callers
+	// should only be handing us fully-qualified URLs.
+	$url_host   = isset( $parts['host'] ) ? strtolower( $parts['host'] ) : '';
+	$admin_host = isset( $admin_parts['host'] ) ? strtolower( $admin_parts['host'] ) : '';
+	if ( '' === $url_host || $url_host !== $admin_host ) {
+		return false;
+	}
+
+	// Path comparison is case-sensitive. The admin path always ends in
+	// `/` (e.g. `/wp-admin/`), so a prefix test is accurate — nothing
+	// at `/wp-administrator/…` can match.
+	$url_path   = isset( $parts['path'] ) ? $parts['path'] : '';
+	$admin_path = isset( $admin_parts['path'] ) ? $admin_parts['path'] : '/wp-admin/';
+	return 0 === strpos( $url_path, $admin_path );
+}
+
+/**
+ * Resolves an admin-page filename (e.g. `edit.php`) to its absolute
+ * admin URL, whitelisted against the actual `wp-admin/` directory.
+ *
+ * Returns a `WP_Error` when the input contains path traversal, isn't a
+ * bare `.php` filename, or points at a file that doesn't exist in
+ * `ABSPATH . 'wp-admin/'`. The existence check is the key guard — a
+ * regex-only whitelist would accept `custom_admin_page.php` if a plugin
+ * named something that way, but only files that actually ship in
+ * wp-admin are safe redirect targets.
+ *
+ * @since 0.11.0
+ *
+ * @param string $file Bare admin filename (no path, no query string).
+ * @return string|WP_Error Absolute admin URL on success, `WP_Error` otherwise.
+ */
+function wpdm_resolve_admin_target( $file ) {
+	$file = is_string( $file ) ? trim( $file ) : '';
+	if ( '' === $file ) {
+		return new WP_Error( 'wp_desktop_empty_target', __( 'Admin target cannot be empty.', 'wp-desktop-mode' ) );
+	}
+
+	if ( false !== strpos( $file, '..' ) || false !== strpos( $file, '/' ) || false !== strpos( $file, '\\' ) ) {
+		return new WP_Error( 'wp_desktop_invalid_target', __( 'Admin target contains invalid path characters.', 'wp-desktop-mode' ) );
+	}
+
+	// Lowercase match mirrors WP's filesystem assumptions on case-
+	// insensitive volumes (macOS, Windows). The actual file_exists
+	// check below is the final arbiter; this regex just pre-filters
+	// clearly bad inputs.
+	if ( ! preg_match( '/^[a-z0-9_-]+\.php$/i', $file ) ) {
+		return new WP_Error( 'wp_desktop_invalid_target', __( 'Admin target must be a plain .php filename.', 'wp-desktop-mode' ) );
+	}
+
+	$candidate = ABSPATH . 'wp-admin/' . $file;
+	if ( ! file_exists( $candidate ) ) {
+		return new WP_Error( 'wp_desktop_unknown_target', __( 'Admin target does not exist.', 'wp-desktop-mode' ) );
+	}
+
+	return admin_url( $file );
+}
+
+/**
  * Builds the dock items array from the admin menu data.
  *
  * Iterates through the global $menu and $submenu arrays, filters out
@@ -295,21 +441,22 @@ function wpdm_build_dock_items() {
 /**
  * Sanitizes a dock icon value for safe injection into the shell JS.
  *
- * Menu items can set their icon to any of the following:
+ * Menu items can set their icon to one of:
  *
  *   - A Dashicons class (e.g. `dashicons-admin-post`)
- *   - A Dashicons-prefixed string (we allow the full class list)
- *   - A `data:image/svg+xml;base64,...` URI
- *   - A `data:image/svg+xml;utf8,...` URI
- *   - An http/https URL
+ *   - An http/https URL pointing at an image asset
  *   - `'none'` or `'div'` (CSS hooks, no icon asset)
  *
- * Anything else — in particular `javascript:` URIs, inline event
- * handlers, or non-image data URIs — is dropped and replaced with the
- * generic fallback. The return value is always a string that is safe
- * to drop into an `img.src` or a CSS class without further escaping.
+ * Anything else — `javascript:` URIs, `data:` URIs (even benign-looking
+ * `image/svg+xml` ones, which can carry inline scripts that execute
+ * when rendered as a CSS background), inline event handlers, or raw
+ * HTML — is rejected and replaced with the generic fallback. The
+ * return value is always a string that is safe to drop into an
+ * `img.src` or a CSS class without further escaping.
  *
  * @since 0.4.0
+ * @since 0.11.0 Rejects `data:` URIs outright; previously accepted
+ *               `data:image/svg+xml` values.
  *
  * @param mixed $icon Raw icon value from the menu registration.
  * @return string Sanitized icon string.
@@ -333,13 +480,10 @@ function wpdm_sanitize_dock_icon( $icon ) {
 		return preg_replace( '/[^a-z0-9_-]/', '', $icon );
 	}
 
-	if ( 0 === stripos( $icon, 'data:image/svg+xml' ) ) {
-		// A benign SVG data URI — accept it after running it through
-		// esc_url_raw so any embedded quotes/scheme tricks get neutered.
-		$clean = esc_url_raw( $icon, array( 'data' ) );
-		return $clean ? $clean : $fallback;
-	}
-
+	// Any scheme other than http/https is rejected. In particular
+	// `data:`, `javascript:`, `vbscript:`, and `file:` never reach the
+	// DOM — even an SVG data URI can run script when rendered as a CSS
+	// background, which made the previous allowlist a footgun.
 	if ( 0 === stripos( $icon, 'http://' ) || 0 === stripos( $icon, 'https://' ) ) {
 		$clean = esc_url_raw( $icon, array( 'http', 'https' ) );
 		return $clean ? $clean : $fallback;
@@ -602,6 +746,9 @@ function wpdm_build_menu_payload() {
 		'serverWallpapers' => function_exists( 'wpdm_build_desktop_wallpapers_payload' )
 			? wpdm_build_desktop_wallpapers_payload()
 			: array(),
+		'desktopIcons'     => function_exists( 'wpdm_build_desktop_icons_payload' )
+			? wpdm_build_desktop_icons_payload()
+			: array(),
 	);
 }
 
@@ -675,18 +822,36 @@ function wpdm_build_native_windows_payload() {
 			continue;
 		}
 
-		// Capture the template HTML. The template callback echoes;
-		// we buffer so the shell receives a string it can inject
-		// into its own document as a `<template>` when a plugin
-		// gets activated mid-session.
-		ob_start();
-		call_user_func( $entry['template'] );
-		$template_html = ob_get_clean();
+		// Capture the template HTML (tab-wrapped when any
+		// additional tabs are registered via
+		// `wp_register_desktop_window_tab()`; flat otherwise).
+		// Captured as a string so the shell can inject it as a
+		// `<template>` at mid-session plugin activation without a
+		// reload.
+		$template_html = wpdm_build_native_window_template_html( $entry );
 
 		// Resolve script handle → URL so the shell can inject a
 		// `<script>` tag dynamically on mid-session activation.
 		$script_handle = isset( $entry['script'] ) ? (string) $entry['script'] : '';
 		$script_url    = wpdm_resolve_script_url( $script_handle );
+
+		// Tab metadata (label + extra script URLs) ships alongside
+		// the template so the shell can render a picker UI or load
+		// additional tab scripts when a tab's activation is late.
+		$tab_descriptors = array();
+		if ( function_exists( 'wpdm_get_native_window_tabs' ) ) {
+			foreach ( wpdm_get_native_window_tabs( $entry['id'] ) as $tab ) {
+				$tab_descriptors[] = array(
+					'value'        => $tab['value'],
+					'label'        => $tab['label'],
+					'isMain'       => $tab['is_main'],
+					'scriptUrl'    => '' !== $tab['script']
+						? wpdm_resolve_script_url( $tab['script'] )
+						: '',
+					'scriptHandle' => $tab['script'],
+				);
+			}
+		}
 
 		$out[] = array(
 			'id'           => $entry['id'],
@@ -702,6 +867,7 @@ function wpdm_build_native_windows_payload() {
 			'templateHtml' => $template_html,
 			'scriptUrl'    => $script_url,
 			'scriptHandle' => $script_handle,
+			'tabs'         => $tab_descriptors,
 		);
 	}
 

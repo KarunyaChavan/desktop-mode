@@ -4,8 +4,15 @@
  * Kept plain (no i18n) so they can be imported from anywhere —
  * including files that shouldn't pull `@wordpress/i18n` into their
  * dependency graph.
+ *
+ * Most values are fallbacks. The live set comes from
+ * `wpDesktopConfig.accentColors` / `.defaultWallpaper`, populated by
+ * PHP via `wp_desktop_accent_colors` / `wp_desktop_default_wallpaper`
+ * filters. The getters in this file do the `runtime config → fallback`
+ * dance so callers never have to branch on "is the config hydrated?"
  */
 
+import type { AccentColor, DesktopConfig } from '../types';
 import type { OsSettingsState } from './types';
 
 /** localStorage key under which preferences are serialized. */
@@ -30,8 +37,16 @@ export const CUSTOM_IMAGE_ID = 'custom-image';
 /** Default fallback id when a registered wallpaper isn't available. */
 export const DEFAULT_WALLPAPER_ID = 'dark';
 
-/** Accent swatches. Applied to `--wp-admin-theme-color`. */
-export const ACCENTS = [
+/**
+ * Built-in accent swatches applied to `--wp-admin-theme-color`.
+ *
+ * This is the compile-time fallback list used when PHP doesn't hand
+ * us a live `accentColors` array in `wpDesktopConfig` — the live list
+ * is what the picker actually renders. Plugins that want to
+ * customise the list should hook `wp_desktop_accent_colors` in PHP,
+ * not fork this constant.
+ */
+export const DEFAULT_ACCENTS: readonly AccentColor[] = [
 	{ id: 'wp-blue', label: 'WordPress Blue', value: '#2271b1' },
 	{ id: 'indigo', label: 'Indigo', value: '#3858e9' },
 	{ id: 'teal', label: 'Teal', value: '#04a4cc' },
@@ -39,6 +54,61 @@ export const ACCENTS = [
 	{ id: 'amber', label: 'Amber', value: '#d97706' },
 	{ id: 'rose', label: 'Rose', value: '#e11d48' },
 ] as const;
+
+/**
+ * Resolve the live accent-color list.
+ *
+ * Reads `window.wp.desktop.config.accentColors` (populated by PHP via
+ * `wp_desktop_accent_colors`) and validates each entry shape. Drops
+ * malformed entries rather than letting a bad filter render broken
+ * swatches. Falls back to {@link DEFAULT_ACCENTS} when the config is
+ * missing or yields zero valid entries.
+ *
+ * @since 0.11.0
+ */
+export function getAccents(): readonly AccentColor[] {
+	const config = ( window as unknown as {
+		wp?: { desktop?: { config?: DesktopConfig } };
+	} ).wp?.desktop?.config;
+	const raw = config?.accentColors;
+	if ( ! Array.isArray( raw ) || raw.length === 0 ) {
+		return DEFAULT_ACCENTS;
+	}
+	const clean: AccentColor[] = [];
+	for ( const entry of raw ) {
+		if (
+			entry &&
+			typeof entry === 'object' &&
+			typeof entry.id === 'string' &&
+			typeof entry.label === 'string' &&
+			typeof entry.value === 'string' &&
+			entry.id !== '' &&
+			entry.label !== '' &&
+			/^#[0-9a-f]{3,8}$/i.test( entry.value )
+		) {
+			clean.push( { id: entry.id, label: entry.label, value: entry.value } );
+		}
+	}
+	return clean.length > 0 ? clean : DEFAULT_ACCENTS;
+}
+
+/**
+ * Resolve the live default-wallpaper slug. Reads
+ * `window.wp.desktop.config.defaultWallpaper` and falls back to
+ * {@link DEFAULT_WALLPAPER_ID} when absent/invalid.
+ *
+ * @since 0.11.0
+ */
+export function getDefaultWallpaperId(): string {
+	const config = ( window as unknown as {
+		wp?: { desktop?: { config?: DesktopConfig } };
+	} ).wp?.desktop?.config;
+	const raw = config?.defaultWallpaper;
+	if ( typeof raw === 'string' && raw !== '' ) {
+		return raw;
+	}
+	return DEFAULT_WALLPAPER_ID;
+}
 
 /** Dock-size options. Each ships a width in px + icon scale. */
 export const DOCK_SIZES = [

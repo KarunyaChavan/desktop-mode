@@ -255,6 +255,40 @@ export interface NativeWindowServerEntry {
 	scriptUrl: string;
 	/** WordPress script handle (informational). */
 	scriptHandle: string;
+	/**
+	 * Tab descriptors for this window. Always includes at least the
+	 * main tab (whose `template` renders the window's own body); if
+	 * additional tabs were registered via
+	 * `wp_register_desktop_window_tab()` they follow in position
+	 * order. Empty array is equivalent to "main tab only" — the
+	 * shell renders the window body directly without a tab strip.
+	 *
+	 * The template HTML already carries the rendered tab markup
+	 * (`<wpd-tabs>` + `<wpd-tabpanel>` per entry). This field is
+	 * metadata — useful for plugins that want to inspect or extend
+	 * a window's tab list without re-parsing the template.
+	 *
+	 * @since 0.11.0
+	 */
+	tabs?: NativeWindowTabEntry[];
+}
+
+/**
+ * A single tab descriptor on a native window — either the main tab
+ * (`isMain: true`) whose template is the window's own body, or a
+ * registered `wp_register_desktop_window_tab()` entry.
+ *
+ * @public
+ * @since 0.11.0
+ */
+export interface NativeWindowTabEntry {
+	value: string;
+	label: string;
+	isMain: boolean;
+	/** Absolute URL of this tab's script — empty for the main tab and for tabs without a dedicated script. */
+	scriptUrl: string;
+	/** WordPress script handle (informational). */
+	scriptHandle: string;
 }
 
 /**
@@ -311,10 +345,42 @@ export interface DesktopWallpaperServerEntry {
 	label: string;
 	preview: string;
 	type: 'css' | 'canvas';
+	/**
+	 * CSS value applied to the wallpaper surface. Populated when
+	 * `type === 'css'` and the server-side registration passed a
+	 * `value`. Empty string for canvas wallpapers, whose runtime
+	 * value lives on the JS side inside the `mount` callback.
+	 *
+	 * When set, the shell can register the wallpaper purely from
+	 * the server-side entry without any accompanying JS bundle.
+	 *
+	 * @since 0.11.0
+	 */
+	value: string;
 	/** Absolute URL of the plugin's enqueued script. Empty when no script was declared. */
 	scriptUrl: string;
 	/** WordPress script handle (informational). */
 	scriptHandle: string;
+}
+
+/**
+ * Server-declared desktop icon — a shortcut tile on the wallpaper
+ * that opens a native window or a URL on click. Registered via PHP
+ * with `wp_register_desktop_icon()`.
+ *
+ * @since 0.11.0
+ * @public
+ */
+export interface DesktopIconServerEntry {
+	id: string;
+	title: string;
+	icon: string;
+	/** Id of a registered native window to open on click. Empty string when the icon targets a URL instead. */
+	window: string;
+	/** URL to open on click. Empty string when the icon targets a native window. */
+	url: string;
+	/** Sort order; lower renders first. */
+	position: number;
 }
 
 /**
@@ -497,6 +563,15 @@ export interface DesktopConfig {
 	 * current selection.
 	 */
 	serverWallpapers: DesktopWallpaperServerEntry[];
+	/**
+	 * Server-declared desktop icons (from `wp_register_desktop_icon()`).
+	 * The shell renders these as shortcut tiles on the wallpaper;
+	 * click-through opens either the referenced native window (if
+	 * `window` is set) or the URL (if `url` is set).
+	 *
+	 * @since 0.11.0
+	 */
+	desktopIcons?: DesktopIconServerEntry[];
 	/** Previously saved session (may be empty on first run). */
 	session: Session;
 	/** REST endpoint for reading/writing the session. */
@@ -541,6 +616,54 @@ export interface DesktopConfig {
 	portalUrl: string;
 	/** True when the shell was reached via the portal redirect. */
 	fromPortal: boolean;
+	/**
+	 * Accent swatches shown in the OS Settings color picker. Filterable
+	 * server-side via `wp_desktop_accent_colors`. Optional — the TS
+	 * side falls back to a built-in default list when this is missing
+	 * (older PHP builds, hostile filter that returned garbage, etc.).
+	 *
+	 * @since 0.11.0
+	 */
+	accentColors?: AccentColor[];
+	/**
+	 * Toast-notification type map. Filterable server-side via
+	 * `wp_desktop_toast_types`. Optional — same fallback story as
+	 * `accentColors`.
+	 *
+	 * @since 0.11.0
+	 */
+	toastTypes?: ToastTypeDef[];
+	/**
+	 * Wallpaper slug applied on first boot for a new user. Filterable
+	 * server-side via `wp_desktop_default_wallpaper`. Optional — an
+	 * empty string falls back to the TS default.
+	 *
+	 * @since 0.11.0
+	 */
+	defaultWallpaper?: string;
+}
+
+/**
+ * A single entry in the OS Settings accent-color picker.
+ *
+ * @since 0.11.0
+ */
+export interface AccentColor {
+	id: string;
+	label: string;
+	value: string;
+}
+
+/**
+ * A single toast-notification type declared by the server.
+ *
+ * @since 0.11.0
+ */
+export interface ToastTypeDef {
+	id: string;
+	label: string;
+	icon: string;
+	tone: 'positive' | 'warning' | 'critical' | 'neutral';
 }
 
 /**

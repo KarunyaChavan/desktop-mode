@@ -6,16 +6,21 @@
 
 import { __ } from '../../i18n';
 import { html, render } from '../../ui/core';
-import { ACCENTS } from '../constants';
+import { getAccents } from '../constants';
 import { translateAccentLabel } from '../labels';
 import type { AccentId, SettingsCtx } from '../types';
 
 export function buildAccentSection( ctx: SettingsCtx ): HTMLElement {
 	// Accent-row interactions. Extracted so the template below reads as
 	// pure markup — state mutation + repaint live here.
+	//
+	// The accent list is resolved per-paint so if PHP refreshes the
+	// filtered list mid-session (rare, but possible via a live menu
+	// refresh after plugin activation), the picker picks up the new
+	// values on the next repaint.
 	const onPick = ( e: Event ): void => {
 		const id = ( ( e as CustomEvent ).detail?.value ?? '' ) as string;
-		if ( ! ACCENTS.some( ( a ) => a.id === id ) ) {
+		if ( ! getAccents().some( ( a ) => a.id === id ) ) {
 			return;
 		}
 		ctx.state.accent = id as AccentId;
@@ -37,7 +42,7 @@ export function buildAccentSection( ctx: SettingsCtx ): HTMLElement {
 						mode="row"
 						@wpd-pick=${ onPick }
 					>
-						${ ACCENTS.map(
+						${ getAccents().map(
 		( a ) => html`<wpd-swatch
 								value=${ a.id }
 								label=${ translateAccentLabel( a.id, a.label ) }

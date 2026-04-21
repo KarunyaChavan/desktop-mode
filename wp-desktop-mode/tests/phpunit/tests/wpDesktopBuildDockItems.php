@@ -304,19 +304,23 @@ class Tests_DesktopMode_WpDesktopBuildDockItems extends WP_UnitTestCase {
 	}
 
 	/**
-	 * Inline SVG data URIs are a legitimate Core pattern (see e.g. the
-	 * Site Health and Privacy menu icons). Allow them.
+	 * Inline SVG data URIs were previously preserved for the Core
+	 * Site Health / Privacy icons, but SVG can carry script that
+	 * executes when the icon is rendered as a CSS background. The
+	 * sanitizer now rejects every `data:` URI and falls back to the
+	 * generic dashicon. Menus that shipped an inline SVG should
+	 * register a dashicons class or an http(s) image URL instead.
 	 *
 	 * @covers ::wpdm_sanitize_dock_icon
 	 */
-	public function test_icon_data_svg_preserved() {
+	public function test_icon_data_svg_rejected() {
 		global $menu;
 		$svg  = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciLz4=';
 		$menu = array( $this->make_menu_row( 'Y', 'read', 'y.php', '', '', 'hook-y', $svg ) );
 
 		$items = wpdm_build_dock_items();
 
-		$this->assertStringStartsWith( 'data:image/svg+xml', $items[0]['icon'] );
+		$this->assertSame( 'dashicons-admin-generic', $items[0]['icon'] );
 	}
 
 	/**

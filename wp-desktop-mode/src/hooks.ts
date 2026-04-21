@@ -194,6 +194,18 @@ export const HOOKS = {
 	 * number | null, stack: string | null }`. Origin-filtered at the
 	 * parent shell; cross-origin iframe errors never reach here.
 	 */
+	/**
+	 * Action, fires once per iframe when the chromeless bridge
+	 * script has finished wiring its message listeners. Payload:
+	 * `{ windowId: string }`. Subscribers get a reliable "safe to
+	 * talk to this iframe" signal — the browser's native `load`
+	 * event fires before our bridge attaches, so messages sent on
+	 * `load` can be dropped on the floor. Use this instead when
+	 * timing matters (first-focus dispatch, auto-fill handshakes).
+	 *
+	 * @since 0.11.0
+	 */
+	IFRAME_READY: 'wp-desktop.iframe.ready',
 	IFRAME_ERROR: 'wp-desktop.iframe.error',
 	/**
 	 * Action, fires when a `fetch` or `XMLHttpRequest` inside a
@@ -362,6 +374,19 @@ export const HOOKS = {
 	 * driven by browser navigation patterns the shell doesn't own.
 	 */
 	NATIVE_WINDOW_BEFORE_CLOSE: 'wp-desktop.native-window.before-close',
+
+	/**
+	 * Action, fires when a user clicks a desktop icon (a shortcut
+	 * tile registered server-side via `wp_register_desktop_icon()`
+	 * and rendered on the wallpaper). Payload: `{ id: string,
+	 * target: 'window' | 'url' }`. Fires BEFORE the default open
+	 * action — plugins cannot cancel the open from this hook, but
+	 * can use it to track click-throughs or augment behaviour (e.g.
+	 * play a sound, surface a confirmation toast).
+	 *
+	 * @since 0.11.0
+	 */
+	DESKTOP_ICON_CLICKED: 'wp-desktop.desktop-icon.clicked',
 
 	// ------------------------------------------------------------------
 	// Cross-plugin composition.

@@ -222,24 +222,67 @@ Update the window's title bar.
 ```
 
 #### `wp-desktop-navigate` — Stable
-Request a navigation from the iframe. `target: 'new'` opens a new browser tab; `'self'` navigates in-frame. The parent decides.
+Request a navigation from the iframe. `target: 'new'` opens a new browser tab (with `noopener,noreferrer`); `'self'` replaces the iframe's current page. The URL is validated same-origin against the shell's origin snapshot — cross-origin URLs are silently refused, so an iframe cannot use this to break out of the shell.
 
 ```typescript
 { type: 'wp-desktop-navigate'; url: string; target: 'self' | 'new' }
 ```
 
-#### `wp-desktop-notification` — Experimental
-Ask the shell to display a transient notification (implementation pending).
+#### `wp-desktop-notification` — Stable
+Raise a transient toast at the parent-shell level. The toast survives the iframe's lifecycle — a "Settings saved" message stays visible even after the user closes the window that triggered it. Title is required; body is optional (concatenated with an em-dash when present). Empty titles are dropped.
 
 ```typescript
-{ type: 'wp-desktop-notification'; title: string; body: string }
+{ type: 'wp-desktop-notification'; title: string; body?: string }
 ```
 
 #### `wp-desktop-ready` — Stable
-Fires once when the chromeless page's bridge script initializes. Useful for the parent to detect liveness per-frame.
+Posted once by the chromeless bridge script when its message listeners are attached. Dispatches `HOOKS.IFRAME_READY` on the parent with `{ windowId }`. Prefer subscribing to `IFRAME_READY` over the browser's native iframe `load` event when timing matters — `load` fires before our bridge wires up, so messages sent on `load` can race the listener and drop.
 
 ```typescript
 { type: 'wp-desktop-ready' }
+```
+
+#### `wp-desktop-focus-request` — Stable
+Posted by the chromeless bridge on every pointerdown inside the iframe. The parent focuses the window, unless it's currently in the overview grid (where clicks are absorbed by the grid controller).
+
+```typescript
+{ type: 'wp-desktop-focus-request' }
+```
+
+#### `wp-desktop-external-link` — Stable
+Posted when a link inside the iframe points off-site; the parent opens an external-tab card inside the window's tab strip.
+
+```typescript
+{ type: 'wp-desktop-external-link'; url: string; label?: string }
+```
+
+#### `wp-desktop-iframe-error` — Stable
+Posted from inside the chromeless iframe's `error` / `unhandledrejection` handlers. The parent re-dispatches as `HOOKS.IFRAME_ERROR` with `{ windowId, kind, message, filename, lineno, colno, stack }` so monitor widgets can subscribe.
+
+```typescript
+{
+    type: 'wp-desktop-iframe-error';
+    kind: 'error' | 'unhandledrejection';
+    message: string;
+    filename?: string;
+    lineno?: number;
+    colno?: number;
+    stack?: string;
+}
+```
+
+#### `wp-desktop-iframe-network` — Stable
+Posted by the chromeless bridge's `fetch` and `XMLHttpRequest` wrappers whenever an HTTP call completes (success or failure). The parent re-dispatches as `HOOKS.IFRAME_NETWORK_COMPLETED` with `{ windowId, method, url, status, duration, failed }`. `status === 0` indicates a network-level failure before a response arrived.
+
+```typescript
+{
+    type: 'wp-desktop-iframe-network';
+    method: string;
+    url: string;
+    status: number;
+    duration: number;
+    failed: boolean;
+}
 ```
 
 #### `wp-desktop-screen-meta` — Stable
@@ -464,6 +507,34 @@ All window actions include at minimum `{ windowId: string }` — additional fiel
 The window hooks fan out alongside the existing `wp-desktop-window-*` CustomEvents (see section 2) — both APIs fire for every state change. New code should prefer the hook bus.
 
 All hooks can be listed via `wp.hooks.hasAction()` / `hasFilter()` for defensive checks.
+
+#### Iframe observability
+
+Lifecycle + instrumentation for the chromeless iframe inside each window. Re-dispatched from `postMessage` payloads the iframe bridge forwards, so subscribers get a unified event stream without juggling the lower-level message bus themselves.
+
+| Hook | Kind | Status | Payload |
+|---|---|---|---|
+| `wp-desktop.iframe.ready` | action | Stable | `{ windowId }` — fires once per iframe when the chromeless bridge script has attached its listeners. Use this instead of the iframe's `load` event when timing matters (the native `load` fires before our bridge attaches, so messages sent on `load` can miss the listener). |
+| `wp-desktop.iframe.error` | action | Stable | `{ windowId, kind: 'error' \| 'unhandledrejection', message, filename, lineno, colno, stack }` — bridged from the iframe's `error` / `unhandledrejection` handlers. Cross-origin iframe errors are origin-filtered at the bridge and never reach this hook. |
+| `wp-desktop.iframe.network-completed` | action | Stable | `{ windowId, method, url, status, duration, failed }` — every `fetch` + `XMLHttpRequest` call inside the iframe. `status === 0` indicates a network-level failure with no response received. |
+
+Use `IFRAME_READY` when you need to send a `wp-desktop-focus` (or any parent→iframe message) as early as possible without racing the bridge setup. Use `IFRAME_ERROR` / `IFRAME_NETWORK_COMPLETED` to build a monitor widget that surfaces per-window reliability data.
+
+#### Native-window lifecycle
+
+These hooks fire only for native windows (`wp.desktop.registerWindow({ native: true, render })`). They let a plugin wrap or decorate another plugin's render output — e.g. injecting a consistent panel theme around every native window, or tagging the body for test automation.
+
+| Hook | Kind | Status | Payload |
+|---|---|---|---|
+| `wp-desktop.native-window.before-render` | filter | Stable | body `HTMLElement`, context `{ windowId, config }` — return the same element or a new wrapper the plugin should render into |
+| `wp-desktop.native-window.after-render` | action | Stable | `{ windowId, body, config }` — fires after the plugin's `render` callback has painted |
+| `wp-desktop.native-window.before-close` | action | Stable | `{ windowId, config }` — fires before the window element is detached, mirroring `wp-desktop.window.closing` for iframe windows |
+
+#### Window body resize
+
+| Hook | Kind | Status | Payload |
+|---|---|---|---|
+| `wp-desktop.window.body-resized` | action | Stable | `{ windowId, width, height }` — fires when the window body element's size actually changes (mount, resize, reflow). Coalesced by the underlying `ResizeObserver`; use this instead of polling from inside a native-window render. |
 
 ### Filter: `wp-desktop.wallpapers`
 

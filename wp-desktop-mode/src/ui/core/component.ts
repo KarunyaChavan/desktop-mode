@@ -105,6 +105,45 @@ export abstract class Component extends HTMLElement {
 	}
 
 	/**
+	 * Declarative class-name setter. Assign an array (or a
+	 * space-separated string) and the host's `class` attribute is
+	 * rewritten to match. Intended for programmatic styling — when
+	 * a plugin has enqueued its own stylesheet and wants to apply
+	 * one of those classes to a shell component:
+	 *
+	 * ```js
+	 * element.classNames = [ 'my-plugin-brand', 'is-active' ];
+	 * // → <wpd-select class="my-plugin-brand is-active">
+	 * ```
+	 *
+	 * The plain HTML `class="…"` attribute works just the same and
+	 * is always preferred when writing markup by hand — this setter
+	 * exists for the JS-API case where the caller has an array of
+	 * conditional classes in hand.
+	 *
+	 * Getter returns the current `classList` as a plain array for
+	 * symmetric read/write.
+	 *
+	 * @since 0.13.0
+	 */
+	get classNames(): string[] {
+		return Array.from( this.classList );
+	}
+	set classNames( next: string | readonly string[] | null | undefined ) {
+		if ( next === null || next === undefined ) {
+			this.removeAttribute( 'class' );
+			return;
+		}
+		const list = Array.isArray( next )
+			? next
+			: String( next ).split( /\s+/ );
+		const cleaned = list
+			.map( ( s ) => String( s ).trim() )
+			.filter( ( s ) => s !== '' );
+		this.className = cleaned.join( ' ' );
+	}
+
+	/**
 	 * Subclasses implement this. Called on the microtask after any
 	 * prop / attribute / manual `requestUpdate()` call. Must return
 	 * an `html\`\`` template result — no side effects, no reaching
@@ -233,6 +272,7 @@ export abstract class Component extends HTMLElement {
 			this._adoptLightStyles( ctor );
 		}
 	}
+
 
 	private static _lightStylesAdopted = new WeakSet<typeof Component>();
 

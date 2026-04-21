@@ -26,6 +26,15 @@ import './../ui/components/wpd-tab-chip/wpd-tab-chip';
 
 import { createWindowElement, updateFullscreenBodyClass } from './dom';
 import { handleWindowMessage } from './iframe-bridge';
+
+/**
+ * Origin snapshot taken at module load. Same-origin guards in this
+ * module compare against this value so a plugin script that mutates
+ * `window.location` after boot can't relax the check.
+ *
+ * @since 0.11.0
+ */
+const INITIAL_ORIGIN = window.location.origin;
 import {
 	addExternalTab,
 	externalTabCount,
@@ -205,69 +214,15 @@ export class Window {
 
 		this.bindEvents();
 
-		// Native windows: let the module fill the body. We call
-		// render() before the opening animation so the first frame
-		// shows the rendered UI rather than an empty flash.
-		if ( config.native && config.render ) {
-			const rawBody = this.element.querySelector(
-				'.wp-desktop-window__body',
-			) as HTMLElement | null;
-			if ( rawBody ) {
-				// `before-render` filter — lets subscribers inject a
-				// wrapper around the body (a surrounding `<wpd-panel>`,
-				// a theming shim, a dev-time debug outline) before the
-				// plugin's own render runs. Typed as returning
-				// `HTMLElement` so a filter that returns garbage
-				// coerces back to the original body.
-				const filtered = applyFilters(
-					HOOKS.NATIVE_WINDOW_BEFORE_RENDER,
-					rawBody,
-					{ windowId: this.id, config },
-				);
-				const body = filtered instanceof HTMLElement ? filtered : rawBody;
-				config.render( body );
-				doAction( HOOKS.NATIVE_WINDOW_AFTER_RENDER, {
-					windowId: this.id,
-					body,
-					config,
-				} );
-
-				// Auto-focus — deferred a frame so any layout side-
-				// effects of `render()` (measuring, wiring, adding
-				// disabled attrs) settle before `.focus()` resolves.
-				// `true` focuses the body itself (body must be
-				// tabbable — we bump its `tabIndex` temporarily).
-				// A string is a CSS selector resolved against the
-				// body.
-				if ( config.autofocus ) {
-					requestAnimationFrame( () => {
-						if ( this._isDestroyed ) {
-							return;
-						}
-						if ( typeof config.autofocus === 'string' ) {
-							const target = body.querySelector< HTMLElement >(
-								config.autofocus,
-							);
-							target?.focus();
-							return;
-						}
-						const hadTabIndex = body.hasAttribute( 'tabindex' );
-						if ( ! hadTabIndex ) {
-							body.tabIndex = -1;
-						}
-						body.focus();
-						if ( ! hadTabIndex ) {
-							// Leave `tabindex=-1` in place so the body
-							// stays programmatically focusable — a -1
-							// node is reachable via `.focus()` but
-							// never lands in the user's Tab order,
-							// which is exactly what "autofocus the
-							// body" wants.
-						}
-					} );
-				}
-			}
-		}
+		// Native render is intentionally NOT run here. The window
+		// manager calls {@link hydrateNative} AFTER appending the
+		// element to the desktop, so the plugin's render callback
+		// receives a body that's already connected to the document.
+		// Custom elements upgrade on connection (HTML spec), so any
+		// `<wpd-*>` the plugin creates or populates via declarative
+		// setters (`.items = […]`, `.value = …`) hits a real class
+		// setter rather than stashing an own data property that
+		// would later shadow the prototype setter.
 
 		// Body-resize observer — fires inline `onResize( w, h )` +
 		// the `WINDOW_BODY_RESIZED` hook whenever the
@@ -326,6 +281,90 @@ export class Window {
 		// save.
 		if ( config.initialState && config.initialState !== 'normal' ) {
 			requestAnimationFrame( () => this.applyInitialState( config.initialState! ) );
+		}
+	}
+
+	/**
+	 * Run the plugin's render callback for a native window.
+	 *
+	 * Called by the window manager immediately after appending the
+	 * window element to the desktop. At that point the element (and
+	 * everything reachable inside it) is connected to the document,
+	 * so custom elements upgrade synchronously — a prerequisite for
+	 * the declarative component-kit API (`element.items = […]`) to
+	 * reach the class setter instead of creating a shadowing own
+	 * data property on the pre-upgrade instance.
+	 *
+	 * No-op for iframe windows.
+	 *
+	 * Per-event contract preserved from 0.10.x:
+	 *   - `NATIVE_WINDOW_BEFORE_RENDER` filter fires, same args.
+	 *   - `NATIVE_WINDOW_AFTER_RENDER` action fires, same args.
+	 *   - `config.autofocus` is honoured with a `requestAnimationFrame`
+	 *     defer so layout side-effects of `render()` settle before
+	 *     `.focus()` resolves.
+	 *
+	 * @since 0.12.0
+	 * @internal
+	 */
+	public hydrateNative(): void {
+		if ( ! this.config.native || ! this.config.render ) {
+			return;
+		}
+		const rawBody = this.element.querySelector(
+			'.wp-desktop-window__body',
+		) as HTMLElement | null;
+		if ( ! rawBody ) {
+			return;
+		}
+		// `before-render` filter — lets subscribers inject a wrapper
+		// around the body (a surrounding `<wpd-panel>`, a theming
+		// shim, a dev-time debug outline) before the plugin's own
+		// render runs. Typed as returning `HTMLElement` so a filter
+		// that returns garbage coerces back to the original body.
+		const filtered = applyFilters(
+			HOOKS.NATIVE_WINDOW_BEFORE_RENDER,
+			rawBody,
+			{ windowId: this.id, config: this.config },
+		);
+		const body = filtered instanceof HTMLElement ? filtered : rawBody;
+		this.config.render( body );
+		doAction( HOOKS.NATIVE_WINDOW_AFTER_RENDER, {
+			windowId: this.id,
+			body,
+			config: this.config,
+		} );
+
+		// Auto-focus — deferred a frame so any layout side-effects
+		// of `render()` (measuring, wiring, adding disabled attrs)
+		// settle before `.focus()` resolves.
+		// `true` focuses the body itself (body must be tabbable —
+		// we bump its `tabIndex` temporarily). A string is a CSS
+		// selector resolved against the body.
+		const autofocus = this.config.autofocus;
+		if ( autofocus ) {
+			requestAnimationFrame( () => {
+				if ( this._isDestroyed ) {
+					return;
+				}
+				if ( typeof autofocus === 'string' ) {
+					const target = body.querySelector< HTMLElement >(
+						autofocus,
+					);
+					target?.focus();
+					return;
+				}
+				const hadTabIndex = body.hasAttribute( 'tabindex' );
+				if ( ! hadTabIndex ) {
+					body.tabIndex = -1;
+				}
+				body.focus();
+				// Leave `tabindex=-1` in place so the body stays
+				// programmatically focusable — a -1 node is
+				// reachable via `.focus()` but never lands in the
+				// user's Tab order, which is exactly what
+				// "autofocus the body" wants.
+			} );
 		}
 	}
 
@@ -890,11 +929,11 @@ export class Window {
 		const current = this.getCurrentUrl();
 		let url: URL;
 		try {
-			url = new URL( current, window.location.origin );
+			url = new URL( current, INITIAL_ORIGIN );
 		} catch {
 			return;
 		}
-		if ( url.origin !== window.location.origin ) {
+		if ( url.origin !== INITIAL_ORIGIN ) {
 			return;
 		}
 		url.searchParams.delete( 'wp_desktop' );

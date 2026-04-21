@@ -62,6 +62,18 @@ var wpDesktop = function(exports) {
      * number | null, stack: string | null }`. Origin-filtered at the
      * parent shell; cross-origin iframe errors never reach here.
      */
+    /**
+     * Action, fires once per iframe when the chromeless bridge
+     * script has finished wiring its message listeners. Payload:
+     * `{ windowId: string }`. Subscribers get a reliable "safe to
+     * talk to this iframe" signal — the browser's native `load`
+     * event fires before our bridge attaches, so messages sent on
+     * `load` can be dropped on the floor. Use this instead when
+     * timing matters (first-focus dispatch, auto-fill handshakes).
+     *
+     * @since 0.11.0
+     */
+    IFRAME_READY: "wp-desktop.iframe.ready",
     IFRAME_ERROR: "wp-desktop.iframe.error",
     /**
      * Action, fires when a `fetch` or `XMLHttpRequest` inside a
@@ -227,6 +239,18 @@ var wpDesktop = function(exports) {
      * driven by browser navigation patterns the shell doesn't own.
      */
     NATIVE_WINDOW_BEFORE_CLOSE: "wp-desktop.native-window.before-close",
+    /**
+     * Action, fires when a user clicks a desktop icon (a shortcut
+     * tile registered server-side via `wp_register_desktop_icon()`
+     * and rendered on the wallpaper). Payload: `{ id: string,
+     * target: 'window' | 'url' }`. Fires BEFORE the default open
+     * action — plugins cannot cancel the open from this hook, but
+     * can use it to track click-throughs or augment behaviour (e.g.
+     * play a sound, surface a confirmation toast).
+     *
+     * @since 0.11.0
+     */
+    DESKTOP_ICON_CLICKED: "wp-desktop.desktop-icon.clicked",
     // ------------------------------------------------------------------
     // Cross-plugin composition.
     // ------------------------------------------------------------------
@@ -833,6 +857,40 @@ var wpDesktop = function(exports) {
       this._scheduleRender();
     }
     /**
+     * Declarative class-name setter. Assign an array (or a
+     * space-separated string) and the host's `class` attribute is
+     * rewritten to match. Intended for programmatic styling — when
+     * a plugin has enqueued its own stylesheet and wants to apply
+     * one of those classes to a shell component:
+     *
+     * ```js
+     * element.classNames = [ 'my-plugin-brand', 'is-active' ];
+     * // → <wpd-select class="my-plugin-brand is-active">
+     * ```
+     *
+     * The plain HTML `class="…"` attribute works just the same and
+     * is always preferred when writing markup by hand — this setter
+     * exists for the JS-API case where the caller has an array of
+     * conditional classes in hand.
+     *
+     * Getter returns the current `classList` as a plain array for
+     * symmetric read/write.
+     *
+     * @since 0.13.0
+     */
+    get classNames() {
+      return Array.from(this.classList);
+    }
+    set classNames(next) {
+      if (next === null || next === void 0) {
+        this.removeAttribute("class");
+        return;
+      }
+      const list = Array.isArray(next) ? next : String(next).split(/\s+/);
+      const cleaned = list.map((s) => String(s).trim()).filter((s) => s !== "");
+      this.className = cleaned.join(" ");
+    }
+    /**
      * Request a re-render explicitly. Components rarely need this —
      * declare state via props + attribute observers and the render
      * loop picks up changes automatically.
@@ -996,7 +1054,55 @@ var wpDesktop = function(exports) {
     }
     return { __wpdCss: true, sheet: null, cssText: text };
   }
-  const styles$g = css`
+  function computeAutoId(element) {
+    const parts = [];
+    const tabs = [];
+    let windowId = null;
+    let node = element.parentElement;
+    while (node) {
+      if (node === document.body || node === document.documentElement) {
+        break;
+      }
+      const id = node.id || "";
+      if (id.startsWith("wp-window-")) {
+        windowId = id.slice("wp-window-".length);
+        break;
+      }
+      if (node.tagName.toLowerCase() === "wpd-tabpanel") {
+        const forValue = node.getAttribute("for");
+        if (forValue) {
+          tabs.unshift(forValue);
+        }
+      }
+      node = node.parentElement;
+    }
+    if (windowId) {
+      parts.push(slugify$1(windowId));
+    }
+    for (const tab of tabs) {
+      parts.push("tab-" + slugify$1(tab));
+    }
+    const label = element.getAttribute("label");
+    if (label) {
+      parts.push(slugify$1(label));
+    }
+    if (parts.length === 0) {
+      return "wpd-unnamed";
+    }
+    return "wpd-" + parts.filter((p) => p !== "").join("-");
+  }
+  function slugify$1(s) {
+    return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  }
+  function ensureAutoId(element) {
+    if (element.id) {
+      return element.id;
+    }
+    const id = computeAutoId(element);
+    element.id = id;
+    return id;
+  }
+  const styles$j = css`
 	:host {
 		display: inline-flex;
 	}
@@ -1096,7 +1202,7 @@ var wpDesktop = function(exports) {
     }
   };
   _WpdWindowButton.props = ["icon", "active", "danger"];
-  _WpdWindowButton.styles = [styles$g];
+  _WpdWindowButton.styles = [styles$j];
   let WpdWindowButton = _WpdWindowButton;
   defineComponent("wpd-window-button", WpdWindowButton);
   const menuStyles = css`
@@ -1251,7 +1357,7 @@ var wpDesktop = function(exports) {
   _WpdMenuItem.styles = [menuItemStyles];
   let WpdMenuItem = _WpdMenuItem;
   defineComponent("wpd-menu-item", WpdMenuItem);
-  const styles$f = css`
+  const styles$i = css`
 	:host {
 		display: inline-flex;
 	}
@@ -1350,7 +1456,7 @@ var wpDesktop = function(exports) {
     }
   };
   _WpdTabChip.props = ["variant"];
-  _WpdTabChip.styles = [styles$f];
+  _WpdTabChip.styles = [styles$i];
   let WpdTabChip = _WpdTabChip;
   defineComponent("wpd-tab-chip", WpdTabChip);
   const IDENTITY_PARAMS = ["post_type", "page", "taxonomy"];
@@ -1396,9 +1502,10 @@ var wpDesktop = function(exports) {
       return url;
     }
   }
+  const INITIAL_ORIGIN$3 = window.location.origin;
   function withChromelessParam(url) {
-    const parsed = new URL(url, window.location.origin);
-    if (parsed.origin !== window.location.origin) {
+    const parsed = new URL(url, INITIAL_ORIGIN$3);
+    if (parsed.origin !== INITIAL_ORIGIN$3) {
       return null;
     }
     parsed.searchParams.set("wp_desktop", "1");
@@ -1978,8 +2085,9 @@ var wpDesktop = function(exports) {
       switchToTab(win, "primary");
     }
   }
+  const INITIAL_ORIGIN$2 = window.location.origin;
   function handleWindowMessage(win, event) {
-    if (event.origin !== window.location.origin) {
+    if (event.origin !== INITIAL_ORIGIN$2) {
       return;
     }
     if (!win.iframe || event.source !== win.iframe.contentWindow) {
@@ -1991,6 +2099,22 @@ var wpDesktop = function(exports) {
     }
     if (data.type === "wp-desktop-title-change" && typeof data.title === "string") {
       win.setTitle(data.title);
+    }
+    if (data.type === "wp-desktop-ready") {
+      doAction(HOOKS.IFRAME_READY, { windowId: win.id });
+    }
+    if (data.type === "wp-desktop-navigate" && typeof data.url === "string" && data.url !== "") {
+      handleDesktopNavigate(
+        win,
+        data.url,
+        data.target === "new" ? "new" : "self"
+      );
+    }
+    if (data.type === "wp-desktop-notification" && typeof data.title === "string" && data.title !== "") {
+      handleDesktopNotification(
+        data.title,
+        typeof data.body === "string" ? data.body : ""
+      );
     }
     if (data.type === "wp-desktop-focus-request") {
       if (!win.element.classList.contains("wp-desktop-window--overview")) {
@@ -2032,6 +2156,28 @@ var wpDesktop = function(exports) {
       });
     }
   }
+  function handleDesktopNavigate(win, rawUrl, target) {
+    let url;
+    try {
+      url = new URL(rawUrl, INITIAL_ORIGIN$2);
+    } catch {
+      return;
+    }
+    if (url.origin !== INITIAL_ORIGIN$2) {
+      return;
+    }
+    if (target === "new") {
+      window.open(url.toString(), "_blank", "noopener,noreferrer");
+      return;
+    }
+    if (win.iframe) {
+      win.iframe.src = url.toString();
+    }
+  }
+  function handleDesktopNotification(title, body) {
+    const message = body !== "" ? `${title} — ${body}` : title;
+    showToast({ message });
+  }
   function addScreenMetaButtons(win, panels) {
     const container = win.element.querySelector(".wp-desktop-window__screen-meta");
     if (!container) {
@@ -2058,7 +2204,7 @@ var wpDesktop = function(exports) {
         e.stopPropagation();
         win.iframe?.contentWindow?.postMessage(
           { type: "wp-desktop-toggle-panel", panel },
-          window.location.origin
+          INITIAL_ORIGIN$2
         );
       });
       container.appendChild(btn);
@@ -2493,6 +2639,7 @@ var wpDesktop = function(exports) {
     }
     return { x, y, width, height };
   }
+  const INITIAL_ORIGIN$1 = window.location.origin;
   class Window {
     constructor(config) {
       this.state = "normal";
@@ -2528,44 +2675,6 @@ var wpDesktop = function(exports) {
       this._titleEl = this.element.querySelector(".wp-desktop-window__title");
       this._boundOnMessage = (e) => handleWindowMessage(this, e);
       this.bindEvents();
-      if (config.native && config.render) {
-        const rawBody = this.element.querySelector(
-          ".wp-desktop-window__body"
-        );
-        if (rawBody) {
-          const filtered = applyFilters(
-            HOOKS.NATIVE_WINDOW_BEFORE_RENDER,
-            rawBody,
-            { windowId: this.id, config }
-          );
-          const body = filtered instanceof HTMLElement ? filtered : rawBody;
-          config.render(body);
-          doAction(HOOKS.NATIVE_WINDOW_AFTER_RENDER, {
-            windowId: this.id,
-            body,
-            config
-          });
-          if (config.autofocus) {
-            requestAnimationFrame(() => {
-              if (this._isDestroyed) {
-                return;
-              }
-              if (typeof config.autofocus === "string") {
-                const target = body.querySelector(
-                  config.autofocus
-                );
-                target?.focus();
-                return;
-              }
-              const hadTabIndex = body.hasAttribute("tabindex");
-              if (!hadTabIndex) {
-                body.tabIndex = -1;
-              }
-              body.focus();
-            });
-          }
-        }
-      }
       this._bodyResizeObserver = this.installBodyResizeObserver();
       if (config.initialState === "minimized") {
         this.state = "minimized";
@@ -2586,6 +2695,72 @@ var wpDesktop = function(exports) {
       }, { once: true });
       if (config.initialState && config.initialState !== "normal") {
         requestAnimationFrame(() => this.applyInitialState(config.initialState));
+      }
+    }
+    /**
+     * Run the plugin's render callback for a native window.
+     *
+     * Called by the window manager immediately after appending the
+     * window element to the desktop. At that point the element (and
+     * everything reachable inside it) is connected to the document,
+     * so custom elements upgrade synchronously — a prerequisite for
+     * the declarative component-kit API (`element.items = […]`) to
+     * reach the class setter instead of creating a shadowing own
+     * data property on the pre-upgrade instance.
+     *
+     * No-op for iframe windows.
+     *
+     * Per-event contract preserved from 0.10.x:
+     *   - `NATIVE_WINDOW_BEFORE_RENDER` filter fires, same args.
+     *   - `NATIVE_WINDOW_AFTER_RENDER` action fires, same args.
+     *   - `config.autofocus` is honoured with a `requestAnimationFrame`
+     *     defer so layout side-effects of `render()` settle before
+     *     `.focus()` resolves.
+     *
+     * @since 0.12.0
+     * @internal
+     */
+    hydrateNative() {
+      if (!this.config.native || !this.config.render) {
+        return;
+      }
+      const rawBody = this.element.querySelector(
+        ".wp-desktop-window__body"
+      );
+      if (!rawBody) {
+        return;
+      }
+      const filtered = applyFilters(
+        HOOKS.NATIVE_WINDOW_BEFORE_RENDER,
+        rawBody,
+        { windowId: this.id, config: this.config }
+      );
+      const body = filtered instanceof HTMLElement ? filtered : rawBody;
+      this.config.render(body);
+      doAction(HOOKS.NATIVE_WINDOW_AFTER_RENDER, {
+        windowId: this.id,
+        body,
+        config: this.config
+      });
+      const autofocus = this.config.autofocus;
+      if (autofocus) {
+        requestAnimationFrame(() => {
+          if (this._isDestroyed) {
+            return;
+          }
+          if (typeof autofocus === "string") {
+            const target = body.querySelector(
+              autofocus
+            );
+            target?.focus();
+            return;
+          }
+          const hadTabIndex = body.hasAttribute("tabindex");
+          if (!hadTabIndex) {
+            body.tabIndex = -1;
+          }
+          body.focus();
+        });
       }
     }
     /**
@@ -3030,11 +3205,11 @@ var wpDesktop = function(exports) {
       const current = this.getCurrentUrl();
       let url;
       try {
-        url = new URL(current, window.location.origin);
+        url = new URL(current, INITIAL_ORIGIN$1);
       } catch {
         return;
       }
-      if (url.origin !== window.location.origin) {
+      if (url.origin !== INITIAL_ORIGIN$1) {
         return;
       }
       url.searchParams.delete("wp_desktop");
@@ -4513,6 +4688,7 @@ var wpDesktop = function(exports) {
       this._stack.push(win);
       this._desktop.appendChild(win.element);
       applyDesktopVisibility(this, win);
+      win.hydrateNative();
       this.focus(win);
       const openedDetail = {
         windowId: win.id,
@@ -5221,7 +5397,7 @@ var wpDesktop = function(exports) {
       }
     }
   }
-  const styles$e = css`
+  const styles$h = css`
 	:host {
 		display: block;
 		margin-block-end: 28px;
@@ -5259,10 +5435,10 @@ var wpDesktop = function(exports) {
     }
   };
   _WpdSection.props = ["heading", "description"];
-  _WpdSection.styles = [styles$e];
+  _WpdSection.styles = [styles$h];
   let WpdSection = _WpdSection;
   defineComponent("wpd-section", WpdSection);
-  const styles$d = css`
+  const styles$g = css`
 	:host {
 		display: inline-flex;
 	}
@@ -5359,10 +5535,10 @@ var wpDesktop = function(exports) {
     }
   };
   _WpdButton.props = ["variant", "disabled", "type", "busy", "fill-cell"];
-  _WpdButton.styles = [styles$d];
+  _WpdButton.styles = [styles$g];
   let WpdButton = _WpdButton;
   defineComponent("wpd-button", WpdButton);
-  const styles$c = css`
+  const styles$f = css`
 	:host {
 		display: block;
 		width: 100%;
@@ -5450,10 +5626,10 @@ var wpDesktop = function(exports) {
     }
   };
   _WpdSwatch.props = ["value", "label", "selected", "preview", "size", "variant"];
-  _WpdSwatch.styles = [styles$c];
+  _WpdSwatch.styles = [styles$f];
   let WpdSwatch = _WpdSwatch;
   defineComponent("wpd-swatch", WpdSwatch);
-  const styles$b = css`
+  const styles$e = css`
 	:host {
 		display: grid;
 		grid-template-columns: repeat(
@@ -5484,7 +5660,7 @@ var wpDesktop = function(exports) {
     }
   };
   _WpdSwatchGrid.props = ["label", "columns", "mode"];
-  _WpdSwatchGrid.styles = [styles$b];
+  _WpdSwatchGrid.styles = [styles$e];
   let WpdSwatchGrid = _WpdSwatchGrid;
   defineComponent("wpd-swatch-grid", WpdSwatchGrid);
   const segmentedStyles = css`
@@ -5550,6 +5726,46 @@ var wpDesktop = function(exports) {
         this.emit("wpd-pick", { value: detail.value });
       });
     }
+    /**
+     * Declarative item-list setter. Replaces the existing
+     * `<wpd-segment>` children with a fresh set built from a
+     * `{ value, label }` array; preserves the current selection
+     * when the value still matches an entry, otherwise falls back
+     * to the first item.
+     *
+     * Collapses the pre-0.11 imperative dance (clear children,
+     * `createElement`, set `textContent`, `appendChild`, then
+     * `setAttribute('value', …)` on the group — order matters) to
+     * a single assignment:
+     *
+     * ```js
+     * segmented.items = [
+     *   { value: 'm',  label: 'm' },
+     *   { value: 'km', label: 'km' },
+     * ];
+     * ```
+     *
+     * @since 0.11.0
+     */
+    set items(list) {
+      const existing = this.querySelectorAll(":scope > wpd-segment");
+      for (const el of Array.from(existing)) {
+        el.remove();
+      }
+      for (const item of list) {
+        const seg = document.createElement("wpd-segment");
+        seg.setAttribute("value", item.value);
+        seg.textContent = item.label;
+        this.appendChild(seg);
+      }
+      const current = this.value;
+      const stillValid = current !== null && list.some((i) => i.value === current);
+      if (!stillValid && list.length > 0) {
+        this.value = list[0].value;
+      } else {
+        this.requestUpdate();
+      }
+    }
     render() {
       const label = this.label || "";
       if (label) {
@@ -5574,7 +5790,278 @@ var wpDesktop = function(exports) {
   _WpdSegmented.styles = [segmentedStyles];
   let WpdSegmented = _WpdSegmented;
   defineComponent("wpd-segmented", WpdSegmented);
-  const styles$a = css`
+  const selectStyles = css`
+	/*
+	 * Host is block-level flex so the component fills its parent
+	 * cell (grid row col=N, flex container, plain block container).
+	 * Inline-flex was the 0.11 default, but stretched grid cells
+	 * left the native <select> at its intrinsic width while the
+	 * host spanned the full cell — the absolutely-positioned
+	 * chevron then floated against the cell's right edge rather
+	 * than hugging the select. Block-level flex removes the gap.
+	 */
+	:host {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		font-size: 13px;
+		color: var( --wp-desktop-text, #1d2327 );
+		min-width: 0;
+	}
+
+	:host( [ hidden ] ) {
+		display: none;
+	}
+
+	.wpd-select__label {
+		font-size: 12px;
+		color: var( --wp-desktop-muted, #646970 );
+	}
+
+	.wpd-select__wrap {
+		position: relative;
+		display: flex;
+		align-items: center;
+		width: 100%;
+	}
+
+	select {
+		appearance: none;
+		-webkit-appearance: none;
+		display: block;
+		width: 100%;
+		min-width: 0;
+		padding: 7px 28px 7px 12px;
+		background: rgba( 0, 0, 0, 0.05 );
+		border: 1px solid transparent;
+		border-radius: 7px;
+		font: inherit;
+		font-size: 13px;
+		color: var( --wp-desktop-text, #1d2327 );
+		cursor: pointer;
+		transition: background-color 0.12s ease, border-color 0.12s ease,
+			box-shadow 0.12s ease;
+	}
+
+	select:hover {
+		background: rgba( 0, 0, 0, 0.08 );
+	}
+
+	select:focus-visible {
+		outline: none;
+		border-color: var( --wp-admin-theme-color, #2271b1 );
+		box-shadow: 0 0 0 1px var( --wp-admin-theme-color, #2271b1 );
+	}
+
+	select:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	/* Chevron — inline SVG sized to match the 12px viewBox.
+	 * Positioned over the right edge of the native select so the
+	 * caret is consistent across platforms. aria-hidden keeps it
+	 * out of the accessibility tree; the native select retains its
+	 * aria-label for screen readers. */
+	.wpd-select__chevron {
+		position: absolute;
+		inset-inline-end: 10px;
+		top: 50%;
+		transform: translateY( -50% );
+		pointer-events: none;
+		color: var( --wp-desktop-muted, #646970 );
+		display: inline-block;
+	}
+
+	/* Slight chevron tint on hover + focus — matches the select's
+	 * own border transition so the two feel like one affordance. */
+	select:hover ~ .wpd-select__chevron,
+	select:focus-visible ~ .wpd-select__chevron {
+		color: var( --wp-desktop-text, #1d2327 );
+	}
+`;
+  const optionStyles = css`
+	/*
+	 * Data-carrier only — children of <wpd-select> that convey
+	 * value + label. The parent reads textContent + the value
+	 * attribute to build the native select; the element itself
+	 * never paints.
+	 */
+	:host {
+		display: none;
+	}
+`;
+  const _WpdOption = class _WpdOption extends Component {
+    render() {
+      return html``;
+    }
+  };
+  _WpdOption.props = ["value", "disabled"];
+  _WpdOption.styles = [optionStyles];
+  let WpdOption = _WpdOption;
+  defineComponent("wpd-option", WpdOption);
+  const _WpdSelect = class _WpdSelect extends Component {
+    constructor() {
+      super(...arguments);
+      this._optionObserver = null;
+    }
+    /**
+     * Declarative item-list setter. Replaces the existing
+     * `<wpd-option>` children with a fresh set; preserves `value`
+     * when it still matches, otherwise clears to the placeholder.
+     *
+     * Same shape as the setter on `<wpd-segmented>` so callers can
+     * swap tag names (segmented ↔ select) without touching the
+     * populate code when an option list outgrows the pill bar.
+     *
+     * ```js
+     * select.items = [
+     *   { value: 'eur', label: 'Euro' },
+     *   { value: 'usd', label: 'US Dollar' },
+     * ];
+     * ```
+     *
+     * @since 0.11.0
+     */
+    set items(list) {
+      const existing = this.querySelectorAll(":scope > wpd-option");
+      for (const el of Array.from(existing)) {
+        el.remove();
+      }
+      for (const item of list) {
+        const opt = document.createElement("wpd-option");
+        opt.setAttribute("value", item.value);
+        opt.textContent = item.label;
+        this.appendChild(opt);
+      }
+      const current = this.value;
+      const stillValid = current !== null && list.some((i) => i.value === current);
+      if (!stillValid && list.length > 0) {
+        this.value = list[0].value;
+      }
+      this.requestUpdate();
+    }
+    connectedCallback() {
+      super.connectedCallback();
+      ensureAutoId(this);
+      this._optionObserver = new MutationObserver(() => this.requestUpdate());
+      this._optionObserver.observe(this, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["value", "disabled"],
+        characterData: true
+      });
+    }
+    disconnectedCallback() {
+      this._optionObserver?.disconnect();
+      this._optionObserver = null;
+    }
+    render() {
+      const label = this.label || "";
+      const current = this.value;
+      const placeholder = this.placeholder || "";
+      const disabled = this.disabled !== null;
+      const name = this.name || "";
+      if (label) {
+        this.setAttribute("aria-label", label);
+      } else {
+        this.removeAttribute("aria-label");
+      }
+      const selectAriaLabel = label || placeholder;
+      const options = this._readOptions();
+      const hostId = this.id || "wpd-unnamed";
+      const selectId = `${hostId}__input`;
+      return html`
+			${label ? html`<label
+						class="wpd-select__label"
+						for=${selectId}
+					>${label}</label>` : html``}
+			<span class="wpd-select__wrap">
+				<select
+					id=${selectId}
+					?disabled=${disabled}
+					aria-label=${selectAriaLabel}
+					name=${name}
+					@change=${(e) => this._onChange(e)}
+				>
+					${placeholder && !current ? html`<option value="" disabled selected>
+								${placeholder}
+						  </option>` : html``}
+					${options.map(
+        (o) => html`
+							<option
+								value=${o.value}
+								?disabled=${o.disabled}
+								?selected=${o.value === current}
+							>
+								${o.label}
+							</option>
+						`
+      )}
+				</select>
+				<!--
+					Inline SVG — the previous dashicons-classed span
+					never painted because the global Dashicons font
+					stylesheet cannot cross the shadow-root boundary.
+					An inline SVG lives inside the shadow tree, inherits
+					currentColor via the stroke attribute, and needs
+					no external CSS.
+				-->
+				<svg
+					class="wpd-select__chevron"
+					viewBox="0 0 12 12"
+					width="12"
+					height="12"
+					aria-hidden="true"
+					focusable="false"
+				>
+					<path
+						d="M3 5l3 3 3-3"
+						stroke="currentColor"
+						stroke-width="1.4"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						fill="none"
+					></path>
+				</svg>
+			</span>
+		`;
+    }
+    _readOptions() {
+      const out = [];
+      const children = this.querySelectorAll(":scope > wpd-option");
+      for (const child of Array.from(children)) {
+        const value = child.getAttribute("value");
+        if (value === null) {
+          continue;
+        }
+        out.push({
+          value,
+          label: (child.textContent || value).trim(),
+          disabled: child.hasAttribute("disabled")
+        });
+      }
+      return out;
+    }
+    _onChange(e) {
+      const sel = e.target;
+      const next = sel.value;
+      this.value = next;
+      this.emit("wpd-pick", { value: next });
+    }
+  };
+  _WpdSelect.props = [
+    "value",
+    "label",
+    "placeholder",
+    "disabled",
+    "name"
+  ];
+  _WpdSelect.styles = [selectStyles];
+  let WpdSelect = _WpdSelect;
+  defineComponent("wpd-select", WpdSelect);
+  const styles$d = css`
 	:host {
 		display: inline-flex;
 		align-items: center;
@@ -5650,10 +6137,10 @@ var wpDesktop = function(exports) {
     }
   };
   _WpdColorField.props = ["label", "value", "variant"];
-  _WpdColorField.styles = [styles$a];
+  _WpdColorField.styles = [styles$d];
   let WpdColorField = _WpdColorField;
   defineComponent("wpd-color-field", WpdColorField);
-  const styles$9 = css`
+  const styles$c = css`
 	:host {
 		display: flex;
 		align-items: center;
@@ -5704,10 +6191,391 @@ var wpDesktop = function(exports) {
     }
   };
   _WpdRangeField.props = ["label", "value", "min", "max", "step", "suffix"];
-  _WpdRangeField.styles = [styles$9];
+  _WpdRangeField.styles = [styles$c];
   let WpdRangeField = _WpdRangeField;
   defineComponent("wpd-range-field", WpdRangeField);
-  const styles$8 = css`
+  const textFieldStyles = css`
+	/*
+	 * Host is block-level flex so the field fills its parent cell
+	 * (grid row col=N, flex container, plain block container). The
+	 * pre-0.12 inline-flex default left the native <input> at its
+	 * intrinsic width while the host spanned the full cell, which
+	 * looked wrong inside a wpd-row.
+	 */
+	:host {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		font-size: 13px;
+		color: var( --wp-desktop-text, #1d2327 );
+		min-width: 0;
+	}
+	:host( [ hidden ] ) {
+		display: none;
+	}
+
+	.wpd-text-field__label {
+		font-size: 12px;
+		color: var( --wp-desktop-muted, #646970 );
+	}
+
+	.wpd-text-field__row {
+		position: relative;
+		display: flex;
+		align-items: center;
+		width: 100%;
+	}
+
+	input {
+		appearance: none;
+		-webkit-appearance: none;
+		display: block;
+		width: 100%;
+		min-width: 0;
+		padding: 7px 10px;
+		background: var( --wp-desktop-window-bg, #fff );
+		border: 1px solid var( --wp-desktop-border, #dcdcde );
+		border-radius: 6px;
+		font: inherit;
+		font-size: 13px;
+		color: var( --wp-desktop-text, #1d2327 );
+		transition: border-color 0.12s ease, box-shadow 0.12s ease;
+	}
+
+	/* Suffix slot for units / currency badges — rendered when the
+	 * component has a suffix attribute. Inline-end anchored so RTL
+	 * locales flip automatically via logical properties. */
+	.wpd-text-field__suffix {
+		position: absolute;
+		inset-inline-end: 10px;
+		top: 50%;
+		transform: translateY( -50% );
+		pointer-events: none;
+		font-size: 12px;
+		color: var( --wp-desktop-muted, #646970 );
+	}
+
+	input:hover {
+		border-color: var( --wp-desktop-muted, #8c8f94 );
+	}
+	input:focus-visible {
+		outline: none;
+		border-color: var( --wp-admin-theme-color, #2271b1 );
+		box-shadow: 0 0 0 1px var( --wp-admin-theme-color, #2271b1 );
+	}
+	input:disabled {
+		opacity: 0.55;
+		cursor: not-allowed;
+		background: rgba( 0, 0, 0, 0.03 );
+	}
+
+	input[ aria-invalid='true' ] {
+		border-color: #d63638;
+	}
+	input[ aria-invalid='true' ]:focus-visible {
+		box-shadow: 0 0 0 1px #d63638;
+	}
+
+	/* Hide the native spinner on number inputs — the suffix slot and
+	 * the keypad (when present) already handle increment / decrement.
+	 * Callers that need spinners can unset this by restyling. */
+	input[ type='number' ]::-webkit-inner-spin-button,
+	input[ type='number' ]::-webkit-outer-spin-button {
+		-webkit-appearance: none;
+		margin: 0;
+	}
+	input[ type='number' ] {
+		-moz-appearance: textfield;
+	}
+`;
+  const _WpdTextField = class _WpdTextField extends Component {
+    connectedCallback() {
+      super.connectedCallback();
+      ensureAutoId(this);
+    }
+    render() {
+      const label = this.label || "";
+      const value = this.value ?? "";
+      const placeholder = this.placeholder || "";
+      const disabled = this.disabled !== null;
+      const readonly = this.readonly !== null;
+      const autocomplete = this.autocomplete || "off";
+      const type = this.type || "text";
+      const maxLength = this.maxlength;
+      const minLength = this.minlength;
+      const pattern = this.pattern || "";
+      const name = this.name || "";
+      const suffix = this.suffix || "";
+      const invalid = this.invalid !== null;
+      const hostId = this.id || "wpd-unnamed";
+      const inputId = `${hostId}__input`;
+      return html`
+			${label ? html`<label
+						class="wpd-text-field__label"
+						for=${inputId}
+					>${label}</label>` : html``}
+			<span class="wpd-text-field__row">
+				<input
+					id=${inputId}
+					type=${type}
+					.value=${value}
+					placeholder=${placeholder}
+					?disabled=${disabled}
+					?readonly=${readonly}
+					autocomplete=${autocomplete}
+					maxlength=${maxLength ?? ""}
+					minlength=${minLength ?? ""}
+					pattern=${pattern}
+					name=${name}
+					aria-invalid=${invalid ? "true" : "false"}
+					aria-label=${label || ""}
+					@input=${(e) => this._onInput(e)}
+					@change=${(e) => this._onChange(e)}
+					@keydown=${(e) => this._onKeyDown(e)}
+				/>
+				${suffix ? html`<span class="wpd-text-field__suffix">${suffix}</span>` : html``}
+			</span>
+		`;
+    }
+    _onInput(e) {
+      const input = e.target;
+      this.value = input.value;
+      this.emit("wpd-input-change", { value: input.value });
+    }
+    _onChange(e) {
+      const input = e.target;
+      this.emit("wpd-input-commit", { value: input.value });
+    }
+    _onKeyDown(e) {
+      if (e.key === "Enter" && !e.shiftKey && !e.altKey && !e.metaKey) {
+        const input = e.target;
+        this.emit("wpd-submit", { value: input.value });
+      }
+    }
+  };
+  _WpdTextField.props = [
+    "label",
+    "value",
+    "placeholder",
+    "disabled",
+    "readonly",
+    "autocomplete",
+    "type",
+    "maxlength",
+    "minlength",
+    "pattern",
+    "name",
+    "suffix",
+    "invalid"
+  ];
+  _WpdTextField.styles = [textFieldStyles];
+  let WpdTextField = _WpdTextField;
+  defineComponent("wpd-text-field", WpdTextField);
+  const _WpdNumberField = class _WpdNumberField extends Component {
+    connectedCallback() {
+      super.connectedCallback();
+      ensureAutoId(this);
+    }
+    render() {
+      const label = this.label || "";
+      const value = this.value ?? "";
+      const placeholder = this.placeholder || "";
+      const disabled = this.disabled !== null;
+      const readonly = this.readonly !== null;
+      const name = this.name || "";
+      const suffix = this.suffix || "";
+      const min = this.min;
+      const max = this.max;
+      const step2 = this.step || "any";
+      const invalid = this.invalid !== null;
+      const hostId = this.id || "wpd-unnamed";
+      const inputId = `${hostId}__input`;
+      return html`
+			${label ? html`<label
+						class="wpd-text-field__label"
+						for=${inputId}
+					>${label}</label>` : html``}
+			<span class="wpd-text-field__row">
+				<input
+					id=${inputId}
+					type="number"
+					.value=${value}
+					placeholder=${placeholder}
+					?disabled=${disabled}
+					?readonly=${readonly}
+					inputmode="decimal"
+					autocomplete="off"
+					min=${min ?? ""}
+					max=${max ?? ""}
+					step=${step2}
+					name=${name}
+					aria-invalid=${invalid ? "true" : "false"}
+					aria-label=${label || ""}
+					@input=${(e) => this._onInput(e)}
+					@change=${(e) => this._onCommit(e)}
+					@keydown=${(e) => this._onKeyDown(e)}
+				/>
+				${suffix ? html`<span class="wpd-text-field__suffix">${suffix}</span>` : html``}
+			</span>
+		`;
+    }
+    _readRange() {
+      const rawMin = this.min;
+      const rawMax = this.max;
+      const min = rawMin !== null ? parseFloat(rawMin) : -Infinity;
+      const max = rawMax !== null ? parseFloat(rawMax) : Infinity;
+      return {
+        min: Number.isFinite(min) ? min : -Infinity,
+        max: Number.isFinite(max) ? max : Infinity
+      };
+    }
+    _clamp(value) {
+      const { min, max } = this._readRange();
+      if (value < min) return min;
+      if (value > max) return max;
+      return value;
+    }
+    _onInput(e) {
+      const input = e.target;
+      const n = parseFloat(input.value);
+      if (!Number.isFinite(n)) {
+        return;
+      }
+      this.value = String(n);
+      this.emit("wpd-input-change", { value: n });
+    }
+    _onCommit(e) {
+      const input = e.target;
+      const n = parseFloat(input.value);
+      if (!Number.isFinite(n)) {
+        return;
+      }
+      const clamped = this._clamp(n);
+      if (clamped !== n) {
+        input.value = String(clamped);
+        this.value = String(clamped);
+      }
+      this.emit("wpd-input-commit", { value: clamped });
+    }
+    _onKeyDown(e) {
+      if (e.key === "Enter" && !e.shiftKey && !e.altKey && !e.metaKey) {
+        const input = e.target;
+        const n = parseFloat(input.value);
+        if (!Number.isFinite(n)) {
+          return;
+        }
+        const clamped = this._clamp(n);
+        if (clamped !== n) {
+          input.value = String(clamped);
+          this.value = String(clamped);
+        }
+        this.emit("wpd-submit", { value: clamped });
+      }
+    }
+  };
+  _WpdNumberField.props = [
+    "label",
+    "value",
+    "placeholder",
+    "disabled",
+    "readonly",
+    "name",
+    "suffix",
+    "min",
+    "max",
+    "step",
+    "invalid"
+  ];
+  _WpdNumberField.styles = [textFieldStyles];
+  let WpdNumberField = _WpdNumberField;
+  defineComponent("wpd-number-field", WpdNumberField);
+  const styles$b = css`
+	:host {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 13px;
+		color: var( --wp-desktop-text, #1d2327 );
+		cursor: pointer;
+	}
+
+	:host( [ disabled ] ) {
+		cursor: not-allowed;
+		opacity: 0.55;
+	}
+
+	label {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		cursor: inherit;
+	}
+
+	input[ type='checkbox' ] {
+		appearance: auto;
+		-webkit-appearance: auto;
+		accent-color: var( --wp-admin-theme-color, #2271b1 );
+		width: 16px;
+		height: 16px;
+		margin: 0;
+		cursor: inherit;
+	}
+
+	input[ type='checkbox' ]:focus-visible {
+		outline: 2px solid var( --wp-admin-theme-color, #2271b1 );
+		outline-offset: 2px;
+	}
+
+	.wpd-checkbox__label {
+		line-height: 1.3;
+	}
+
+	/* When no label is passed, collapse the label wrapper so the
+	 * component is exactly one 16 px box — useful when the caller
+	 * is supplying its own label elsewhere (a table cell, a
+	 * separate <label for>, a settings row with a custom layout). */
+	.wpd-checkbox__label:empty {
+		display: none;
+	}
+`;
+  const _WpdCheckbox = class _WpdCheckbox extends Component {
+    render() {
+      const checked = this.checked !== null;
+      const disabled = this.disabled !== null;
+      const label = this.label || "";
+      const value = this.value;
+      return html`
+			<label>
+				<input
+					type="checkbox"
+					?checked=${checked}
+					?disabled=${disabled}
+					.value=${value ?? ""}
+					@change=${(e) => this._onChange(e)}
+				/>
+				<span class="wpd-checkbox__label">${label}</span>
+			</label>
+		`;
+    }
+    _onChange(e) {
+      const input = e.target;
+      const next = input.checked;
+      if (next) {
+        this.setAttribute("checked", "");
+      } else {
+        this.removeAttribute("checked");
+      }
+      this.emit("wpd-checkbox-change", {
+        checked: next,
+        value: this.value
+      });
+    }
+  };
+  _WpdCheckbox.props = ["checked", "value", "label", "disabled"];
+  _WpdCheckbox.styles = [styles$b];
+  let WpdCheckbox = _WpdCheckbox;
+  defineComponent("wpd-checkbox", WpdCheckbox);
+  const styles$a = css`
 	:host {
 		display: inline-flex;
 		align-items: center;
@@ -5753,7 +6621,7 @@ var wpDesktop = function(exports) {
     }
   };
   _WpdCheckboxLabel.props = ["label", "checked"];
-  _WpdCheckboxLabel.styles = [styles$8];
+  _WpdCheckboxLabel.styles = [styles$a];
   let WpdCheckboxLabel = _WpdCheckboxLabel;
   defineComponent("wpd-checkbox-label", WpdCheckboxLabel);
   const tabsStyles = css`
@@ -5762,6 +6630,26 @@ var wpDesktop = function(exports) {
 		gap: 4px;
 		margin-bottom: 10px;
 		border-bottom: 1px solid var( --wp-desktop-border, #dcdcde );
+	}
+`;
+  const tabPanelStyles = css`
+	/*
+	 * Shadow-DOM styles. :host targets the panel element; slotted
+	 * light children flow through the single <slot> in the render.
+	 * The :host([hidden]) rule spells out display: none because the
+	 * :host block above sets display: block and that would otherwise
+	 * beat the UA [hidden] { display: none } rule.
+	 */
+	:host {
+		display: block;
+	}
+	:host( [ hidden ] ) {
+		display: none;
+	}
+	:host( :focus-visible ) {
+		outline: 2px solid var( --wp-admin-theme-color, #2271b1 );
+		outline-offset: 4px;
+		border-radius: 4px;
 	}
 `;
   const tabStyles = css`
@@ -5823,6 +6711,35 @@ var wpDesktop = function(exports) {
         this.emit("wpd-tab-change", { value: detail.value });
       });
     }
+    /**
+     * Declarative item-list setter. Replaces the existing `<wpd-tab>`
+     * children with a fresh set built from a `{ value, label }`
+     * array. The `value` prop is preserved if it still matches a new
+     * entry; otherwise it falls back to the first item.
+     *
+     * Lets plugins that populate tabs dynamically (route-driven
+     * admin screens, filtered lists) replace the declarative
+     * markup with a one-liner:
+     *
+     * ```js
+     * tabs.items = [
+     *   { value: 'calc',    label: 'Calc' },
+     *   { value: 'convert', label: 'Convert' },
+     * ];
+     * ```
+     *
+     * @since 0.11.0
+     */
+    set items(list) {
+      replaceChildren(this, "wpd-tab", list);
+      const current = this.value;
+      const stillValid = current !== null && list.some((i) => i.value === current);
+      if (!stillValid && list.length > 0) {
+        this.value = list[0].value;
+      } else {
+        this.requestUpdate();
+      }
+    }
     render() {
       this.setAttribute("role", "tablist");
       const label = this.label || "";
@@ -5840,6 +6757,7 @@ var wpDesktop = function(exports) {
           );
           tab.setAttribute("tabindex", v === current ? "0" : "-1");
         }
+        syncTabpanels(this, current);
       });
       return html`<slot></slot>`;
     }
@@ -5848,7 +6766,80 @@ var wpDesktop = function(exports) {
   _WpdTabs.styles = [tabsStyles];
   let WpdTabs = _WpdTabs;
   defineComponent("wpd-tabs", WpdTabs);
-  const styles$7 = css`
+  const _WpdTabPanel = class _WpdTabPanel extends Component {
+    // Shadow DOM — the render target for this component is its
+    // own shadow root, which holds a single `<slot>` that projects
+    // whatever the caller placed between the `<wpd-tabpanel>` open
+    // and close tags. Slotted children remain light-DOM descendants
+    // of the panel element (the slot rendering mechanism doesn't
+    // move them), so `panel.querySelector(...)` from plugin render
+    // callbacks keeps working.
+    //
+    // Earlier 0.11.0 builds of this component used light DOM with
+    // a `<slot>` render, which wiped the panel's server-rendered
+    // template content on first mount — every `render()` writes
+    // into `_renderRoot`, and with light DOM that's the panel
+    // itself. Shadow DOM isolates the render surface.
+    connectedCallback() {
+      super.connectedCallback();
+      this.setAttribute("role", "tabpanel");
+      if (!this.hasAttribute("tabindex")) {
+        this.setAttribute("tabindex", "0");
+      }
+      const owner = findOwningTabs(this);
+      if (owner) {
+        syncTabpanels(owner, owner.getAttribute("value"));
+      }
+    }
+    render() {
+      return html`<slot></slot>`;
+    }
+  };
+  _WpdTabPanel.props = ["for"];
+  _WpdTabPanel.styles = [tabPanelStyles];
+  let WpdTabPanel = _WpdTabPanel;
+  defineComponent("wpd-tabpanel", WpdTabPanel);
+  function replaceChildren(host, tag, items) {
+    const existing = host.querySelectorAll(`:scope > ${tag}`);
+    for (const el of Array.from(existing)) {
+      el.remove();
+    }
+    for (const item of items) {
+      const el = document.createElement(tag);
+      el.setAttribute("value", item.value);
+      el.textContent = item.label;
+      host.appendChild(el);
+    }
+  }
+  function findOwningTabs(panel) {
+    const parent = panel.parentElement;
+    if (!parent) {
+      return null;
+    }
+    const sibling = parent.querySelector(":scope > wpd-tabs");
+    if (sibling) {
+      return sibling;
+    }
+    return panel.closest("wpd-tabs");
+  }
+  function syncTabpanels(tabs, value) {
+    const parent = tabs.parentElement;
+    if (!parent) {
+      return;
+    }
+    const panels = parent.querySelectorAll(":scope > wpd-tabpanel");
+    for (const panel of Array.from(panels)) {
+      const pfor = panel.getAttribute("for");
+      const active2 = pfor !== null && pfor === value;
+      if (active2) {
+        panel.removeAttribute("hidden");
+      } else {
+        panel.setAttribute("hidden", "");
+      }
+      panel.setAttribute("aria-hidden", active2 ? "false" : "true");
+    }
+  }
+  const styles$9 = css`
 	:host {
 		display: flex;
 		flex-direction: column;
@@ -5874,10 +6865,10 @@ var wpDesktop = function(exports) {
     }
   };
   _WpdStack.props = ["gap", "align"];
-  _WpdStack.styles = [styles$7];
+  _WpdStack.styles = [styles$9];
   let WpdStack = _WpdStack;
   defineComponent("wpd-stack", WpdStack);
-  const styles$6 = css`
+  const styles$8 = css`
 	:host {
 		display: flex;
 		flex-direction: row;
@@ -5909,10 +6900,10 @@ var wpDesktop = function(exports) {
     }
   };
   _WpdCluster.props = ["gap", "justify", "align"];
-  _WpdCluster.styles = [styles$6];
+  _WpdCluster.styles = [styles$8];
   let WpdCluster = _WpdCluster;
   defineComponent("wpd-cluster", WpdCluster);
-  const styles$5 = css`
+  const styles$7 = css`
 	:host {
 		display: inline-flex;
 		align-items: center;
@@ -5948,10 +6939,60 @@ var wpDesktop = function(exports) {
     }
   };
   _WpdIcon.props = ["name", "size"];
-  _WpdIcon.styles = [styles$5];
+  _WpdIcon.styles = [styles$7];
   let WpdIcon = _WpdIcon;
   defineComponent("wpd-icon", WpdIcon);
-  const styles$4 = css`
+  const styles$6 = css`
+	:host {
+		display: flex;
+		flex-direction: column;
+		gap: var( --wpd-body-gap, 12px );
+		padding: var( --wpd-body-padding, 16px );
+		box-sizing: border-box;
+		width: 100%;
+		height: 100%;
+		min-width: 0;
+		min-height: 0;
+	}
+
+	:host( [ scroll ] ) {
+		overflow: auto;
+	}
+
+	:host( [ hidden ] ) {
+		display: none;
+	}
+
+	/*
+	 * Children with a col attribute look like they should span a
+	 * 12-column grid — but wpd-body itself is a flex column, not a
+	 * grid. Plugin authors wanting 12-col layout wrap their
+	 * children in a wpd-row. This rule catches the accidental
+	 * "I put col on a wpd-body child" case and still renders the
+	 * element full-width rather than squashed to nothing.
+	 */
+	::slotted( * ) {
+		min-width: 0;
+	}
+`;
+  const _WpdBody = class _WpdBody extends Component {
+    render() {
+      const gap = this.gap;
+      const padding = this.padding;
+      if (gap && /^\d+$/.test(gap)) {
+        this.style.setProperty("--wpd-body-gap", `${gap}px`);
+      }
+      if (padding && /^\d+$/.test(padding)) {
+        this.style.setProperty("--wpd-body-padding", `${padding}px`);
+      }
+      return html`<slot></slot>`;
+    }
+  };
+  _WpdBody.props = ["gap", "padding", "scroll"];
+  _WpdBody.styles = [styles$6];
+  let WpdBody = _WpdBody;
+  defineComponent("wpd-body", WpdBody);
+  const styles$5 = css`
 	:host {
 		display: flex;
 		flex-direction: column;
@@ -5977,9 +7018,85 @@ var wpDesktop = function(exports) {
     }
   };
   _WpdPanel.props = ["gap", "padding"];
-  _WpdPanel.styles = [styles$4];
+  _WpdPanel.styles = [styles$5];
   let WpdPanel = _WpdPanel;
   defineComponent("wpd-panel", WpdPanel);
+  const styles$4 = css`
+	:host {
+		display: grid;
+		grid-template-columns: repeat( 12, minmax( 0, 1fr ) );
+		gap: var( --wpd-row-gap, 12px );
+		row-gap: var( --wpd-row-row-gap, var( --wpd-row-gap, 12px ) );
+		column-gap: var( --wpd-row-column-gap, var( --wpd-row-gap, 12px ) );
+		width: 100%;
+		min-width: 0;
+	}
+
+	:host( [ hidden ] ) {
+		display: none;
+	}
+
+	/*
+	 * Explicit col spans. Each rule is tiny; keeping 12 of them
+	 * is simpler than a more magical matching scheme (and the
+	 * compiled stylesheet is still a few hundred bytes).
+	 */
+	::slotted( [ col='1' ] )  { grid-column: span 1; }
+	::slotted( [ col='2' ] )  { grid-column: span 2; }
+	::slotted( [ col='3' ] )  { grid-column: span 3; }
+	::slotted( [ col='4' ] )  { grid-column: span 4; }
+	::slotted( [ col='5' ] )  { grid-column: span 5; }
+	::slotted( [ col='6' ] )  { grid-column: span 6; }
+	::slotted( [ col='7' ] )  { grid-column: span 7; }
+	::slotted( [ col='8' ] )  { grid-column: span 8; }
+	::slotted( [ col='9' ] )  { grid-column: span 9; }
+	::slotted( [ col='10' ] ) { grid-column: span 10; }
+	::slotted( [ col='11' ] ) { grid-column: span 11; }
+	::slotted( [ col='12' ] ) { grid-column: span 12; }
+
+	/*
+	 * Children without a col attribute default to spanning the
+	 * full row — matches the intuition that dropping a single
+	 * element into a row shouldn't shrink it to 1/12 of the
+	 * width. Plugin authors who want auto-fit per-child sizing
+	 * should reach for <wpd-grid> instead.
+	 */
+	::slotted( :not( [ col ] ) ) {
+		grid-column: 1 / -1;
+	}
+
+	/*
+	 * Tiny min-width guard — flex/grid children default to
+	 * min-width: auto which lets overflowing content push the
+	 * track wider than its assigned fraction. The minmax(0, 1fr)
+	 * above already helps; this makes sure long option labels
+	 * inside a wpd-select don't burst the row.
+	 */
+	::slotted( * ) {
+		min-width: 0;
+	}
+`;
+  const _WpdRow = class _WpdRow extends Component {
+    render() {
+      const gap = this.gap;
+      const cg = this["column-gap"];
+      const rg = this["row-gap"];
+      if (gap && /^\d+$/.test(gap)) {
+        this.style.setProperty("--wpd-row-gap", `${gap}px`);
+      }
+      if (cg && /^\d+$/.test(cg)) {
+        this.style.setProperty("--wpd-row-column-gap", `${cg}px`);
+      }
+      if (rg && /^\d+$/.test(rg)) {
+        this.style.setProperty("--wpd-row-row-gap", `${rg}px`);
+      }
+      return html`<slot></slot>`;
+    }
+  };
+  _WpdRow.props = ["gap", "column-gap", "row-gap"];
+  _WpdRow.styles = [styles$4];
+  let WpdRow = _WpdRow;
+  defineComponent("wpd-row", WpdRow);
   const styles$3 = css`
 	:host {
 		display: grid;
@@ -6405,13 +7522,19 @@ var wpDesktop = function(exports) {
     "wpd-swatch-grid",
     "wpd-segmented",
     "wpd-segment",
+    "wpd-select",
+    "wpd-option",
     "wpd-color-field",
     "wpd-range-field",
+    "wpd-text-field",
+    "wpd-number-field",
+    "wpd-checkbox",
     "wpd-checkbox-label",
     "wpd-toast",
     "wpd-toast-container",
     "wpd-tabs",
     "wpd-tab",
+    "wpd-tabpanel",
     "wpd-window-button",
     "wpd-menu",
     "wpd-menu-item",
@@ -6419,7 +7542,9 @@ var wpDesktop = function(exports) {
     "wpd-stack",
     "wpd-cluster",
     "wpd-icon",
+    "wpd-body",
     "wpd-panel",
+    "wpd-row",
     "wpd-grid",
     "wpd-display",
     "wpd-empty-state",
@@ -6529,7 +7654,7 @@ var wpDesktop = function(exports) {
   const CUSTOM_GRADIENT_ID = "custom-gradient";
   const CUSTOM_IMAGE_ID = "custom-image";
   const DEFAULT_WALLPAPER_ID = "dark";
-  const ACCENTS = [
+  const DEFAULT_ACCENTS = [
     { id: "wp-blue", label: "WordPress Blue", value: "#2271b1" },
     { id: "indigo", label: "Indigo", value: "#3858e9" },
     { id: "teal", label: "Teal", value: "#04a4cc" },
@@ -6537,6 +7662,28 @@ var wpDesktop = function(exports) {
     { id: "amber", label: "Amber", value: "#d97706" },
     { id: "rose", label: "Rose", value: "#e11d48" }
   ];
+  function getAccents() {
+    const config = window.wp?.desktop?.config;
+    const raw = config?.accentColors;
+    if (!Array.isArray(raw) || raw.length === 0) {
+      return DEFAULT_ACCENTS;
+    }
+    const clean = [];
+    for (const entry of raw) {
+      if (entry && typeof entry === "object" && typeof entry.id === "string" && typeof entry.label === "string" && typeof entry.value === "string" && entry.id !== "" && entry.label !== "" && /^#[0-9a-f]{3,8}$/i.test(entry.value)) {
+        clean.push({ id: entry.id, label: entry.label, value: entry.value });
+      }
+    }
+    return clean.length > 0 ? clean : DEFAULT_ACCENTS;
+  }
+  function getDefaultWallpaperId() {
+    const config = window.wp?.desktop?.config;
+    const raw = config?.defaultWallpaper;
+    if (typeof raw === "string" && raw !== "") {
+      return raw;
+    }
+    return DEFAULT_WALLPAPER_ID;
+  }
   const DOCK_SIZES = [
     { id: "compact", label: "Compact", width: 48, icon: 18 },
     { id: "default", label: "Default", width: 56, icon: 20 },
@@ -6586,13 +7733,18 @@ var wpDesktop = function(exports) {
         return structuredDefaults();
       }
       const parsed = JSON.parse(raw);
+      const accents = getAccents();
       return {
         // `wallpaper` is now any non-empty string — registry
         // membership is validated at apply time rather than here,
         // so a plugin that gets enqueued late still delivers its
-        // persisted selection.
-        wallpaper: typeof parsed.wallpaper === "string" && parsed.wallpaper !== "" ? parsed.wallpaper : DEFAULTS.wallpaper,
-        accent: ACCENTS.some((a) => a.id === parsed.accent) ? parsed.accent : DEFAULTS.accent,
+        // persisted selection. Missing persisted selection falls
+        // back to whatever the server said is the default (via
+        // `wp_desktop_default_wallpaper`), not the hard-coded TS
+        // constant — lets a theme set a site-wide first-boot
+        // wallpaper without forking the bundle.
+        wallpaper: typeof parsed.wallpaper === "string" && parsed.wallpaper !== "" ? parsed.wallpaper : getDefaultWallpaperId(),
+        accent: accents.some((a) => a.id === parsed.accent) ? parsed.accent : DEFAULTS.accent,
         dockSize: DOCK_SIZES.some((d) => d.id === parsed.dockSize) ? parsed.dockSize : DEFAULTS.dockSize,
         customGradient: sanitizeCustomGradient(parsed.customGradient),
         customImage: sanitizeCustomImage(parsed.customImage),
@@ -6672,7 +7824,7 @@ var wpDesktop = function(exports) {
   function buildAccentSection(ctx) {
     const onPick = (e) => {
       const id = e.detail?.value ?? "";
-      if (!ACCENTS.some((a) => a.id === id)) {
+      if (!getAccents().some((a) => a.id === id)) {
         return;
       }
       ctx.state.accent = id;
@@ -6692,7 +7844,7 @@ var wpDesktop = function(exports) {
 						mode="row"
 						@wpd-pick=${onPick}
 					>
-						${ACCENTS.map(
+						${getAccents().map(
         (a) => html`<wpd-swatch
 								value=${a.id}
 								label=${translateAccentLabel(a.id, a.label)}
@@ -7447,11 +8599,12 @@ var wpDesktop = function(exports) {
       if (!shell) {
         return;
       }
-      const def = get$1(this.state.wallpaper) || get$1(DEFAULT_WALLPAPER_ID) || all$1()[0];
+      const def = get$1(this.state.wallpaper) || get$1(getDefaultWallpaperId()) || get$1(DEFAULT_WALLPAPER_ID) || all$1()[0];
       if (def) {
         this.layer.apply(def);
       }
-      const accent = ACCENTS.find((a) => a.id === this.state.accent) ?? ACCENTS[0];
+      const accents = getAccents();
+      const accent = accents.find((a) => a.id === this.state.accent) ?? accents[0];
       const dockSize = DOCK_SIZES.find((d) => d.id === this.state.dockSize) ?? DOCK_SIZES[1];
       const root = document.documentElement;
       root.style.setProperty("--wp-admin-theme-color", accent.value);
@@ -7740,60 +8893,6 @@ var wpDesktop = function(exports) {
   function isThenable$1(value) {
     return !!value && typeof value === "object" && typeof value.then === "function";
   }
-  const PRESETS = [
-    {
-      id: "dark",
-      label: "Graphite",
-      value: "linear-gradient(135deg, #1d2327 0%, #2c3338 50%, #1d2327 100%)"
-    },
-    {
-      id: "aurora",
-      label: "Aurora",
-      value: "linear-gradient(135deg, #1a2980 0%, #26d0ce 100%)"
-    },
-    {
-      id: "sunset",
-      label: "Sunset",
-      value: "linear-gradient(135deg, #ff512f 0%, #dd2476 100%)"
-    },
-    {
-      id: "forest",
-      label: "Forest",
-      value: "linear-gradient(135deg, #134e5e 0%, #71b280 100%)"
-    },
-    {
-      id: "mono",
-      label: "Mono",
-      value: "#1d2327"
-    }
-  ];
-  function registerBuiltInWallpapers() {
-    for (const p of PRESETS) {
-      register$1({
-        id: p.id,
-        label: translatePresetLabel(p.id, p.label),
-        type: "css",
-        value: p.value,
-        preview: p.value
-      });
-    }
-  }
-  function translatePresetLabel(id, fallback) {
-    switch (id) {
-      case "dark":
-        return __("Graphite");
-      case "aurora":
-        return __("Aurora");
-      case "sunset":
-        return __("Sunset");
-      case "forest":
-        return __("Forest");
-      case "mono":
-        return __("Mono");
-      default:
-        return fallback;
-    }
-  }
   function createWallpaperRegistrySync(deps) {
     const { osSettings } = deps;
     const registered = /* @__PURE__ */ new Set();
@@ -7817,8 +8916,27 @@ var wpDesktop = function(exports) {
       const globals = window.wpDesktopWallpapers || {};
       return globals[id] ?? null;
     };
+    const defFromCssEntry = (entry) => {
+      if (entry.type !== "css" || entry.value === "") {
+        return null;
+      }
+      return {
+        id: entry.id,
+        label: entry.label,
+        type: "css",
+        value: entry.value,
+        preview: entry.preview !== "" ? entry.preview : entry.value
+      };
+    };
     const registerEntry = async (entry) => {
       if (registered.has(entry.id)) {
+        return;
+      }
+      const cssDef = defFromCssEntry(entry);
+      if (cssDef) {
+        register$1(cssDef);
+        registered.add(entry.id);
+        osSettings.apply();
         return;
       }
       await ensureScript(entry);
@@ -9275,6 +10393,81 @@ var wpDesktop = function(exports) {
     }
     return tpl.content.cloneNode(true);
   }
+  function renderDesktopIcons(host, icons, deps) {
+    const existing = host.querySelector(":scope > .wp-desktop-icons");
+    if (existing) {
+      existing.remove();
+    }
+    if (!icons || icons.length === 0) {
+      return;
+    }
+    const container = document.createElement("div");
+    container.className = "wp-desktop-icons";
+    container.setAttribute("role", "list");
+    container.setAttribute("aria-label", "Desktop icons");
+    for (const entry of icons) {
+      container.appendChild(buildIcon(entry, deps));
+    }
+    host.appendChild(container);
+  }
+  function buildIcon(entry, deps) {
+    const tile2 = document.createElement("button");
+    tile2.type = "button";
+    tile2.className = "wp-desktop-icon";
+    tile2.dataset.iconId = entry.id;
+    tile2.setAttribute("role", "listitem");
+    tile2.setAttribute("aria-label", entry.title);
+    const icon = document.createElement("span");
+    if (entry.icon.startsWith("http://") || entry.icon.startsWith("https://")) {
+      const img = document.createElement("img");
+      img.src = entry.icon;
+      img.alt = "";
+      icon.className = "wp-desktop-icon__image";
+      icon.appendChild(img);
+    } else {
+      icon.className = `wp-desktop-icon__image dashicons ${sanitizeClassName(entry.icon)}`;
+      icon.setAttribute("aria-hidden", "true");
+    }
+    tile2.appendChild(icon);
+    const label = document.createElement("span");
+    label.className = "wp-desktop-icon__label";
+    label.textContent = entry.title;
+    tile2.appendChild(label);
+    tile2.addEventListener("click", (e) => {
+      e.stopPropagation();
+      doAction(HOOKS.DESKTOP_ICON_CLICKED, {
+        id: entry.id,
+        target: entry.window ? "window" : "url"
+      });
+      openTarget(entry, deps);
+    });
+    return tile2;
+  }
+  function openTarget(entry, deps) {
+    if (entry.window) {
+      const opened = deps.openWindow(entry.window);
+      if (!opened) {
+        return;
+      }
+      return;
+    }
+    if (entry.url) {
+      try {
+        const parsed = new URL(entry.url, window.location.origin);
+        if (parsed.origin !== window.location.origin) {
+          window.open(parsed.toString(), "_blank", "noopener,noreferrer");
+          return;
+        }
+        deps.manager.open({
+          id: `desktop-icon-${entry.id}`,
+          url: parsed.toString(),
+          title: entry.title,
+          icon: entry.icon
+        });
+      } catch {
+      }
+    }
+  }
   const clock = {
     id: "clock",
     // Labels/descriptions on built-in defs stay string-literal at
@@ -9846,6 +11039,7 @@ var wpDesktop = function(exports) {
       });
     }
   );
+  const INITIAL_ORIGIN = window.location.origin;
   const OS_SETTINGS_WINDOW_ID = "wp-desktop-os-settings";
   const SESSION_SAVE_DEBOUNCE_MS = 500;
   const VIEWPORT_CLAMP_MARGIN = 12;
@@ -9865,7 +11059,6 @@ var wpDesktop = function(exports) {
     if (wallpaperEl) {
       wallpaperLayer = new WallpaperLayer(wallpaperEl, pluginUrl);
     }
-    registerBuiltInWallpapers();
     const widgetsEl = document.getElementById("wp-desktop-widgets");
     let widgetLayer = null;
     registerBuiltInWidgets();
@@ -10028,6 +11221,37 @@ var wpDesktop = function(exports) {
     void syncServerWallpapers(
       Array.isArray(config.serverWallpapers) ? config.serverWallpapers : []
     );
+    const registerWindow = createRegisterWindow(manager);
+    const openRegisteredNativeWindow = (id) => {
+      const def = Array.isArray(config.nativeWindows) ? config.nativeWindows.find((w) => w.id === id) : null;
+      if (!def) {
+        return false;
+      }
+      registerWindow({
+        id: def.id,
+        title: def.title,
+        icon: def.icon,
+        width: def.width,
+        height: def.height,
+        minWidth: def.minWidth,
+        minHeight: def.minHeight,
+        autofocus: def.autofocus,
+        render: (body) => {
+          const registry2 = window.wpDesktopNativeWindows;
+          const render2 = registry2?.[def.id];
+          if (render2) {
+            render2(body);
+          }
+        }
+      });
+      return true;
+    };
+    if (Array.isArray(config.desktopIcons) && config.desktopIcons.length > 0) {
+      renderDesktopIcons(desktopArea, config.desktopIcons, {
+        openWindow: openRegisteredNativeWindow,
+        manager
+      });
+    }
     const refreshMenu = bindMenuRefresh(
       dock,
       taskbar,
@@ -10057,7 +11281,7 @@ var wpDesktop = function(exports) {
       widgetLayer,
       loadVendorScript,
       getWallpaperSurfaces: () => collectWallpaperSurfaces(manager),
-      registerWindow: createRegisterWindow(manager),
+      registerWindow,
       cloneTemplate,
       onWindow,
       registerSystemTile: (item, placement = "taskbar") => {
@@ -10209,7 +11433,7 @@ var wpDesktop = function(exports) {
           }
           return;
         }
-        if (url.origin !== window.location.origin) {
+        if (url.origin !== INITIAL_ORIGIN) {
           return;
         }
         let adminPath;
@@ -10433,7 +11657,7 @@ var wpDesktop = function(exports) {
     };
     let debounceTimer = null;
     window.addEventListener("message", (e) => {
-      if (e.origin !== window.location.origin) {
+      if (e.origin !== INITIAL_ORIGIN) {
         return;
       }
       const data = e.data;

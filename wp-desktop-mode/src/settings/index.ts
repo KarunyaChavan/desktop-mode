@@ -49,10 +49,11 @@ import type { WallpaperLayer } from '../wallpapers/layer';
 import type { WallpaperTeardown } from '../wallpapers/types';
 import * as registry from '../wallpapers/registry';
 import {
-	ACCENTS,
 	DEFAULTS,
 	DEFAULT_WALLPAPER_ID,
 	DOCK_SIZES,
+	getAccents,
+	getDefaultWallpaperId,
 } from './constants';
 import { loadState, saveState } from './state';
 import type {
@@ -117,18 +118,22 @@ export class OsSettings implements SettingsCtx {
 			return;
 		}
 
-		// Wallpaper — look up in the registry. Fall back to the default
-		// id if the saved wallpaper was registered by a plugin that's
-		// no longer loaded, or if the id was never valid.
+		// Wallpaper — look up in the registry. Fall back to the
+		// server-declared default id (via `wp_desktop_default_wallpaper`)
+		// if the saved wallpaper was registered by a plugin that's no
+		// longer loaded, then to the TS compile-time default as a last
+		// resort.
 		const def =
 			registry.get( this.state.wallpaper ) ||
+			registry.get( getDefaultWallpaperId() ) ||
 			registry.get( DEFAULT_WALLPAPER_ID ) ||
 			registry.all()[ 0 ];
 		if ( def ) {
 			this.layer.apply( def );
 		}
 
-		const accent = ACCENTS.find( ( a ) => a.id === this.state.accent ) ?? ACCENTS[ 0 ];
+		const accents = getAccents();
+		const accent = accents.find( ( a ) => a.id === this.state.accent ) ?? accents[ 0 ];
 		const dockSize =
 			DOCK_SIZES.find( ( d ) => d.id === this.state.dockSize ) ?? DOCK_SIZES[ 1 ];
 

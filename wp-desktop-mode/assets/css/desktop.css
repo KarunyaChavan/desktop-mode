@@ -196,6 +196,82 @@ body.wp-desktop-has-fullscreen-window .wp-desktop-shell {
 }
 
 /* ---------------------------------------------------------------
+ * Desktop icons — wallpaper shortcut tiles registered via the
+ * `wp_register_desktop_icon()` PHP API. Rendered inside the
+ * desktop area as the first child after the wallpaper, so they
+ * paint above the wallpaper but beneath any window.
+ *
+ * Grid layout is fixed-width columns; tiles wrap onto multiple
+ * rows when the desktop is wide enough to host more than one
+ * column's worth. `pointer-events: none` on the container keeps
+ * the background clickable (for "minimize all" on wallpaper
+ * click) while individual tiles re-enable pointer events so they
+ * remain clickable.
+ * --------------------------------------------------------------- */
+
+.wp-desktop-icons {
+	position: absolute;
+	inset-block-start: 16px;
+	inset-inline-start: 16px;
+	display: grid;
+	grid-template-columns: repeat(auto-fill, 88px);
+	gap: 12px;
+	z-index: 1;
+	pointer-events: none;
+}
+
+.wp-desktop-icon {
+	pointer-events: auto;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: flex-start;
+	gap: 6px;
+	width: 88px;
+	padding: 8px 4px;
+	border: 0;
+	background: transparent;
+	color: var(--wp-desktop-fg, #fff);
+	cursor: pointer;
+	border-radius: 8px;
+	transition: background-color 0.15s ease;
+}
+
+.wp-desktop-icon:hover,
+.wp-desktop-icon:focus-visible {
+	background: rgba(255, 255, 255, 0.12);
+	outline: none;
+}
+
+.wp-desktop-icon:focus-visible {
+	box-shadow: 0 0 0 2px var(--wp-admin-theme-color, #2271b1);
+}
+
+.wp-desktop-icon__image {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 48px;
+	height: 48px;
+	font-size: 32px;
+	line-height: 1;
+}
+
+.wp-desktop-icon__image img {
+	max-width: 48px;
+	max-height: 48px;
+	object-fit: contain;
+}
+
+.wp-desktop-icon__label {
+	font-size: 12px;
+	text-align: center;
+	text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+	line-height: 1.2;
+	word-break: break-word;
+}
+
+/* ---------------------------------------------------------------
  * Widgets column — right-edge glass strip that paints above the
  * wallpaper but beneath windows. Hosts stacked widget cards and a
  * trailing "Add widget" tile. Interactive only on its own cards +

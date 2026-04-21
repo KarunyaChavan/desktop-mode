@@ -38,6 +38,17 @@ import {
 	onWindow,
 	type WindowLifecycleHandlers,
 } from './native-windows';
+import { renderDesktopIcons } from './desktop-icons';
+
+/**
+ * Origin snapshot taken at shell module load. Every same-origin gate
+ * in this file (message listeners, link interception) compares against
+ * this value so a plugin script that mutates `window.location` mid-
+ * session can't relax the cross-origin guards.
+ *
+ * @since 0.11.0
+ */
+const INITIAL_ORIGIN = window.location.origin;
 import { registerBuiltInWidgets } from './widgets/built-in';
 import * as widgetRegistry from './widgets/registry';
 import { createWidgetRegistrySync } from './widgets/server-sync';
@@ -544,6 +555,66 @@ function init(): void {
 		Array.isArray( config.serverWallpapers ) ? config.serverWallpapers : [],
 	);
 
+	// Hoisted so the desktop-icons render code below and the
+	// `window.wp.desktop.registerWindow` public export both
+	// reference the same function — no double-wrapping, no drift.
+	const registerWindow = createRegisterWindow( manager );
+
+	// Desktop icons — shortcut tiles on the wallpaper, registered
+	// server-side via `wp_register_desktop_icon()`. Re-rendered on
+	// every live menu refresh so a plugin activation adds / removes
+	// tiles without a full shell reload.
+	//
+	// The `openWindow` callback reaches into the native-window
+	// registry the shell keeps in sync with `config.nativeWindows`.
+	// When the icon's target plugin has been deactivated since the
+	// icon was registered, the registry lookup returns null and the
+	// click becomes a no-op — the icon itself disappears on the
+	// next refresh via `wp_desktop_icons` filtering.
+	const openRegisteredNativeWindow = ( id: string ): boolean => {
+		const def = Array.isArray( config.nativeWindows )
+			? config.nativeWindows.find( ( w ) => w.id === id )
+			: null;
+		if ( ! def ) {
+			return false;
+		}
+		registerWindow( {
+			id: def.id,
+			title: def.title,
+			icon: def.icon,
+			width: def.width,
+			height: def.height,
+			minWidth: def.minWidth,
+			minHeight: def.minHeight,
+			autofocus: def.autofocus,
+			render: ( body: HTMLElement ) => {
+				// Native windows registered from PHP publish their
+				// render callback on `window.wpDesktopNativeWindows`.
+				// If the plugin's script hasn't loaded yet (very
+				// rare at this point — the shell enqueues all
+				// native-window scripts as shell deps), fall through
+				// to an empty body rather than throwing.
+				const registry = ( window as unknown as {
+					wpDesktopNativeWindows?: Record<
+						string,
+						( ( body: HTMLElement ) => void ) | undefined
+					>;
+				} ).wpDesktopNativeWindows;
+				const render = registry?.[ def.id ];
+				if ( render ) {
+					render( body );
+				}
+			},
+		} );
+		return true;
+	};
+	if ( Array.isArray( config.desktopIcons ) && config.desktopIcons.length > 0 ) {
+		renderDesktopIcons( desktopArea, config.desktopIcons, {
+			openWindow: openRegisteredNativeWindow,
+			manager,
+		} );
+	}
+
 	// Live menu refresh — rebuild both rails when a plugin activation
 	// or deactivation lands in any windowed `plugins.php`. Without
 	// this the dock + taskbar reflect the server-side `$menu` at
@@ -597,7 +668,7 @@ function init(): void {
 		widgetLayer,
 		loadVendorScript,
 		getWallpaperSurfaces: () => collectWallpaperSurfaces( manager ),
-		registerWindow: createRegisterWindow( manager ),
+		registerWindow,
 		cloneTemplate,
 		onWindow,
 		registerSystemTile: ( item, placement = 'taskbar' ) => {
@@ -879,7 +950,7 @@ function bindTopWindowLinkInterceptor(
 				return;
 			}
 
-			if ( url.origin !== window.location.origin ) {
+			if ( url.origin !== INITIAL_ORIGIN ) {
 				return;
 			}
 			let adminPath: string;
@@ -1311,7 +1382,7 @@ function bindMenuRefresh(
 
 	let debounceTimer: number | null = null;
 	window.addEventListener( 'message', ( e: MessageEvent ) => {
-		if ( e.origin !== window.location.origin ) {
+		if ( e.origin !== INITIAL_ORIGIN ) {
 			return;
 		}
 		const data = e.data as {

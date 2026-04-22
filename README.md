@@ -21,7 +21,6 @@ Zero Core patches. Every feature is wired through public WordPress hooks.
   - [2. Build the TypeScript bundle](#2-build-the-typescript-bundle)
   - [3. Get it running in WordPress](#3-get-it-running-in-wordpress)
   - [4. Activate & toggle](#4-activate--toggle)
-  - [5. Run the tests](#5-run-the-tests)
 - [Requirements](#requirements)
 - [For plugin authors](#for-plugin-authors)
 - [License](#license)
@@ -229,21 +228,6 @@ Stop the environment with `npm run env:stop` (from the `wordpress-develop` direc
 4. The admin reloads inside the desktop shell.
 
 Click the same icon again to return to classic admin.
-
-### 5. Run the tests
-
-```bash
-npm run test:php        # PHPUnit, @group desktop-mode
-```
-
-Or, inside the Docker container:
-
-```bash
-docker exec wordpress-alcazaba-php-1 bash -c \
-  'export WP_TESTS_DIR=/var/www/tests/phpunit && cd /var/www && \
-   vendor/bin/phpunit -c src/wp-content/plugins/wp-desktop-mode/tests/phpunit/phpunit.xml.dist \
-   --group desktop-mode'
-```
 
 ---
 

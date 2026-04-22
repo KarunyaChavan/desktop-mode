@@ -59,9 +59,13 @@ Key server-side entry points:
 
 Used for **every existing admin page**. Zero plugin changes required — the chromeless request strips chrome and the iframe does the rest. Trade-off: no direct DOM access between parent and iframe (so cross-frame communication is `postMessage`-only).
 
-### Native windows (Phase 7, planned)
+### Native windows (shipped — 0.11.0)
 
-Registered via `wp_register_desktop_window()` (planned API), their content renders **directly in the parent DOM** — no iframe. Good for lightweight tools where iframe isolation is overkill. The companion **Jorvy** plugin validates this end-to-end.
+Registered via `wp_register_desktop_window()` (PHP) or `wp.desktop.registerWindow()` (JS). Content renders **directly in the parent DOM** — no iframe, direct shell access, lower overhead. Good for lightweight tools (color picker, settings panels, quick notes) and for anything that wants to participate in cross-window interactions directly.
+
+Additional tabs can be attached to any native window with `wp_register_desktop_window_tab()` — the first tab is the window's own template, and subsequent registrations (from any plugin) append after it. When two or more tabs exist the shell auto-wraps the render tree in `<wpd-stack>` + `<wpd-tabs>` so plugin authors don't hand-write tabstrip markup.
+
+The shell's own **OS Settings** native window (wallpaper / accent / dock-size / AI config / default-window) is both a shipped feature and the reference implementation. Lifecycle hooks — `wp-desktop.native-window.before-render` (filter), `after-render`, `before-close` — let a plugin decorate or wrap another plugin's render output.
 
 ## Session persistence
 
@@ -95,12 +99,15 @@ assets/css/
 
 Never edit Core's `common.css` or color scheme files. Everything we need is exposed as a CSS Custom Property in `variables.css`.
 
-## What comes next (phases 3–8)
+## What's shipped vs. what comes next
 
-- **Phase 3** — taskbar, multi-window orchestration, state sync improvements.
-- **Phase 4** — polish: color schemes, animations, accessibility audit.
-- **Phase 5–6** — mobile and tablet modes (`wp.desktop.mode` returns `'desktop' | 'tablet' | 'mobile'`).
-- **Phase 7** — native windows + **Jorvy** (the reference plugin).
-- **Phase 8** — **the North Star**: cross-window drag and drop. Media Library → Gutenberg in one gesture.
+**Shipped** — taskbar (0.5), multi-window orchestration + session restore, virtual desktops / Spaces (0.6), wallpaper registry (0.6), widget registry (0.7), overview + arrange + snap (0.8–0.9), native windows and tabs (0.10–0.11), AI assistant + slash commands + palette registry (0.13–0.14), cross-frame drag bridge for Media Library (0.14), OS Settings native window, accent + custom-gradient editor, toast notifications, iframe observability (`iframe-ready` / `iframe-error` / `iframe-network-completed`), letter-badge icon fallback, batch `closeAll()` with protection filter, primary-desktop filter.
+
+**Coming up**
+
+- **Polish** — color-scheme-aware variables across every shell surface, View Transitions API animations, full accessibility audit (ARIA, focus traps, keyboard navigation).
+- **Mobile (phone OS)** — `responsive.ts` + `mobile.ts`: home-screen grid, full-screen apps, app switcher, gesture nav, bottom tab bar. `wp.desktop.mode` returns `'desktop' | 'tablet' | 'mobile'`.
+- **Tablet hybrid** — split view, slide-over overlay, horizontal bottom dock, optional desktop-mode toggle for large tablets.
+- **The North Star — cross-window drag & drop** — extend the existing cross-frame drag bridge beyond Media Library attachments: pluggable mime-type negotiation (`wp_desktop_drag_mime_types` / `wp_desktop_drag_payload` / `wp_desktop_drop_accepts`), Gutenberg block-insertion target, visual lift-and-drop feedback.
 
 See [Hooks Reference](./hooks-reference.md) for the filter/action names each phase will introduce.

@@ -6,25 +6,79 @@ Zero Core patches. Every feature is wired through public WordPress hooks.
 
 ---
 
-## What it does today
+## Current State
 
-- **Per-user opt-in** — toggle in the admin bar flips the `wp_desktop_mode` user meta. Off by default.
-- **Desktop shell** — fixed viewport shell with a wallpaper area, rendered over `/wp-admin` only for users who opted in.
-- **Windows** — each admin page loads in its own `<iframe>` with `?wp_desktop=1`, which strips the admin bar, side menu, and footer ("chromeless" mode). Windows drag, resize, minimize, maximize, and close. Positions/sizes persist.
-- **Dock** — icon-only vertical strip on the left edge, built from the admin `$menu` global, with badges and per-window submenu tab strips for in-window nav.
-- **Session persistence** — window stack (position, size, focus, state) is saved via a REST endpoint and rebuilt on next load, so layout survives reloads without a flash of default state.
-- **postMessage bridge** — typed contract between parent shell and iframes for title changes, navigation, focus, and color-scheme propagation.
-- **Public hook API** — filters and actions for dock items, window args, shell config, body classes, chromeless styles, and lifecycle events. Documented in [`docs/`](./docs/README.md).
+- **Per-user opt-in**
+  Admin-bar toggle sets the `wp_desktop_mode` user meta. A dedicated `/wp-desktop/` portal URL auto-enables desktop mode for first-time visitors (gated by `wp_desktop_portal_auto_enable`) and the `admin_init` redirect sends opted-in users from `/wp-admin/` to the portal (`wp_desktop_admin_redirect_to_portal`).
 
-## Where it's going
+- **Desktop shell**
+  Fixed-viewport desktop that overlays `/wp-admin`: wallpaper area, left dock, bottom taskbar, right-column widget layer, and full windowing system. `wp_desktop_mode_init`, `wp_desktop_shell_before` / `_after`, and the `wp_desktop_shell_config` filter are the main extension points.
 
-The plugin is mid-build. Phases 0–2 (opt-in, shell + single window, dock) have landed. Remaining:
+- **Window system — iframe + native**
+  Iframe windows load admin pages with `?wp_desktop=1` (chromeless mode). Native windows render directly in the parent DOM via `wp_register_desktop_window()` / `wp.desktop.registerWindow()` — multi-tab native windows are supported through `wp_register_desktop_window_tab()`. Both types share drag, resize, minimize, maximize, close, fullscreen, and detach-to-new-tab.
 
-- **Phase 3** — taskbar, multi-window orchestration, edge-snapping.
-- **Phase 4** — polish: color-scheme-aware CSS variables, View Transitions animations, accessibility audit.
-- **Phase 5–6** — responsive: a purpose-built **mobile phone-OS** experience (home grid, full-screen apps, app switcher, gesture nav, bottom tab bar) and a **tablet hybrid** (split view, slide-over). `wp.desktop.mode` exposes `'desktop' | 'tablet' | 'mobile'`; same codebase, three experiences.
-- **Phase 7** — **native windows** that render directly in the parent DOM (no iframe) via `wp_register_desktop_window()`. Validated by **Jorvy**, a tiny companion plugin (Marvel quotes, Hello-Dolly style) used as the end-to-end smoke test for the native-window API.
-- **Phase 8 — the North Star**: **cross-window drag and drop**. Drag a photo from the Media window directly into the Gutenberg editor in the Post window. Implemented as a coordinated `postMessage` "lift-and-drop" bridge, since browsers block cross-iframe native DnD.
+- **Dock + Taskbar**
+  Left-edge dock for core WP menus; bottom macOS-style pill taskbar for installed-plugin menus. Placement is routed by `wp_desktop_dock_placement` (dock / taskbar / hidden). Per-item multi-window support via `wp_desktop_dock_item_multi`. Letter-badge icon fallback for plugins without icon art.
+
+- **Virtual desktops (“Spaces”)**
+  Multiple desktops per user, each with its own window set. Overview grid (zoom-out view) surfaces the Spaces switcher, thumbnails, and create/close controls.
+
+- **Arrange & snap**
+  Admin-bar Arrange menu: Cascade, Tile, Overview, Snap to grid. Plugins contribute custom entries via `wp_desktop_arrange_menu_items` and react to clicks via `wp-desktop.arrange.custom-action`. Tile grid dimensions and snap cell size are both filterable.
+
+- **Wallpaper registry**
+  Server- and client-side registration (`wp_register_desktop_wallpaper()` / `wp.desktop.registerWallpaper()`). CSS presets + canvas (WebGL/2D) wallpapers with collision-aware surface data (`wp.desktop.getWallpaperSurfaces()`) for snow/rain/physics effects. In-panel `renderEditor` callback for custom controls, shared vendor-module loader (`pixijs` pre-registered).
+
+- **Widgets**
+  Right-column floating cards, optionally draggable / resizable outside the column. `wp_register_desktop_widget()` / `wp.desktop.registerWidget()`. Built-in clock. User placement persists per-user in `localStorage`.
+
+- **Desktop icons**
+  Wallpaper-layer shortcuts via `wp_register_desktop_icon()` — targets a registered native window or an admin URL.
+
+- **AI Assistant + slash commands**
+  Cmd+K palette backed by an OpenAI agentic loop (search_posts, search_pages, search_comments tools). Admin-configured API key + model picker. Auto-analysis on `save_post` / term / comment save with per-entity prompt filters. `wp.desktop.registerCommand()` adds slash commands with autocomplete (`suggest()`), confirm dialogs (`ctx.confirm()`), and full lifecycle hooks (`before-run` / `after-run` / `error`). Built-in `/open [window]` is extensible via `wp-desktop.open-command.items`.
+
+- **Palette registry**
+  Cmd+K cycles through all registered palettes (`wp.desktop.registerPalette()`) — the AI assistant is palette 0 by default; additional plugin overlays share the shortcut.
+
+- **Cross-frame drag bridge**
+  Media-library attachments drag across iframe boundaries via coordinated postMessage. Site-wide toggle through the Extended Options REST endpoint.
+
+- **Toast notifications**
+  Shell-level toasts rendered via the `<wpd-toast>` component. Plugins register their own tone/icon via the `wp_desktop_toast_types` filter. Iframe pages raise a toast through the `wp-desktop-notification` bridge message — it survives the iframe's own lifecycle.
+
+- **OS Settings**
+  Native-window settings panel: wallpaper picker (with HD-only media filter), accent color swatches + custom gradient editor, dock size slider, AI platform config, and per-user default-on-startup window. Persisted via `/wp-desktop/v1/os-settings`.
+
+- **Session persistence**
+  Full window stack (including desktops, focus, state) is debounce-saved to `/wp-desktop/v1/session` and restored without layout flicker. Viewport-shrink clamping keeps off-screen windows reachable.
+
+- **postMessage bridge**
+  Typed messages for title changes, navigation (same-origin validated), focus, color-scheme sync, screen-meta panels (Screen Options / Help), external-link capture, iframe-ready handshake, and observability (`iframe-error`, `iframe-network`).
+
+- **UI component library**
+  ~25 `<wpd-*>` web components (`wpd-button`, `wpd-menu`, `wpd-panel`, `wpd-range-field`, `wpd-swatch`, `wpd-toast`, `wpd-tabs`, …) available to plugin authors — rendered server-side via `wp_desktop_component()` or imported in TS.
+
+- **i18n**
+  Full gettext coverage across PHP and TypeScript; Spanish translation shipped. Strings go through `wp.i18n` (`__`, `_x`, `_n`, `sprintf`) directly — no shell-specific re-export.
+
+- **Component registration API**
+  Stable `wp_register_desktop_*` functions for windows, widgets, wallpapers, icons, and window tabs. All return `true` / `WP_Error` with documented error codes.
+
+- **Public hook API**
+  Comprehensive PHP and JS hook surface — dock items, placement, multi-window, native-window lifecycle, widget lifecycle, wallpaper lifecycle + surfaces, window lifecycle, iframe observability, arrange actions, virtual-desktop transitions, palette registration, command lifecycle, batch close, AI prompt + model + post-type filters, accents, toast types, default wallpaper. See [`docs/hooks-reference.md`](./docs/hooks-reference.md) and [`docs/javascript-reference.md`](./docs/javascript-reference.md).
+
+---
+
+## Still ahead
+
+- **Mobile (phone OS)** — purpose-built home-screen grid, full-screen apps, app switcher, gesture nav, bottom tab bar.
+- **Tablet hybrid** — split view, slide-over, horizontal dock. `wp.desktop.mode = 'desktop' | 'tablet' | 'mobile'` surface.
+- **Cross-window drag & drop (the North Star)** — extend the current drag bridge to Media → Gutenberg block insertion, with pluggable mime-type negotiation.
+- **Polish** — color-scheme-aware variables across all shell surfaces, View Transitions API animations, full a11y audit (ARIA, focus traps, keyboard nav).
+- **…and a whole lot more hooks, filters, and actions** — every new surface lands with its own extension points, so this list keeps growing.
+
+See [`docs/architecture.md`](./docs/architecture.md) for how the pieces fit together and [`docs/hooks-reference.md`](./docs/hooks-reference.md) for the hook surface (current and planned).
 
 See [`docs/architecture.md`](./docs/architecture.md) for how the pieces fit together and [`docs/hooks-reference.md`](./docs/hooks-reference.md) for the hook surface (current and planned).
 
@@ -35,13 +89,36 @@ See [`docs/architecture.md`](./docs/architecture.md) for how the pieces fit toge
 ```
 .
 ├── wp-desktop-mode.php    # bootstrap: header, constants, require_once of includes/
-├── includes/              # PHP (helpers, ajax, admin-bar, assets, render, portal, session)
-├── assets/                # compiled CSS + JS (Vite output)
+├── includes/              # PHP subsystems
+│   ├── helpers.php              admin-bar.php       ajax.php
+│   ├── assets.php               render.php          portal.php
+│   ├── session.php              default-window.php  components.php
+│   ├── os-settings.php          extended-options.php
+│   ├── accents.php              wallpapers.php      toast-types.php
+│   ├── menu.php                 media-query.php
+│   └── ai-copilot/              # AI assistant (OpenAI client, analysis, search, jobs)
+├── assets/                # compiled CSS + JS (Vite output; tracked in git)
+│   ├── css/  desktop.css, windows.css, dock.css, chromeless.css, variables.css
+│   └── js/   desktop.js, desktop.min.js, chromeless bridge, media-library enhancements
 ├── src/                   # TypeScript source — compiled by Vite
+│   ├── desktop.ts / dock.ts / hooks.ts / commands.ts / palette-registry.ts
+│   ├── ai-assistant.ts / drag-bridge.ts / toast.ts / desktop-icons.ts
+│   ├── native-windows.ts / built-in-commands.ts / public-api.ts / types.ts
+│   ├── window/          # Window class — DOM, pointer, tabs, iframe bridge
+│   ├── window-manager/  # stack, desktops, arrange, snap, overview
+│   ├── wallpapers/      # registry, layer, surfaces, server sync, vendor loader
+│   ├── widgets/         # registry, layer, frame, picker, storage
+│   ├── settings/        # OS Settings panel sections
+│   ├── ui/              # <wpd-*> web components
+│   ├── modules/         # vendor-script lazy-loader
+│   └── plugins/         # built-in demos (animated-logo-wallpaper)
 ├── docs/                  # developer-facing docs (source of truth for plugin authors)
-├── tests/phpunit/         # PHPUnit, @group desktop-mode
-├── package.json           # devDeps (vite, typescript)
+├── tests/                 # PHPUnit + Vitest
+├── languages/             # .po / .mo (es shipped)
+├── bin/                   # package-zip helpers
+├── package.json           # devDeps (vite, typescript, vitest)
 ├── vite.config.js         # Vite lib-mode: src/desktop.ts → assets/js/desktop[.min].js (IIFE)
+├── vitest.config.ts
 └── tsconfig.json
 ```
 

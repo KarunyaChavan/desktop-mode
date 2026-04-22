@@ -1,8 +1,8 @@
-# Native Windows & Framework Interop — Phase 7 Proposal
+# Native Windows & Framework Interop
 
-**Status:** Planned · Draft for review · Not yet implemented as a public API.
+**Status:** Stable — shipped in 0.11.0. `wp_register_desktop_window()` and `wp_register_desktop_window_tab()` are the public PHP API; `wp.desktop.registerWindow()` is the JS counterpart. See [`examples/native-windows.md`](./examples/native-windows.md) and [`examples/native-window-with-tabs.md`](./examples/native-window-with-tabs.md) for working recipes.
 
-This document proposes the public contract for **native desktop windows** — windows whose content renders directly in the parent DOM instead of through an iframe — and the story for how plugins written with React, Vue, Svelte, Lit, or plain custom elements plug in without the shell taking a framework dependency.
+This document describes the public contract for **native desktop windows** — windows whose content renders directly in the parent DOM instead of through an iframe — and the story for how plugins written with React, Vue, Svelte, Lit, or plain custom elements plug in without the shell taking a framework dependency.
 
 The goal is to make one decision up front: **the shell's extension contract is the DOM, not a framework.** Every authoring style (render callback, Web Component, React mount, Vue app) reduces to "you are handed a DOM node, you own it." That keeps the shell's core small, portable, and future-proof, and lets plugin authors pick whatever tool they already know.
 

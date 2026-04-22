@@ -637,6 +637,106 @@ add_filter( 'wp_desktop_window_tabs', function ( $tabs, $window_id ) {
 
 ---
 
+### `wp_desktop_native_window_tab_wrap_padding` — Stable
+
+Overrides the inline padding (in pixels) of the auto-generated tab wrapper the shell injects around a multi-tab native window. Only fires when `wp_register_desktop_window_tab()` produces the auto-wrap (a native window with at least one additional tab); single-pane windows never see this filter. Return an integer number of pixels — the value is cast via `(int)` before being emitted as the wrapper's `padding` attribute, so CSS length strings like `'1.5rem'` will cast to `0`. Pass `0` for edge-to-edge content.
+
+```php
+apply_filters( 'wp_desktop_native_window_tab_wrap_padding', int $padding, string $window_id );
+```
+
+**Example — zero-pad one specific window's tab panels:**
+
+```php
+add_filter( 'wp_desktop_native_window_tab_wrap_padding', function ( $padding, $window_id ) {
+    return 'my-plugin/editor' === $window_id ? 0 : $padding;
+}, 10, 2 );
+```
+
+---
+
+## AI Copilot hooks — Stable
+
+The AI assistant (Cmd+K palette) runs an OpenAI agentic loop server-side, analyses entities on save, and exposes a search REST endpoint. Every decision point is hookable so plugins can adjust model selection, customise prompts, limit which entities get analysed, or react to analysis completion.
+
+### `wp_desktop_ai_model` — Stable
+
+Overrides the OpenAI model used per schema. Defaults to `'gpt-4o-mini'`. `$schema_name` identifies the call site (`'search'`, `'analyze_content'`, `'analyze_comment'`, etc.).
+
+```php
+apply_filters( 'wp_desktop_ai_model', string $model, string $schema_name );
+```
+
+```php
+add_filter( 'wp_desktop_ai_model', function ( $model, $schema ) {
+    return 'search' === $schema ? 'gpt-4o' : $model;
+}, 10, 2 );
+```
+
+### `wp_desktop_ai_supported_post_types` / `wp_desktop_ai_supported_taxonomies` — Stable
+
+Gate which post types and taxonomies receive auto-analysis on save. Defaults include `post`, `page`, and all public custom post types / taxonomies.
+
+```php
+apply_filters( 'wp_desktop_ai_supported_post_types', array $types );
+apply_filters( 'wp_desktop_ai_supported_taxonomies', array $taxonomies );
+```
+
+### `wp_desktop_ai_supported_types` — Stable
+
+Umbrella gate applied by the job scheduler (`wpdm_ai_schedule_job`). Return a subset of `[ 'post', 'term', 'comment' ]` to disable a whole entity class.
+
+```php
+apply_filters( 'wp_desktop_ai_supported_types', array $types );
+```
+
+### `wp_desktop_ai_schema_content` / `wp_desktop_ai_schema_comment` — Experimental
+
+Mutate the JSON Schema handed to OpenAI for structured-output post/term and comment analysis. Use this to add custom fields (brand voice scoring, compliance flags, …) the model should populate.
+
+```php
+apply_filters( 'wp_desktop_ai_schema_content', array $schema );
+apply_filters( 'wp_desktop_ai_schema_comment', array $schema );
+```
+
+### `wp_desktop_ai_post_prompt` / `wp_desktop_ai_term_prompt` / `wp_desktop_ai_comment_prompt` — Stable
+
+Customise the user-side prompt handed to the model per entity. Each filter receives the default prompt plus the entity object.
+
+```php
+apply_filters( 'wp_desktop_ai_post_prompt',    string $prompt, WP_Post    $post );
+apply_filters( 'wp_desktop_ai_term_prompt',    string $prompt, WP_Term    $term );
+apply_filters( 'wp_desktop_ai_comment_prompt', string $prompt, WP_Comment $comment );
+```
+
+### `wp_desktop_ai_post_analyzed` / `wp_desktop_ai_term_analyzed` / `wp_desktop_ai_comment_analyzed` — Stable
+
+Fire after a successful analysis. The result array contains the fields emitted by the schema (typically `summary`, `topics`, `sentiment`, `embedding`, …). Use these to mirror data into a custom index or trigger downstream jobs.
+
+```php
+do_action( 'wp_desktop_ai_post_analyzed',    int $post_id,    array $result, WP_Post    $post );
+do_action( 'wp_desktop_ai_term_analyzed',    int $term_id,    array $result, WP_Term    $term );
+do_action( 'wp_desktop_ai_comment_analyzed', int $comment_id, array $result, WP_Comment $comment );
+```
+
+### `wp_desktop_ai_admin_page_catalog` — Stable
+
+Last-chance filter over the catalog of admin pages the AI search tool can link to. Each entry is `{ id, title, url, description }`. Plugins that expose admin UIs typically inject their top-level pages here so the assistant can offer them as navigation results.
+
+```php
+apply_filters( 'wp_desktop_ai_admin_page_catalog', array $catalog );
+```
+
+### `wp_desktop_ai_error_log_candidates` — Experimental
+
+Filter the set of error candidates the AI exposes when the user asks about site health. Return an array of `{ message, source, timestamp }`.
+
+```php
+apply_filters( 'wp_desktop_ai_error_log_candidates', array $candidates );
+```
+
+---
+
 ## Planned (not yet fired)
 
 The filters and actions below are **reserved names** documented for forward compatibility. They will land with the phase indicated. Do not register listeners in production code until the status flips to Stable.
@@ -664,11 +764,11 @@ apply_filters( 'wp_desktop_dock_style',    array  $style );      // icon size, g
 ### Desktop area — Phase 4+
 ```php
 apply_filters( 'wp_desktop_wallpaper',    string $url,   string $color_scheme );
-apply_filters( 'wp_desktop_widgets',      array  $widgets );
 apply_filters( 'wp_desktop_context_menu', array  $menu_items );
-apply_filters( 'wp_desktop_icons',        array  $icons );
 apply_filters( 'wp_desktop_icon',         array  $icon_config, string $icon_id );
 ```
+
+> `wp_desktop_icons` and `wp_desktop_wallpapers` and the widget registry filter are **shipped** — see their Stable entries above. `wp_desktop_widgets` is not a PHP filter; the JS-side `wp-desktop.widgets` filter is the canonical hook (widgets are declared via `wp_register_desktop_widget()` server-side).
 
 ### Responsive — Phase 5–6
 ```php
@@ -679,11 +779,13 @@ apply_filters( 'wp_desktop_mobile_app_switcher', array  $cards );
 apply_filters( 'wp_desktop_tablet_split_config', array  $config );
 ```
 
-### Native windows — Phase 7
+### Native windows — reserved extensions
 ```php
 apply_filters( 'wp_desktop_native_windows',       array $windows );
 apply_filters( 'wp_desktop_native_window_config', array $window_config, string $window_id );
 ```
+
+> Native windows themselves are **shipped** (0.11.0) — plugins declare them with `wp_register_desktop_window()` and react via the Stable registration actions (`wp_desktop_native_window_registered`) and JS lifecycle hooks (`wp-desktop.native-window.before-render` / `after-render` / `before-close`). The two filter names above are reserved for a future read-only view of the registry and per-window config overrides.
 
 ### Drag & Drop — Phase 8
 ```php

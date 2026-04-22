@@ -14,7 +14,7 @@ Zero Core patches. Every feature is wired through public WordPress hooks.
 - **Dock** — icon-only vertical strip on the left edge, built from the admin `$menu` global, with badges and per-window submenu tab strips for in-window nav.
 - **Session persistence** — window stack (position, size, focus, state) is saved via a REST endpoint and rebuilt on next load, so layout survives reloads without a flash of default state.
 - **postMessage bridge** — typed contract between parent shell and iframes for title changes, navigation, focus, and color-scheme propagation.
-- **Public hook API** — filters and actions for dock items, window args, shell config, body classes, chromeless styles, and lifecycle events. Documented in [`wp-desktop-mode/docs/`](./wp-desktop-mode/docs/README.md).
+- **Public hook API** — filters and actions for dock items, window args, shell config, body classes, chromeless styles, and lifecycle events. Documented in [`docs/`](./docs/README.md).
 
 ## Where it's going
 
@@ -26,25 +26,23 @@ The plugin is mid-build. Phases 0–2 (opt-in, shell + single window, dock) have
 - **Phase 7** — **native windows** that render directly in the parent DOM (no iframe) via `wp_register_desktop_window()`. Validated by **Jorvy**, a tiny companion plugin (Marvel quotes, Hello-Dolly style) used as the end-to-end smoke test for the native-window API.
 - **Phase 8 — the North Star**: **cross-window drag and drop**. Drag a photo from the Media window directly into the Gutenberg editor in the Post window. Implemented as a coordinated `postMessage` "lift-and-drop" bridge, since browsers block cross-iframe native DnD.
 
-See [`wp-desktop-mode/docs/architecture.md`](./wp-desktop-mode/docs/architecture.md) for how the pieces fit together and [`wp-desktop-mode/docs/hooks-reference.md`](./wp-desktop-mode/docs/hooks-reference.md) for the hook surface (current and planned).
+See [`docs/architecture.md`](./docs/architecture.md) for how the pieces fit together and [`docs/hooks-reference.md`](./docs/hooks-reference.md) for the hook surface (current and planned).
 
 ---
 
 ## Repository layout
 
 ```
-alcazaba-plugin/
-├── README.md                        # (this file)
-└── wp-desktop-mode/                 # the plugin itself
-    ├── wp-desktop-mode.php          # bootstrap: header, constants, require_once of includes/
-    ├── includes/                    # PHP (helpers, ajax, admin-bar, assets, render, portal, session)
-    ├── assets/                      # compiled CSS + JS (Vite output)
-    ├── src/                         # TypeScript source — compiled by the plugin's own Vite
-    ├── docs/                        # developer-facing docs (source of truth for plugin authors)
-    ├── tests/phpunit/               # PHPUnit, @group desktop-mode
-    ├── package.json                 # plugin-local devDeps (vite, typescript)
-    ├── vite.config.js               # Vite lib-mode: src/desktop.ts → assets/js/desktop[.min].js (IIFE)
-    └── tsconfig.json
+.
+├── wp-desktop-mode.php    # bootstrap: header, constants, require_once of includes/
+├── includes/              # PHP (helpers, ajax, admin-bar, assets, render, portal, session)
+├── assets/                # compiled CSS + JS (Vite output)
+├── src/                   # TypeScript source — compiled by Vite
+├── docs/                  # developer-facing docs (source of truth for plugin authors)
+├── tests/phpunit/         # PHPUnit, @group desktop-mode
+├── package.json           # devDeps (vite, typescript)
+├── vite.config.js         # Vite lib-mode: src/desktop.ts → assets/js/desktop[.min].js (IIFE)
+└── tsconfig.json
 ```
 
 ---
@@ -53,10 +51,7 @@ alcazaba-plugin/
 
 ### 1. Install dependencies
 
-From the plugin directory:
-
 ```bash
-cd wp-desktop-mode
 npm install
 ```
 
@@ -91,15 +86,13 @@ You need a running WordPress for the plugin to load into. Pick whichever is easi
 
 Works with any WordPress you already have: [Studio by WordPress.com](https://developer.wordpress.com/studio/), [`wp-env`](https://developer.wordpress.org/block-editor/reference-guides/packages/packages-env/), or a hosted site.
 
-From the parent `alcazaba-plugin/` directory, build and package the plugin:
+Package the repo as a plugin zip:
 
 ```bash
-( cd wp-desktop-mode && npm run build )
-zip -r wp-desktop-mode.zip wp-desktop-mode \
-  -x 'wp-desktop-mode/node_modules/*' \
-     'wp-desktop-mode/tests/*' \
-     'wp-desktop-mode/.git/*'
+git archive --format=zip --prefix=wp-desktop-mode/ -o wp-desktop-mode.zip HEAD
 ```
+
+> Uses the last committed state. If you changed source, run `npm run build` and commit the regenerated `assets/js/desktop*.js` first — they're tracked.
 
 Then in WP Admin go to **Plugins → Add New → Upload Plugin**, choose `wp-desktop-mode.zip`, and activate. Skip ahead to [§4 Activate & toggle](#4-activate--toggle).
 
@@ -116,7 +109,7 @@ cd wordpress-develop
 npm install
 
 # symlink this plugin into the WP plugins directory
-ln -s "$(pwd)/../alcazaba-plugin/wp-desktop-mode" src/wp-content/plugins/wp-desktop-mode
+ln -s "$(pwd)/../alcazaba-plugin" src/wp-content/plugins/wp-desktop-mode
 
 # boot + install WordPress
 npm run env:start      # nginx + PHP + MySQL in Docker
@@ -139,8 +132,6 @@ Stop the environment with `npm run env:stop` (from the `wordpress-develop` direc
 Click the same icon again to return to classic admin.
 
 ### 5. Run the tests
-
-From the plugin directory:
 
 ```bash
 npm run test:php        # PHPUnit, @group desktop-mode
@@ -166,15 +157,15 @@ docker exec wordpress-alcazaba-php-1 bash -c \
 
 **This plugin is built to be extended.** Every significant behavior is hookable — drop an icon on the desktop, add a dock item, gate desktop mode by role, react to window events, or register a native window, all from your own plugin with zero patches here.
 
-**See [`wp-desktop-mode/docs/`](./wp-desktop-mode/docs/README.md) — the developer documentation index.**
+**See [`docs/`](./docs/README.md) — the developer documentation index.**
 
 Quick links:
 
-- [Getting Started](./wp-desktop-mode/docs/getting-started.md) — the five-minute tour for plugin authors.
-- [Architecture](./wp-desktop-mode/docs/architecture.md) — how the pieces fit together.
-- [Hooks Reference](./wp-desktop-mode/docs/hooks-reference.md) — every action and filter we fire, with signatures and examples.
-- [JavaScript Reference](./wp-desktop-mode/docs/javascript-reference.md) — CustomEvents, `window.wp.desktop` API, and the iframe `postMessage` bridge.
-- [Examples](./wp-desktop-mode/docs/examples/) — copy-paste recipes.
+- [Getting Started](./docs/getting-started.md) — the five-minute tour for plugin authors.
+- [Architecture](./docs/architecture.md) — how the pieces fit together.
+- [Hooks Reference](./docs/hooks-reference.md) — every action and filter we fire, with signatures and examples.
+- [JavaScript Reference](./docs/javascript-reference.md) — CustomEvents, `window.wp.desktop` API, and the iframe `postMessage` bridge.
+- [Examples](./docs/examples/) — copy-paste recipes.
 
 ## License
 

@@ -883,6 +883,113 @@ function wpdm_chromeless_bridge_script() {
 		}
 	}, true );
 
+	/*
+	 * Cmd+K / Ctrl+K forwarder — double-press to escalate.
+	 *
+	 * Native keydown events don't cross iframe boundaries, so without
+	 * this shim the parent shell's Cmd+K handler never fires while
+	 * focus lives inside a chromeless iframe. We don't want to
+	 * override in-page command palettes (Gutenberg's block insert,
+	 * TinyMCE's quick menus, plugin launchers) — users installed those
+	 * for a reason. Behaviour we want instead:
+	 *
+	 *   1st press → let the in-page handler run. Nothing interrupts.
+	 *   2nd press (within DOUBLE_WINDOW ms) → escalate: preventDefault,
+	 *   stopImmediatePropagation, and postMessage the parent to advance
+	 *   the shell palette cycle. The in-page palette that opened on
+	 *   the first press is already visible; our cycle treats that as
+	 *   the "current" slot and rotates to the next.
+	 *
+	 * Plain admin pages without their own Cmd+K handler still need two
+	 * presses to reach our palette — minor trade-off, offset by the
+	 * "Ask AI ⌘K" admin-bar button which is always a one-click path.
+	 *
+	 * Shift/Alt modifiers are NEVER intercepted so user shortcuts using
+	 * those combos keep working.
+	 */
+	( function () {
+		var DOUBLE_WINDOW = 600; // ms
+		var lastPress = 0;
+
+		document.addEventListener( 'keydown', function ( e ) {
+			if ( ! ( e.metaKey || e.ctrlKey ) ) return;
+			if ( e.key !== 'k' && e.key !== 'K' ) return;
+			if ( e.shiftKey || e.altKey ) return;
+
+			var now = Date.now();
+			var isDouble = ( now - lastPress ) < DOUBLE_WINDOW;
+			lastPress = now;
+
+			if ( ! isDouble ) {
+				// First press — leave the event alone so the iframe's
+				// own Cmd+K handler (Gutenberg, TinyMCE, plugin) can
+				// react natively.
+				return;
+			}
+
+			// Second press within the window — escalate.
+			e.preventDefault();
+			e.stopImmediatePropagation();
+			// Reset so a third press restarts the "first" cycle rather
+			// than triggering another instant escalation.
+			lastPress = 0;
+
+			// Dismiss whatever in-page palette the FIRST press opened.
+			// Gutenberg's command palette, TinyMCE menus, and most WP
+			// `@wordpress/components` modals all close on Escape — so
+			// we synthesise one. We fire it twice:
+			//
+			//   (a) Immediately — handles the common case where the
+			//       first press's palette already rendered.
+			//
+			//   (b) On the next animation frame — handles the fast
+			//       double-press race where the first palette hadn't
+			//       painted yet when the second press arrived. By the
+			//       next frame it has, and Escape dismisses it.
+			//
+			// If the in-page UI doesn't listen for Escape there's no
+			// harm — the synthetic event dispatches into a document
+			// that ignores it. Worst case the two palettes briefly
+			// overlap; they won't both capture the keyboard because
+			// focus has already followed the escalation to the parent.
+			function closeInPagePalette() {
+				try {
+					var ev = new KeyboardEvent( 'keydown', {
+						key:        'Escape',
+						code:       'Escape',
+						keyCode:    27,
+						which:      27,
+						bubbles:    true,
+						cancelable: true
+					} );
+					document.dispatchEvent( ev );
+					// Matching keyup — some handlers bind to keyup, not
+					// keydown, so fire both for safety.
+					var up = new KeyboardEvent( 'keyup', {
+						key:        'Escape',
+						code:       'Escape',
+						keyCode:    27,
+						which:      27,
+						bubbles:    true,
+						cancelable: true
+					} );
+					document.dispatchEvent( up );
+				} catch ( err ) { /* swallow */ }
+			}
+			closeInPagePalette();
+			if ( typeof requestAnimationFrame === 'function' ) {
+				requestAnimationFrame( closeInPagePalette );
+			}
+
+			try {
+				window.parent.postMessage(
+					{ type: 'wp-desktop-palette-cycle' },
+					window.location.origin
+				);
+			} catch ( err ) { /* cross-origin parent; swallow */ }
+		}, true );
+	} )();
+
 	var links = document.getElementById( 'screen-meta-links' );
 	if ( ! links ) {
 		return;

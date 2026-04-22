@@ -544,6 +544,62 @@ export const HOOKS = {
 	DESKTOP_CLOSED: 'wp-desktop.desktop.closed',
 	/** Action, fires when the active desktop changes. Payload `{ from, to }`. */
 	DESKTOP_SWITCHED: 'wp-desktop.desktop.switched',
+	/**
+	 * Filter. Returns the id of the "primary" desktop — the one the
+	 * shell treats as canonical for batch operations. Receives the
+	 * default (first desktop's id) and the full `Desktop[]` list.
+	 * @since 0.14.0
+	 */
+	PRIMARY_DESKTOP_ID: 'wp-desktop.primary-desktop-id',
+
+	// ------------------------------------------------------------------
+	// Batch window operations.
+	// ------------------------------------------------------------------
+	/**
+	 * Action, fires before {@link WindowManager.closeAll} starts
+	 * iterating. Payload `{ candidates: Window[] }` — every window the
+	 * shell is about to close (after `exceptIds` was applied).
+	 * @since 0.14.0
+	 */
+	WINDOWS_BEFORE_CLOSE_ALL: 'wp-desktop.windows.before-close-all',
+	/**
+	 * Filter, runs inside {@link WindowManager.closeAll}. Receives the
+	 * candidate `Window[]` list and returns the (possibly trimmed) list
+	 * that will actually be closed. Plugins use this to PROTECT specific
+	 * windows from a bulk close — e.g. keep the active draft open.
+	 * Returning an empty array cancels the close entirely.
+	 * @since 0.14.0
+	 */
+	WINDOWS_CLOSE_ALL: 'wp-desktop.windows.close-all',
+	/**
+	 * Action, fires after {@link WindowManager.closeAll} has finished.
+	 * Payload `{ closed: number, skipped: Window[] }`.
+	 * @since 0.14.0
+	 */
+	WINDOWS_AFTER_CLOSE_ALL: 'wp-desktop.windows.after-close-all',
+
+	// ------------------------------------------------------------------
+	// Slash-command lifecycle.
+	// ------------------------------------------------------------------
+	/**
+	 * Filter. Runs immediately before a command's `run()` is invoked.
+	 * Receives `{ proceed: true, slug, args, command }` and may return
+	 * the same shape with `proceed: false` to cancel the run.
+	 * @since 0.14.0
+	 */
+	COMMAND_BEFORE_RUN: 'wp-desktop.command.before-run',
+	/**
+	 * Action, fires after a command's `run()` resolves successfully.
+	 * Payload `{ slug, args, command, result }`.
+	 * @since 0.14.0
+	 */
+	COMMAND_AFTER_RUN: 'wp-desktop.command.after-run',
+	/**
+	 * Action, fires when a command's `run()` throws. Payload
+	 * `{ slug, args, command, error }`.
+	 * @since 0.14.0
+	 */
+	COMMAND_ERROR: 'wp-desktop.command.error',
 
 	// ------------------------------------------------------------------
 	// Shell-level lifecycle actions.
@@ -565,10 +621,21 @@ export const HOOKS = {
 } as const;
 
 /**
+ * Monotonic counter used to build a unique `addAction` namespace for
+ * every `whenReady()` call. Using a fixed namespace (as a pre-0.14.0
+ * bug did) meant two plugins calling `whenReady()` silently clobbered
+ * each other — `wp.hooks.addAction` treats namespace as a de-dup key.
+ */
+let _whenReadySeq = 0;
+
+/**
  * Convenience: run `cb` after `wp-desktop.init` has fired, either
  * immediately (if it already did) or on the next firing. Mirrors the
  * ergonomics of `jQuery(document).ready()` but for our own init
  * signal — a late-enqueued plugin script doesn't miss the boat.
+ *
+ * Each call registers under a unique namespace so multiple plugins
+ * can register their ready-callbacks without overwriting each other.
  */
 export function whenReady( cb: () => void ): void {
 	if ( didAction( HOOKS.INIT ) > 0 ) {
@@ -577,5 +644,25 @@ export function whenReady( cb: () => void ): void {
 		Promise.resolve().then( cb );
 		return;
 	}
-	addAction( HOOKS.INIT, 'wp-desktop-mode/when-ready', cb );
+	const ns = `wp-desktop-mode/when-ready-${ ++_whenReadySeq }`;
+	addAction( HOOKS.INIT, ns, cb );
+}
+
+/**
+ * Synchronous check: has the shell finished initialising? Returns true
+ * after `wp-desktop.init` has fired, false before. Useful for plugin
+ * code that wants to branch without scheduling a callback.
+ *
+ * ```javascript
+ * if ( wp.desktop.isReady() ) {
+ *     wp.desktop.registerCommand( { ... } );
+ * } else {
+ *     wp.desktop.whenReady( () => wp.desktop.registerCommand( { ... } ) );
+ * }
+ * ```
+ *
+ * @since 0.14.0
+ */
+export function isReady(): boolean {
+	return didAction( HOOKS.INIT ) > 0;
 }

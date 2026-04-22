@@ -109,6 +109,14 @@ export function hashTitleToHue( title: string ): number {
  * tooltip positioning differ.
  */
 export class Dock {
+	/**
+	 * Monotonic instance counter used to build unique hook-registration
+	 * namespaces for each `Dock`. Without this, the left dock and the
+	 * bottom taskbar would share a namespace and WP's `addAction`
+	 * de-dup would silently drop whichever registered first.
+	 */
+	private static _instanceSeq = 0;
+
 	private container: HTMLElement;
 	private windowManager: WindowManager;
 	private items: DockItem[];
@@ -717,14 +725,23 @@ export class Dock {
 		// the active desktop" even though the stack is unchanged.
 		// Listen via the hook bus so a plugin that manually calls
 		// switchDesktop() also triggers a repaint.
+		//
+		// Namespace is unique per Dock instance because we have TWO
+		// (left dock + bottom taskbar); a shared static namespace was
+		// causing wp.hooks.addAction's de-dup to drop whichever
+		// registered first, leaving one of the two docks stale on
+		// desktop switch. The orientation plus a monotonic counter
+		// guarantees uniqueness without losing the "where did this
+		// come from?" debuggability of a readable namespace.
+		const ns = `wp-desktop-mode/dock-${ this.orientation }-${ ++Dock._instanceSeq }`;
 		window.wp?.hooks?.addAction?.(
 			'wp-desktop.desktop.switched',
-			'wp-desktop-mode/dock',
+			ns,
 			refresh,
 		);
 		window.wp?.hooks?.addAction?.(
 			'wp-desktop.desktop.closed',
-			'wp-desktop-mode/dock',
+			ns,
 			refresh,
 		);
 	}

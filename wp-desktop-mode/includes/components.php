@@ -1681,3 +1681,71 @@ function wpdm_render_native_window_templates() {
 	}
 }
 add_action( 'admin_footer', 'wpdm_render_native_window_templates', 20 );
+
+/**
+ * Enqueue a plugin script that extends the desktop shell.
+ *
+ * Thin wrapper around `wp_enqueue_script` that pre-wires the correct
+ * dependencies so the script:
+ *
+ *   - Runs AFTER `wp-desktop` (the shell bundle) so `wp.desktop.*` is
+ *     guaranteed available.
+ *   - Runs AFTER `wp-hooks` so `wp.hooks.addAction( 'wp-desktop.init', ... )`
+ *     works without the plugin author having to remember that dep.
+ *   - Is only enqueued in the admin (shell only boots there).
+ *
+ * Drop-in replacement for the boilerplate:
+ *
+ * ```php
+ * add_action( 'admin_enqueue_scripts', function () {
+ *     wp_enqueue_script(
+ *         'my-plugin',
+ *         plugins_url( 'my-plugin.js', __FILE__ ),
+ *         array( 'wp-desktop', 'wp-hooks' ),
+ *         '1.0.0',
+ *         true
+ *     );
+ * } );
+ * ```
+ *
+ * which becomes:
+ *
+ * ```php
+ * add_action( 'admin_enqueue_scripts', function () {
+ *     wp_enqueue_desktop_script(
+ *         'my-plugin',
+ *         plugins_url( 'my-plugin.js', __FILE__ ),
+ *         array(),           // extra deps on top of the desktop defaults
+ *         '1.0.0'
+ *     );
+ * } );
+ * ```
+ *
+ * @since 0.14.0
+ *
+ * @param string          $handle    Script handle.
+ * @param string          $src       Full URL of the script, or path relative
+ *                                   to the WordPress root directory.
+ * @param string[]        $extra_deps Additional dependency handles. `wp-desktop`
+ *                                   and `wp-hooks` are always prepended.
+ * @param string|bool|null $version  Version string, or `false` for none.
+ *                                   Defaults to `WPDM_VERSION` so plugin authors
+ *                                   don't have to busy-track cache busting.
+ * @param bool            $in_footer Whether to enqueue in the footer. Defaults
+ *                                   to `true` — the shell is always in head.
+ * @return void
+ */
+function wp_enqueue_desktop_script( $handle, $src, $extra_deps = array(), $version = null, $in_footer = true ) {
+	$deps = array_merge(
+		array( 'wp-desktop', 'wp-hooks' ),
+		is_array( $extra_deps ) ? $extra_deps : array()
+	);
+
+	wp_enqueue_script(
+		$handle,
+		$src,
+		$deps,
+		null === $version ? WPDM_VERSION : $version,
+		$in_footer
+	);
+}

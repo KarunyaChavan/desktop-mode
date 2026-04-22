@@ -54,6 +54,22 @@ export interface CommandContext {
 	 * @param icon  Optional Dashicons class for the window tile.
 	 */
 	openInWindow( url: string, title: string, icon?: string ): void;
+	/**
+	 * Ask the user to confirm a destructive action. Returns a Promise
+	 * resolving to `true` if they accept, `false` otherwise.
+	 *
+	 * Use this from any command whose `run()` would do something
+	 * irreversible — closing all windows, deleting content, switching
+	 * destructive settings. The default implementation uses the
+	 * browser's native `confirm()` dialog; the shell may swap a custom
+	 * UI in later (the contract — Promise<boolean> — won't change).
+	 *
+	 * @since 0.14.0
+	 *
+	 * @param message    Headline question, short and direct.
+	 * @param details    Optional secondary line shown below the message.
+	 */
+	confirm( message: string, details?: string ): Promise< boolean >;
 	/** Show a toast / ephemeral message (future). Currently a no-op. */
 	notify?: ( message: string ) => void;
 }

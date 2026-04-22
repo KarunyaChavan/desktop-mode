@@ -400,6 +400,60 @@ var wpDesktop = function(exports) {
     DESKTOP_CLOSED: "wp-desktop.desktop.closed",
     /** Action, fires when the active desktop changes. Payload `{ from, to }`. */
     DESKTOP_SWITCHED: "wp-desktop.desktop.switched",
+    /**
+     * Filter. Returns the id of the "primary" desktop — the one the
+     * shell treats as canonical for batch operations. Receives the
+     * default (first desktop's id) and the full `Desktop[]` list.
+     * @since 0.14.0
+     */
+    PRIMARY_DESKTOP_ID: "wp-desktop.primary-desktop-id",
+    // ------------------------------------------------------------------
+    // Batch window operations.
+    // ------------------------------------------------------------------
+    /**
+     * Action, fires before {@link WindowManager.closeAll} starts
+     * iterating. Payload `{ candidates: Window[] }` — every window the
+     * shell is about to close (after `exceptIds` was applied).
+     * @since 0.14.0
+     */
+    WINDOWS_BEFORE_CLOSE_ALL: "wp-desktop.windows.before-close-all",
+    /**
+     * Filter, runs inside {@link WindowManager.closeAll}. Receives the
+     * candidate `Window[]` list and returns the (possibly trimmed) list
+     * that will actually be closed. Plugins use this to PROTECT specific
+     * windows from a bulk close — e.g. keep the active draft open.
+     * Returning an empty array cancels the close entirely.
+     * @since 0.14.0
+     */
+    WINDOWS_CLOSE_ALL: "wp-desktop.windows.close-all",
+    /**
+     * Action, fires after {@link WindowManager.closeAll} has finished.
+     * Payload `{ closed: number, skipped: Window[] }`.
+     * @since 0.14.0
+     */
+    WINDOWS_AFTER_CLOSE_ALL: "wp-desktop.windows.after-close-all",
+    // ------------------------------------------------------------------
+    // Slash-command lifecycle.
+    // ------------------------------------------------------------------
+    /**
+     * Filter. Runs immediately before a command's `run()` is invoked.
+     * Receives `{ proceed: true, slug, args, command }` and may return
+     * the same shape with `proceed: false` to cancel the run.
+     * @since 0.14.0
+     */
+    COMMAND_BEFORE_RUN: "wp-desktop.command.before-run",
+    /**
+     * Action, fires after a command's `run()` resolves successfully.
+     * Payload `{ slug, args, command, result }`.
+     * @since 0.14.0
+     */
+    COMMAND_AFTER_RUN: "wp-desktop.command.after-run",
+    /**
+     * Action, fires when a command's `run()` throws. Payload
+     * `{ slug, args, command, error }`.
+     * @since 0.14.0
+     */
+    COMMAND_ERROR: "wp-desktop.command.error",
     // ------------------------------------------------------------------
     // Shell-level lifecycle actions.
     // ------------------------------------------------------------------
@@ -418,12 +472,17 @@ var wpDesktop = function(exports) {
      */
     SHELL_VISIBILITY: "wp-desktop.shell.visibility"
   };
+  let _whenReadySeq = 0;
   function whenReady(cb) {
     if (didAction(HOOKS.INIT) > 0) {
       Promise.resolve().then(cb);
       return;
     }
-    addAction(HOOKS.INIT, "wp-desktop-mode/when-ready", cb);
+    const ns = `wp-desktop-mode/when-ready-${++_whenReadySeq}`;
+    addAction(HOOKS.INIT, ns, cb);
+  }
+  function isReady() {
+    return didAction(HOOKS.INIT) > 0;
   }
   const TEXT_DOMAIN = "wp-desktop-mode";
   function i18n() {
@@ -4846,6 +4905,88 @@ var wpDesktop = function(exports) {
     closeDesktop(id) {
       closeDesktop(this, id);
     }
+    /**
+     * Returns the "primary" desktop id — the one new sessions land on
+     * and that batch operations like {@link closeAll} treat as the
+     * survivor when an `onlyOnPrimary` mode is requested.
+     *
+     * Default: the first desktop in `getDesktops()`. Filterable via
+     * `wp-desktop.primary-desktop-id` so downstream code that wants a
+     * different convention (e.g. a pinned "Inbox" desktop) can override
+     * without having to fork the manager.
+     *
+     * @since 0.14.0
+     */
+    getPrimaryDesktopId() {
+      const all2 = this.getDesktops();
+      const fallback = all2.length > 0 ? all2[0].id : "desktop-1";
+      const filtered = applyFilters(
+        HOOKS.PRIMARY_DESKTOP_ID,
+        fallback,
+        all2
+      );
+      if (typeof filtered !== "string" || filtered === "") {
+        return fallback;
+      }
+      const exists = all2.some((d) => d.id === filtered);
+      return exists ? filtered : fallback;
+    }
+    /**
+     * Close every open window in batch.
+     *
+     * Hook chain:
+     *
+     *   1. `wp-desktop.windows.before-close-all` — action. Subscribers
+     *      can prepare for the wipe (cancel pending saves, dismiss
+     *      menus, etc.). Detail: `{ candidates: Window[] }`.
+     *
+     *   2. `wp-desktop.windows.close-all` — filter. Receives the
+     *      candidate Window list and returns the (possibly smaller) list
+     *      that will actually be closed. Plugins use this to PROTECT
+     *      specific windows — e.g. keep a draft post window open during
+     *      a "Close all" operation. Returning an empty array cancels
+     *      the close entirely.
+     *
+     *   3. Each surviving window's `close()` is called.
+     *
+     *   4. `wp-desktop.windows.after-close-all` — action. Detail:
+     *      `{ closed: number, skipped: Window[] }`.
+     *
+     * @since 0.14.0
+     *
+     * @param options.exceptIds  Window ids to skip even before the filter runs.
+     * @returns Number of windows actually closed.
+     */
+    closeAll(options) {
+      const exceptSet = new Set(options?.exceptIds ?? []);
+      const initialCandidates = this._stack.filter(
+        (w) => !exceptSet.has(w.id)
+      );
+      doAction(HOOKS.WINDOWS_BEFORE_CLOSE_ALL, { candidates: initialCandidates });
+      const filtered = applyFilters(
+        HOOKS.WINDOWS_CLOSE_ALL,
+        initialCandidates
+      );
+      const finalList = Array.isArray(filtered) ? filtered : initialCandidates;
+      const skipped = initialCandidates.filter((w) => !finalList.includes(w));
+      let closed = 0;
+      for (const win of finalList.slice()) {
+        try {
+          win.close();
+          closed++;
+        } catch (err) {
+          if (typeof console !== "undefined") {
+            console.error(
+              "[wp-desktop-mode] closeAll: window.close() threw for",
+              win.id,
+              err
+            );
+          }
+        }
+      }
+      doAction(HOOKS.WINDOWS_AFTER_CLOSE_ALL, { closed, skipped });
+      return closed;
+    }
     // ---- Arrange + snap delegations ----
     cascade() {
       cascade(this);
@@ -4963,7 +5104,7 @@ var wpDesktop = function(exports) {
     }
     return (hash % 360 + 360) % 360;
   }
-  class Dock {
+  const _Dock = class _Dock {
     constructor(container, windowManager, items, adminUrl, orientation = "left") {
       this.itemElements = /* @__PURE__ */ new Map();
       this.systemItems = [];
@@ -5430,14 +5571,15 @@ var wpDesktop = function(exports) {
       document.addEventListener("wp-desktop-window-opened", refresh);
       document.addEventListener("wp-desktop-window-closed", refresh);
       document.addEventListener("wp-desktop-window-focused", refresh);
+      const ns = `wp-desktop-mode/dock-${this.orientation}-${++_Dock._instanceSeq}`;
       window.wp?.hooks?.addAction?.(
         "wp-desktop.desktop.switched",
-        "wp-desktop-mode/dock",
+        ns,
         refresh
       );
       window.wp?.hooks?.addAction?.(
         "wp-desktop.desktop.closed",
-        "wp-desktop-mode/dock",
+        ns,
         refresh
       );
     }
@@ -5487,7 +5629,9 @@ var wpDesktop = function(exports) {
         tile2.classList.toggle("wp-desktop-dock__item--focused", isFocused);
       }
     }
-  }
+  };
+  _Dock._instanceSeq = 0;
+  let Dock = _Dock;
   const styles$h = css`
 	:host {
 		display: block;
@@ -7782,24 +7926,24 @@ var wpDesktop = function(exports) {
     } else {
       seed$1.push(def);
     }
-    notify$1();
+    notify$2();
   }
   function unregister$1(id) {
     const idx = seed$1.findIndex((w) => w.id === id);
     if (idx >= 0) {
       seed$1.splice(idx, 1);
-      notify$1();
+      notify$2();
     }
   }
-  const listeners$1 = /* @__PURE__ */ new Set();
+  const listeners$2 = /* @__PURE__ */ new Set();
   function subscribe(cb) {
-    listeners$1.add(cb);
+    listeners$2.add(cb);
     return () => {
-      listeners$1.delete(cb);
+      listeners$2.delete(cb);
     };
   }
-  function notify$1() {
-    const snapshot = Array.from(listeners$1);
+  function notify$2() {
+    const snapshot = Array.from(listeners$2);
     for (const cb of snapshot) {
       try {
         cb();
@@ -11025,7 +11169,7 @@ var wpDesktop = function(exports) {
     }
   }
   const registry = /* @__PURE__ */ new Map();
-  const listeners = /* @__PURE__ */ new Set();
+  const listeners$1 = /* @__PURE__ */ new Set();
   function registerCommand(cmd) {
     if (!cmd || typeof cmd.slug !== "string" || cmd.slug.trim() === "") {
       return;
@@ -11047,11 +11191,11 @@ var wpDesktop = function(exports) {
       return;
     }
     registry.set(slug, { ...cmd, slug });
-    notify();
+    notify$1();
   }
   function unregisterCommand(slug) {
     if (registry.delete(slug.toLowerCase())) {
-      notify();
+      notify$1();
     }
   }
   function listCommands() {
@@ -11070,13 +11214,13 @@ var wpDesktop = function(exports) {
     );
   }
   function subscribeCommands(cb) {
-    listeners.add(cb);
+    listeners$1.add(cb);
     return () => {
-      listeners.delete(cb);
+      listeners$1.delete(cb);
     };
   }
-  function notify() {
-    const snapshot = Array.from(listeners);
+  function notify$1() {
+    const snapshot = Array.from(listeners$1);
     for (const cb of snapshot) {
       try {
         cb();
@@ -11247,12 +11391,6 @@ var wpDesktop = function(exports) {
     // Events
     // ------------------------------------------------------------------
     _bindEvents() {
-      document.addEventListener("keydown", (e) => {
-        if ((e.metaKey || e.ctrlKey) && e.key === "k" && !e.shiftKey && !e.altKey) {
-          e.preventDefault();
-          this.toggle();
-        }
-      }, true);
       this._el.addEventListener("keydown", (e) => {
         if (e.key === "Escape") {
           e.stopPropagation();
@@ -11393,26 +11531,63 @@ var wpDesktop = function(exports) {
      */
     async _runCommand(cmd, args) {
       if (this._isSearching) return;
+      const gate = applyFilters(HOOKS.COMMAND_BEFORE_RUN, {
+        proceed: true,
+        slug: cmd.slug,
+        args,
+        command: cmd
+      });
+      if (gate && gate.proceed === false) {
+        this._showError(
+          gate.reason ?? `Command /${cmd.slug} was cancelled.`
+        );
+        return;
+      }
       this._isSearching = true;
       this._submitBtn.disabled = true;
       this._input.disabled = true;
       this._showThinking(`Running /${cmd.slug}…`);
       const ctx = {
         close: () => this.close(),
-        openInWindow: (url, title, icon) => this._openInLegacyWindow(url, title, icon)
+        openInWindow: (url, title, icon) => this._openInLegacyWindow(url, title, icon),
+        confirm: (msg, details) => this._confirm(msg, details)
       };
       try {
         const result = await Promise.resolve(cmd.run(args, ctx));
         this._renderCommandResult(cmd, result);
+        doAction(HOOKS.COMMAND_AFTER_RUN, {
+          slug: cmd.slug,
+          args,
+          command: cmd,
+          result
+        });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         this._showError(`Command /${cmd.slug} failed: ${msg}`);
+        doAction(HOOKS.COMMAND_ERROR, {
+          slug: cmd.slug,
+          args,
+          command: cmd,
+          error: err
+        });
       } finally {
         this._isSearching = false;
         this._submitBtn.disabled = false;
         this._input.disabled = false;
         this._input.focus();
       }
+    }
+    /**
+     * Default `ctx.confirm()` — uses the browser's native confirm
+     * dialog. Combined message + details into one string because
+     * window.confirm() only takes one. The shell can swap a custom
+     * dialog in later (the Promise<boolean> contract is stable).
+     */
+    _confirm(message, details) {
+      const text = details ? `${message}
+
+${details}` : message;
+      return Promise.resolve(window.confirm(text));
     }
     /**
      * Render the value returned by a command. A `void` return means
@@ -11661,7 +11836,8 @@ var wpDesktop = function(exports) {
       const myToken = ++this._suggestToken;
       const ctx = {
         close: () => this.close(),
-        openInWindow: (url, title, icon) => this._openInLegacyWindow(url, title, icon)
+        openInWindow: (url, title, icon) => this._openInLegacyWindow(url, title, icon),
+        confirm: (msg, details) => this._confirm(msg, details)
       };
       let result;
       try {
@@ -12093,6 +12269,122 @@ var wpDesktop = function(exports) {
   };
   function registerBuiltInCommands() {
     registerCommand(openCommand);
+  }
+  const palettes = [];
+  const listeners = /* @__PURE__ */ new Set();
+  function registerPalette(p) {
+    if (!p || typeof p.id !== "string" || p.id === "") {
+      return () => {
+      };
+    }
+    if (typeof p.open !== "function" || typeof p.close !== "function" || typeof p.isOpen !== "function") {
+      return () => {
+      };
+    }
+    const idx = palettes.findIndex((x) => x.id === p.id);
+    if (idx >= 0) {
+      palettes[idx] = p;
+    } else {
+      palettes.push(p);
+    }
+    notify();
+    return () => {
+      const i = palettes.findIndex((x) => x.id === p.id);
+      if (i >= 0) {
+        palettes.splice(i, 1);
+        notify();
+      }
+    };
+  }
+  function unregisterPalette(id) {
+    const idx = palettes.findIndex((x) => x.id === id);
+    if (idx >= 0) {
+      palettes.splice(idx, 1);
+      notify();
+    }
+  }
+  function listPalettes() {
+    return palettes.slice();
+  }
+  function notify() {
+    for (const cb of Array.from(listeners)) {
+      try {
+        cb();
+      } catch (err) {
+        if (typeof console !== "undefined") {
+          console.error("[wp-desktop-mode] palette-registry listener threw:", err);
+        }
+      }
+    }
+  }
+  function cyclePalettes() {
+    if (palettes.length === 0) {
+      return;
+    }
+    const cur = palettes.findIndex((p) => {
+      try {
+        return p.isOpen();
+      } catch {
+        return false;
+      }
+    });
+    if (cur === -1) {
+      try {
+        palettes[0].open();
+      } catch {
+      }
+      return;
+    }
+    try {
+      palettes[cur].close();
+    } catch {
+    }
+    const next = cur + 1;
+    if (next < palettes.length) {
+      try {
+        palettes[next].open();
+      } catch {
+      }
+    }
+  }
+  function openPaletteOnly(id) {
+    const target = palettes.find((p) => p.id === id);
+    if (!target) return;
+    for (const p of palettes) {
+      if (p.id !== id) {
+        try {
+          if (p.isOpen()) p.close();
+        } catch {
+        }
+      }
+    }
+    try {
+      target.open();
+    } catch {
+    }
+  }
+  let installed = false;
+  function installPaletteShortcut() {
+    if (installed) return;
+    installed = true;
+    document.addEventListener(
+      "keydown",
+      (e) => {
+        if (!(e.metaKey || e.ctrlKey) || e.key !== "k") return;
+        if (e.shiftKey || e.altKey) return;
+        e.preventDefault();
+        cyclePalettes();
+      },
+      true
+    );
+    const origin = window.location.origin;
+    window.addEventListener("message", (e) => {
+      if (e.origin !== origin) return;
+      const data = e.data;
+      if (data && data.type === "wp-desktop-palette-cycle") {
+        cyclePalettes();
+      }
+    });
   }
   const clock = {
     id: "clock",
@@ -12716,6 +13008,17 @@ var wpDesktop = function(exports) {
       restNonce: config.restNonce
     });
     const dragBridge = new DragBridge();
+    registerPalette({
+      id: "wp-desktop-ai-assistant",
+      label: "AI Assistant",
+      open: () => aiAssistant.open(),
+      close: () => aiAssistant.close(),
+      isOpen: () => aiAssistant.isOpen
+    });
+    installPaletteShortcut();
+    document.addEventListener("wp-desktop-open-ai", () => {
+      openPaletteOnly("wp-desktop-ai-assistant");
+    });
     const dockEl = document.getElementById("wp-desktop-dock");
     let dock = null;
     if (dockEl && config.dockItems) {
@@ -12929,6 +13232,7 @@ var wpDesktop = function(exports) {
       registerModule,
       loadModules,
       whenReady,
+      isReady,
       setDefaultWindow,
       refreshMenu,
       config,
@@ -12936,7 +13240,11 @@ var wpDesktop = function(exports) {
       dragBridge,
       registerCommand,
       unregisterCommand,
-      listCommands
+      listCommands,
+      registerPalette,
+      unregisterPalette,
+      listPalettes,
+      openPalette: openPaletteOnly
     };
     doAction(HOOKS.COMPONENTS_REGISTERED, { tags: [...WPD_COMPONENT_TAGS] });
     registerBuiltInCommands();

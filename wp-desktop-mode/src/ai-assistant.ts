@@ -19,6 +19,7 @@
  */
 
 import type { DesktopConfig } from './types';
+import { HOOKS, doAction, applyFilters } from './hooks';
 import {
 	filterCommands,
 	findCommand,
@@ -354,13 +355,12 @@ export class AiAssistant implements AiAssistantApi {
 	// ------------------------------------------------------------------
 
 	private _bindEvents(): void {
-		// Cmd/Ctrl+K — capture phase so iframes don't swallow it.
-		document.addEventListener( 'keydown', ( e: KeyboardEvent ) => {
-			if ( ( e.metaKey || e.ctrlKey ) && e.key === 'k' && ! e.shiftKey && ! e.altKey ) {
-				e.preventDefault();
-				this.toggle();
-			}
-		}, true );
+		// NOTE: Cmd/Ctrl+K is NOT handled here anymore — the shell owns a
+		// single global shortcut that cycles through every registered
+		// palette (see `src/palette-registry.ts`). This class registers
+		// itself as a palette in `desktop.ts`; pressing Cmd+K with
+		// another palette open will close the other one and open the
+		// AI Assistant only when its turn comes in the cycle.
 
 		// Escape closes.
 		this._el.addEventListener( 'keydown', ( e: KeyboardEvent ) => {
@@ -387,7 +387,11 @@ export class AiAssistant implements AiAssistantApi {
 			}
 		} );
 
-		// Admin-bar button signal.
+		// Admin-bar "Ask AI" button signal. We fire a document-level
+		// custom event here (not the registry's openPaletteOnly) so the
+		// assistant stays independent of the registry module's import
+		// graph — the shell wires up the real close-others-first
+		// routing in desktop.ts via openPalette.
 		document.addEventListener( 'wp-desktop-open-ai', () => this.open() );
 
 		// Close button.
@@ -553,6 +557,28 @@ export class AiAssistant implements AiAssistantApi {
 	 */
 	private async _runCommand( cmd: DesktopCommand, args: string ): Promise<void> {
 		if ( this._isSearching ) return;
+
+		// ----- before-run filter ----------------------------------------
+		// Plugins can subscribe to wp-desktop.command.before-run and
+		// return `{ proceed: false, reason }` to short-circuit
+		// destructive or gated commands. Useful for capability checks
+		// the command author shouldn't have to repeat in every handler.
+		const gate = applyFilters<
+			{ proceed: boolean; reason?: string; slug: string; args: string; command: DesktopCommand },
+			[]
+		>( HOOKS.COMMAND_BEFORE_RUN, {
+			proceed: true,
+			slug:    cmd.slug,
+			args,
+			command: cmd,
+		} );
+		if ( gate && gate.proceed === false ) {
+			this._showError(
+				gate.reason ?? `Command /${ cmd.slug } was cancelled.`,
+			);
+			return;
+		}
+
 		this._isSearching        = true;
 		this._submitBtn.disabled = true;
 		this._input.disabled     = true;
@@ -561,20 +587,44 @@ export class AiAssistant implements AiAssistantApi {
 		const ctx: CommandContext = {
 			close:        () => this.close(),
 			openInWindow: ( url, title, icon ) => this._openInLegacyWindow( url, title, icon ),
+			confirm:      ( msg, details ) => this._confirm( msg, details ),
 		};
 
 		try {
 			const result = await Promise.resolve( cmd.run( args, ctx ) );
 			this._renderCommandResult( cmd, result );
+			doAction( HOOKS.COMMAND_AFTER_RUN, {
+				slug:    cmd.slug,
+				args,
+				command: cmd,
+				result,
+			} );
 		} catch ( err ) {
 			const msg = err instanceof Error ? err.message : String( err );
 			this._showError( `Command /${ cmd.slug } failed: ${ msg }` );
+			doAction( HOOKS.COMMAND_ERROR, {
+				slug:    cmd.slug,
+				args,
+				command: cmd,
+				error:   err,
+			} );
 		} finally {
 			this._isSearching        = false;
 			this._submitBtn.disabled = false;
 			this._input.disabled     = false;
 			this._input.focus();
 		}
+	}
+
+	/**
+	 * Default `ctx.confirm()` — uses the browser's native confirm
+	 * dialog. Combined message + details into one string because
+	 * window.confirm() only takes one. The shell can swap a custom
+	 * dialog in later (the Promise<boolean> contract is stable).
+	 */
+	private _confirm( message: string, details?: string ): Promise< boolean > {
+		const text = details ? `${ message }\n\n${ details }` : message;
+		return Promise.resolve( window.confirm( text ) );
 	}
 
 	/**
@@ -904,6 +954,7 @@ export class AiAssistant implements AiAssistantApi {
 		const ctx: CommandContext = {
 			close:        () => this.close(),
 			openInWindow: ( url, title, icon ) => this._openInLegacyWindow( url, title, icon ),
+			confirm:      ( msg, details ) => this._confirm( msg, details ),
 		};
 
 		let result: CommandSuggestion[] | Promise< CommandSuggestion[] >;

@@ -22,7 +22,7 @@
  * @since 6.9.0
  */
 
-import { HOOKS, doAction } from '../hooks';
+import { HOOKS, doAction, applyFilters } from '../hooks';
 import type {
 	Desktop,
 	Session,
@@ -690,6 +690,104 @@ export class WindowManager {
 	}
 	public closeDesktop( id: string ): void {
 		closeDesktop( this, id );
+	}
+
+	/**
+	 * Returns the "primary" desktop id — the one new sessions land on
+	 * and that batch operations like {@link closeAll} treat as the
+	 * survivor when an `onlyOnPrimary` mode is requested.
+	 *
+	 * Default: the first desktop in `getDesktops()`. Filterable via
+	 * `wp-desktop.primary-desktop-id` so downstream code that wants a
+	 * different convention (e.g. a pinned "Inbox" desktop) can override
+	 * without having to fork the manager.
+	 *
+	 * @since 0.14.0
+	 */
+	public getPrimaryDesktopId(): string {
+		const all = this.getDesktops();
+		const fallback = all.length > 0 ? all[ 0 ].id : 'desktop-1';
+		const filtered = applyFilters< string, [ Desktop[] ] >(
+			HOOKS.PRIMARY_DESKTOP_ID,
+			fallback,
+			all,
+		);
+		// Defensive: a misbehaving filter could return a non-string or
+		// an id that doesn't match any desktop. Fall back to the first
+		// real desktop in those cases.
+		if ( typeof filtered !== 'string' || filtered === '' ) {
+			return fallback;
+		}
+		const exists = all.some( ( d ) => d.id === filtered );
+		return exists ? filtered : fallback;
+	}
+
+	/**
+	 * Close every open window in batch.
+	 *
+	 * Hook chain:
+	 *
+	 *   1. `wp-desktop.windows.before-close-all` — action. Subscribers
+	 *      can prepare for the wipe (cancel pending saves, dismiss
+	 *      menus, etc.). Detail: `{ candidates: Window[] }`.
+	 *
+	 *   2. `wp-desktop.windows.close-all` — filter. Receives the
+	 *      candidate Window list and returns the (possibly smaller) list
+	 *      that will actually be closed. Plugins use this to PROTECT
+	 *      specific windows — e.g. keep a draft post window open during
+	 *      a "Close all" operation. Returning an empty array cancels
+	 *      the close entirely.
+	 *
+	 *   3. Each surviving window's `close()` is called.
+	 *
+	 *   4. `wp-desktop.windows.after-close-all` — action. Detail:
+	 *      `{ closed: number, skipped: Window[] }`.
+	 *
+	 * @since 0.14.0
+	 *
+	 * @param options.exceptIds  Window ids to skip even before the filter runs.
+	 * @returns Number of windows actually closed.
+	 */
+	public closeAll( options?: { exceptIds?: string[] } ): number {
+		const exceptSet = new Set( options?.exceptIds ?? [] );
+		// Snapshot — close() mutates the live `_stack` array as each
+		// window is closed, so we filter-and-copy first. `_stack` is
+		// the z-ordered list of every live Window instance; iterating
+		// it covers windows on every virtual desktop.
+		const initialCandidates = this._stack.filter(
+			( w ) => ! exceptSet.has( w.id ),
+		);
+
+		doAction( HOOKS.WINDOWS_BEFORE_CLOSE_ALL, { candidates: initialCandidates } );
+
+		const filtered = applyFilters< Window[], [] >(
+			HOOKS.WINDOWS_CLOSE_ALL,
+			initialCandidates,
+		);
+		const finalList = Array.isArray( filtered ) ? filtered : initialCandidates;
+		const skipped   = initialCandidates.filter( ( w ) => ! finalList.includes( w ) );
+
+		let closed = 0;
+		// Iterate a copy because close() removes from the underlying
+		// array — iterating the live one would skip every other entry.
+		for ( const win of finalList.slice() ) {
+			try {
+				win.close();
+				closed++;
+			} catch ( err ) {
+				if ( typeof console !== 'undefined' ) {
+					console.error(
+						'[wp-desktop-mode] closeAll: window.close() threw for',
+						win.id,
+						err,
+					);
+				}
+			}
+		}
+
+		doAction( HOOKS.WINDOWS_AFTER_CLOSE_ALL, { closed, skipped } );
+
+		return closed;
 	}
 
 	// ---- Arrange + snap delegations ----

@@ -125,15 +125,53 @@ Exposed instance of the `WindowManager` class.
 **Methods:**
 
 ```typescript
-manager.open( config: { id: string; baseId?: string; multi?: boolean; url: string; title: string; icon?: string; x?: number; y?: number; width?: number; height?: number; initialState?: WindowState; submenu?: { title: string; url: string }[] } ): Window;
-manager.openNew( config: /* same shape as open() */ ): Window;
+// Open / focus
+manager.open( config ): Window;
+manager.openNew( config ): Window;
 manager.focus( win: Window ): void;
+
+// Lookup
 manager.getById( id: string ): Window | undefined;
 manager.getByBaseId( baseId: string ): Window | undefined;
 manager.getAll(): Window[];
 manager.getFocused(): Window | undefined;
+
+// Snapshot / surface
 manager.snapshot(): Session;
 manager.getVisibleRects(): VisibleWindowRect[];
+
+// Batch operations
+manager.closeAll( options?: { exceptIds?: string[] } ): number;          // since 0.14.0
+manager.cascade(): void;
+manager.tile(): void;
+
+// Virtual desktops ("Spaces")
+manager.getDesktops(): Desktop[];                                        // since 0.6
+manager.getActiveDesktop(): Desktop;                                     // since 0.6
+manager.getActiveDesktopId(): string;                                    // since 0.6
+manager.getPrimaryDesktopId(): string;                                   // since 0.14.0
+manager.createDesktop(): Desktop;                                        // since 0.6
+manager.switchDesktop( id: string ): void;                               // since 0.6
+manager.closeDesktop( id: string ): void;                                // since 0.6
+```
+
+**`config` shape passed to `open()` / `openNew()`:**
+
+```typescript
+{
+    id:            string;
+    baseId?:       string;
+    multi?:        boolean;
+    url:           string;
+    title:         string;
+    icon?:         string;
+    x?:            number;
+    y?:            number;
+    width?:        number;
+    height?:       number;
+    initialState?: 'normal' | 'minimized' | 'maximized' | 'fullscreen';
+    submenu?:      { title: string; url: string }[];
+}
 ```
 
 **`getVisibleRects()`** — snapshot every open window's current geometry + state. One entry per window in the stack (regardless of virtual desktop), carrying a live element reference. Intended for wallpaper / overlay plugins that previously scraped `document.querySelectorAll( '.wp-desktop-window' )` and sniffed modifier class names to derive state. Callers filter on `state` themselves — minimized windows are included so the consumer can decide.
@@ -177,6 +215,110 @@ window.wp.desktop.windowManager.openNew( {
 ```
 
 The server-side `wp_desktop_dock_item_multi` filter controls which admin pages ship with `multi: true` by default — see the [Hooks reference](./hooks-reference.md#wp_desktop_dock_item_multi--stable).
+
+---
+
+#### `Window` instance methods
+
+The objects returned by `manager.open()`, `getById()`, `getAll()`, etc. are `Window` instances. Public surface:
+
+```typescript
+interface Window {
+    readonly id:      string;     // stable identifier
+    readonly config:  WindowConfig;
+    readonly element: HTMLElement; // outer .wp-desktop-window node
+    readonly iframe:  HTMLIFrameElement | null; // null for native windows
+    state: 'normal' | 'minimized' | 'maximized' | 'fullscreen';
+
+    close(): void;
+    minimize(): void;
+    restore(): void;
+    maximize(): void;
+    detach(): void;          // pop into a new browser tab
+}
+```
+
+The `state` property is read-only-ish — mutate via the methods (`minimize()`, `restore()`, `maximize()`) so the manager fires the right lifecycle hooks (`wp-desktop.window.minimized`, etc.). Reading it is fine and cheap.
+
+```javascript
+const win = wp.desktop.windowManager.getById( 'edit-php' );
+if ( win && win.state === 'normal' ) win.minimize();
+```
+
+---
+
+#### Virtual desktops ("Spaces")
+
+Multiple "Spaces" with windows distributed across them. Each desktop has an id, a label, and (server-side) a position in the persisted session.
+
+```typescript
+interface Desktop {
+    id:    string;
+    label: string;
+}
+
+manager.getDesktops(): Desktop[];          // every desktop, in order
+manager.getActiveDesktop(): Desktop;       // the one currently visible
+manager.getActiveDesktopId(): string;
+manager.getPrimaryDesktopId(): string;     // since 0.14.0 — see below
+manager.createDesktop(): Desktop;          // append a new one + return it
+manager.switchDesktop( id ): void;         // make `id` the active desktop
+manager.closeDesktop( id ): void;          // delete `id`; its windows migrate to the active desktop
+```
+
+Lifecycle hooks fire on each operation: `HOOKS.DESKTOP_CREATED`, `HOOKS.DESKTOP_CLOSED { desktopId, migratedTo }`, `HOOKS.DESKTOP_SWITCHED { from, to }`.
+
+##### Primary desktop — `getPrimaryDesktopId()` *(since 0.14.0)*
+
+The "primary" desktop is the canonical one batch operations and migration logic treat as the survivor. Default: the first desktop returned by `getDesktops()` (typically `desktop-1`). Filterable via the `wp-desktop.primary-desktop-id` filter so plugins that pin a different convention (e.g. an "Inbox" desktop) can override:
+
+```javascript
+wp.hooks.addFilter(
+    'wp-desktop.primary-desktop-id',
+    'my-plugin',
+    ( defaultId, desktops ) => {
+        const inbox = desktops.find( ( d ) => d.label === 'Inbox' );
+        return inbox ? inbox.id : defaultId;
+    }
+);
+```
+
+Filter receives `( defaultId: string, desktops: Desktop[] )` and must return a string id that matches one of the existing desktops — the manager validates the result and falls back to `defaultId` on any miss.
+
+---
+
+#### Batch close — `closeAll()` *(since 0.14.0)*
+
+```typescript
+manager.closeAll( options?: { exceptIds?: string[] } ): number;
+```
+
+Closes every open window (across all desktops) and returns the number actually closed. Optional `exceptIds` skips specific windows entirely — never even passed to the filter.
+
+**Hook chain:**
+
+| Hook | Type | Payload | Use |
+|---|---|---|---|
+| `wp-desktop.windows.before-close-all` | action | `{ candidates: Window[] }` | Cleanup, dismiss menus, cancel pending saves |
+| `wp-desktop.windows.close-all` | filter | `Window[]` → `Window[]` | **Protect specific windows** by removing them from the list. Returning `[]` cancels the close entirely. |
+| `wp-desktop.windows.after-close-all` | action | `{ closed: number, skipped: Window[] }` | Toast, telemetry, refocus a tile |
+
+```javascript
+// Protect any window with unsaved Gutenberg edits.
+wp.hooks.addFilter(
+    'wp-desktop.windows.close-all',
+    'my-plugin/protect-drafts',
+    ( windows ) => windows.filter( ( w ) => ! w.element.dataset.hasUnsaved )
+);
+```
+
+```javascript
+// Run from a slash-command handler:
+const closed = wp.desktop.windowManager.closeAll();
+return `Closed ${ closed } window${ closed === 1 ? '' : 's' }.`;
+```
+
+If a `Window.close()` throws, the loop catches and continues — one bad window can't abort the batch.
 
 ---
 
@@ -236,6 +378,43 @@ Registrations are live — if the palette is open when you call this, the new co
 
 - `ctx.close()` — dismiss the AI Assistant panel.
 - `ctx.openInWindow( url, title, icon? )` — open a wp-admin URL in a legacy iframe window on the desktop.
+- `ctx.confirm( message, details? ) → Promise<boolean>` *(since 0.14.0)* — ask the user to confirm a destructive action. Default implementation uses `window.confirm()`; the shell may swap a custom dialog later (the `Promise<boolean>` contract is stable). Use this from any command whose `run()` does something irreversible.
+
+  ```javascript
+  run: async ( args, ctx ) => {
+      const ok = await ctx.confirm(
+          'Close every open window?',
+          'You will lose any unsaved iframe state.'
+      );
+      if ( ! ok ) return 'Cancelled.';
+      const closed = wp.desktop.windowManager.closeAll();
+      return `Closed ${ closed } window${ closed === 1 ? '' : 's' }.`;
+  }
+  ```
+
+**Command lifecycle hooks** *(since 0.14.0)* — fire around every `run()`. Subscribe via `wp.hooks`:
+
+| Hook | Type | Payload | Use |
+|---|---|---|---|
+| `wp-desktop.command.before-run` | filter | `{ proceed: true, slug, args, command }` → return same shape with `proceed: false` (and optional `reason`) to cancel | Capability gates, audit log, "developer mode only" commands |
+| `wp-desktop.command.after-run` | action | `{ slug, args, command, result }` | Telemetry, post-run toast |
+| `wp-desktop.command.error` | action | `{ slug, args, command, error }` | Centralised error reporting |
+
+```javascript
+// Block /close_all_windows for non-admin users.
+wp.hooks.addFilter(
+    'wp-desktop.command.before-run',
+    'my-plugin/gate',
+    ( gate ) => {
+        if ( gate.slug === 'close_all_windows' && ! wpDesktopConfig.currentUserIsAdmin ) {
+            return { ...gate, proceed: false, reason: 'Admins only.' };
+        }
+        return gate;
+    }
+);
+```
+
+When `proceed` is `false` the assistant renders the optional `reason` (or a generic "cancelled" message) and never invokes the handler.
 
 **Return value** — the handler may return any of:
 
@@ -300,6 +479,66 @@ Returns a snapshot of every currently registered command as an array. Useful for
 
 ```javascript
 window.wp.desktop.listCommands().forEach( ( c ) => console.log( `/${ c.slug } — ${ c.label }` ) );
+```
+
+---
+
+### `registerPalette( def )` — Stable  *(since 0.14.0)*
+
+Register a Cmd+K-triggered overlay ("palette"). The shell owns a single global shortcut handler that **cycles** through every registered palette — first press opens palette 0, second press closes it and opens palette 1, and so on. Pressing Cmd+K when the last palette is open closes it entirely; the next press re-opens palette 0.
+
+This means multiple plugin palettes, plus the built-in AI Assistant, coexist without stealing each other's keybinding.
+
+**Definition shape:**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `id` | `string` | yes | Stable identifier. Re-registering the same id replaces the previous entry. |
+| `label` | `string` | no | For debug / a future picker UI. |
+| `open()` | `function` | yes | Show the palette UI. |
+| `close()` | `function` | yes | Hide the palette UI. |
+| `isOpen()` | `function` | yes | Synchronous — return `true` if the palette is currently visible. The cycle reads this on every Cmd+K press. |
+
+Returns an **unsubscribe function**. Plugins that register at shell-load time typically don't need it, but HMR / late teardown use cases should call it.
+
+```javascript
+wp.hooks.addAction( 'wp-desktop.init', 'my-plugin/launcher', function () {
+    const unregister = wp.desktop.registerPalette( {
+        id:     'my-plugin/launcher',
+        label:  'My Quick Launcher',
+        open:   () => myLauncher.show(),
+        close:  () => myLauncher.hide(),
+        isOpen: () => myLauncher.visible,
+    } );
+} );
+```
+
+The built-in AI Assistant is already registered as palette 0 (`id: 'wp-desktop-ai-assistant'`) — your palette lands at position 1 and the cycle goes AI → yours → closed → AI → …
+
+---
+
+### `unregisterPalette( id )` — Stable  *(since 0.14.0)*
+
+Remove a palette from the cycle. Idempotent.
+
+```javascript
+window.wp.desktop.unregisterPalette( 'my-plugin/launcher' );
+```
+
+---
+
+### `listPalettes()` — Stable  *(since 0.14.0)*
+
+Snapshot of all palettes in registration order.
+
+---
+
+### `openPalette( id )` — Stable  *(since 0.14.0)*
+
+Open one palette by id, closing any other palette that's currently visible. Useful for deeplinks, menu items, or programmatic triggers that should target a specific palette rather than advance the cycle.
+
+```javascript
+window.wp.desktop.openPalette( 'my-plugin/launcher' );
 ```
 
 ---

@@ -204,12 +204,59 @@ wp.desktop.registerCommand( {
 
 ---
 
+## Recipe 6 — `/close_all_windows` with confirm + protect-list
+
+A destructive command that uses every plugin point: `ctx.confirm()` for the user prompt, `windowManager.closeAll()` for the batch op, and the `wp-desktop.windows.close-all` filter so any plugin can keep specific windows alive.
+
+```javascript
+wp.hooks.addAction( 'wp-desktop.init', 'my-plugin/close-all', function () {
+    wp.desktop.registerCommand( {
+        slug:        'close_all_windows',
+        label:       'Close all windows',
+        description: 'Close every open window on every desktop.',
+        icon:        'dashicons-dismiss',
+        run: async ( _args, ctx ) => {
+            const before = wp.desktop.windowManager.getAll().length;
+            if ( before === 0 ) return 'No windows are open.';
+
+            const ok = await ctx.confirm(
+                'Close every open window?',
+                'You\'ll lose any unsaved state inside iframe windows.'
+            );
+            if ( ! ok ) return 'Cancelled.';
+
+            const closed = wp.desktop.windowManager.closeAll();
+            ctx.close();
+            return `Closed **${ closed }** window${ closed === 1 ? '' : 's' }.`;
+        },
+    } );
+} );
+
+// Optional protect-list — keep the OS Settings window alive.
+wp.hooks.addFilter(
+    'wp-desktop.windows.close-all',
+    'my-plugin/keep-os-settings',
+    ( windows ) => windows.filter( ( w ) => w.id !== 'wp-desktop-os-settings' )
+);
+```
+
+`exceptIds` on the call site does the same thing:
+
+```javascript
+wp.desktop.windowManager.closeAll( { exceptIds: [ 'wp-desktop-os-settings' ] } );
+```
+
+The difference is **scope**: `exceptIds` applies only to one call site; the filter applies to every batch close anywhere on the page.
+
+---
+
 ## The `CommandContext` passed to `run`
 
 | Method | What it does |
 |---|---|
 | `ctx.close()` | Dismiss the AI Assistant panel. |
 | `ctx.openInWindow( url, title, icon? )` | Open a wp-admin URL in a legacy iframe window inside the desktop. |
+| `ctx.confirm( message, details? )` *(since 0.14.0)* | Prompt the user to confirm a destructive action. Returns `Promise<boolean>`. |
 
 ---
 

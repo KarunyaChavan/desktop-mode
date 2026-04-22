@@ -19,6 +19,7 @@ import {
 	doAction,
 	rawHooks,
 	whenReady,
+	isReady,
 	type WpHooks,
 } from './hooks';
 import * as registry from './wallpapers/registry';
@@ -48,6 +49,14 @@ import {
 	type DesktopCommand,
 } from './commands';
 import { registerBuiltInCommands } from './built-in-commands';
+import {
+	registerPalette,
+	unregisterPalette,
+	listPalettes,
+	openPaletteOnly,
+	installPaletteShortcut,
+	type Palette,
+} from './palette-registry';
 
 /**
  * Origin snapshot taken at shell module load. Every same-origin gate
@@ -203,6 +212,14 @@ export interface WpDesktopPublicApi {
 	/** Run `cb` after `wp-desktop.init` has fired (immediately if already fired). */
 	whenReady: ( cb: () => void ) => void;
 	/**
+	 * Synchronously report whether the shell's `wp-desktop.init` action
+	 * has fired. Lets late-loading plugin code branch between
+	 * "register directly" and "schedule via whenReady" without racing.
+	 *
+	 * @since 0.14.0
+	 */
+	isReady: () => boolean;
+	/**
 	 * Update the user's "default window" preference — the window that
 	 * opens when the user enters the portal with no saved session.
 	 *
@@ -275,6 +292,32 @@ export interface WpDesktopPublicApi {
 	unregisterCommand:  ( slug: string ) => void;
 	/** Snapshot of all currently registered commands. @since 0.14.0 */
 	listCommands:       () => DesktopCommand[];
+	/**
+	 * Register a Cmd+K palette. The shell owns a single shortcut
+	 * handler that cycles through every registered palette; the
+	 * built-in AI Assistant is registered as palette 0 by default.
+	 *
+	 * ```js
+	 * const unregister = wp.desktop.registerPalette( {
+	 *     id:     'my-plugin/launcher',
+	 *     label:  'My Launcher',
+	 *     open:   () => myUI.show(),
+	 *     close:  () => myUI.hide(),
+	 *     isOpen: () => myUI.isVisible(),
+	 * } );
+	 * // later: unregister();
+	 * ```
+	 *
+	 * Re-registering the same id replaces the previous entry.
+	 * @since 0.14.0
+	 */
+	registerPalette:    ( p: Palette ) => () => void;
+	/** Remove a palette from the cycle. Idempotent. @since 0.14.0 */
+	unregisterPalette:  ( id: string ) => void;
+	/** Snapshot of registered palettes. @since 0.14.0 */
+	listPalettes:       () => Palette[];
+	/** Open a specific palette, closing any other open one. @since 0.14.0 */
+	openPalette:        ( id: string ) => void;
 }
 
 declare global {
@@ -382,6 +425,27 @@ function init(): void {
 	// (after shell DOM exists) so any iframe loading afterward sees
 	// a parent that's ready to receive messages.
 	const dragBridge = new DragBridge();
+
+	// Register the AI Assistant as the first (default) Cmd+K palette
+	// and install the single global shortcut. Other plugins can register
+	// more palettes via wp.desktop.registerPalette and Cmd+K cycles
+	// through them in registration order.
+	registerPalette( {
+		id:     'wp-desktop-ai-assistant',
+		label:  'AI Assistant',
+		open:   () => aiAssistant.open(),
+		close:  () => aiAssistant.close(),
+		isOpen: () => aiAssistant.isOpen,
+	} );
+	installPaletteShortcut();
+
+	// Admin-bar "Ask AI" button and programmatic `wp-desktop-open-ai`
+	// dispatches now route through openPaletteOnly so any other plugin
+	// palette that happens to be open is dismissed first — matches the
+	// single-palette-at-a-time invariant the cycle maintains.
+	document.addEventListener( 'wp-desktop-open-ai', () => {
+		openPaletteOnly( 'wp-desktop-ai-assistant' );
+	} );
 
 	// Dock (left edge, CORE WP menus). `config.dockItems` was already
 	// filtered server-side to core items — anything that routes via
@@ -755,6 +819,7 @@ function init(): void {
 		registerModule,
 		loadModules,
 		whenReady,
+		isReady,
 		setDefaultWindow,
 		refreshMenu,
 		config,
@@ -763,6 +828,10 @@ function init(): void {
 		registerCommand,
 		unregisterCommand,
 		listCommands,
+		registerPalette,
+		unregisterPalette,
+		listPalettes,
+		openPalette: openPaletteOnly,
 	};
 
 	// Fire `wp-desktop.init` — plugins can now register wallpapers

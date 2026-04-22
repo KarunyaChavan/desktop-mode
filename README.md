@@ -6,7 +6,7 @@ Zero Core patches. Every feature is wired through public WordPress hooks.
 
 ## Demo
 
-<video src="./docs/demo.mp4" controls width="720"></video>
+<video src="https://github.a8c.com/Automattic/alcazaba-plugin/raw/trunk/docs/demo.mp4" controls width="720"></video>
 
 ---
 

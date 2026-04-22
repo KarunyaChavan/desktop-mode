@@ -83,24 +83,51 @@ npm run dev
 
 Leave it running in a separate terminal; refresh the browser after each save. Set `define( 'SCRIPT_DEBUG', true )` in `wp-config.php` so WordPress picks up the unminified bundle during development.
 
-### 3. Start a WordPress environment
+### 3. Get it running in WordPress
 
-The plugin is developed against a WordPress Core checkout used as a Docker-based dev host. From that parent repository's root:
+You need a running WordPress for the plugin to load into. Pick whichever is easier.
+
+#### Option A — Install as a zip (easiest)
+
+Works with any WordPress you already have: [Studio by WordPress.com](https://developer.wordpress.com/studio/), [`wp-env`](https://developer.wordpress.org/block-editor/reference-guides/packages/packages-env/), or a hosted site.
+
+From the parent `alcazaba-plugin/` directory, build and package the plugin:
 
 ```bash
-npm run env:start      # boot Docker (nginx + PHP + MySQL)
-npm run env:install    # install WordPress
+( cd wp-desktop-mode && npm run build )
+zip -r wp-desktop-mode.zip wp-desktop-mode \
+  -x 'wp-desktop-mode/node_modules/*' \
+     'wp-desktop-mode/tests/*' \
+     'wp-desktop-mode/.git/*'
+```
+
+Then in WP Admin go to **Plugins → Add New → Upload Plugin**, choose `wp-desktop-mode.zip`, and activate. Skip ahead to [§4 Activate & toggle](#4-activate--toggle).
+
+> Good for trying it out. Not ideal for active development — every change requires a rebuild + re-upload.
+
+#### Option B — Clone `wordpress-develop` (for active development)
+
+This gives you the full dev loop: `npm run dev` in the plugin rebuilds on save, and a browser refresh picks it up.
+
+```bash
+# clone Core's Docker-based dev host alongside this repo
+git clone https://github.com/WordPress/wordpress-develop.git
+cd wordpress-develop
+npm install
+
+# symlink this plugin into the WP plugins directory
+ln -s "$(pwd)/../alcazaba-plugin/wp-desktop-mode" src/wp-content/plugins/wp-desktop-mode
+
+# boot + install WordPress
+npm run env:start      # nginx + PHP + MySQL in Docker
+npm run env:install    # installs WordPress
 ```
 
 Site: **http://localhost:8889**
 Admin: **http://localhost:8889/wp-admin/**
 Credentials: `admin` / `password`
 
-Stop the environment:
-
-```bash
-npm run env:stop
-```
+Stop the environment with `npm run env:stop` (from the `wordpress-develop` directory).
 
 ### 4. Activate & toggle
 

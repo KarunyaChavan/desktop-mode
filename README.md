@@ -13,8 +13,8 @@ Zero Core patches. Every feature is wired through public WordPress hooks.
 ## Contents
 
 - [Demo](#demo)
-- [What it does today](#what-it-does-today)
-- [Where it's going](#where-its-going)
+- [Current State](#current-state)
+- [Still ahead](#still-ahead)
 - [Repository layout](#repository-layout)
 - [How to run it](#how-to-run-it)
   - [1. Install dependencies](#1-install-dependencies)

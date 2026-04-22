@@ -19,6 +19,16 @@
  */
 
 import type { DesktopConfig } from './types';
+import {
+	filterCommands,
+	findCommand,
+	parseCommandInput,
+	subscribeCommands,
+	type CommandContext,
+	type CommandResult,
+	type CommandSuggestion,
+	type DesktopCommand,
+} from './commands';
 
 // ---------------------------------------------------------------------------
 // Minimal Markdown renderer
@@ -242,6 +252,17 @@ export class AiAssistant implements AiAssistantApi {
 	private _restNonce:         string;
 	private _currentStream:     EventSource | null = null;
 
+	/** Index of the highlighted command in the filtered list (keyboard nav). */
+	private _selectedCommand = 0;
+	/** Unsubscribe from the command-registry changes; called on close/destroy. */
+	private _unsubCommands:  ( () => void ) | null = null;
+	/** Highlighted index in the per-command argument suggestion list. */
+	private _selectedSuggestion = 0;
+	/** Cached latest suggestion list so keyboard nav can read it without re-calling suggest(). */
+	private _currentSuggestions: CommandSuggestion[] = [];
+	/** Monotonic counter to discard stale async suggest() results. */
+	private _suggestToken = 0;
+
 	constructor( config: { aiSearchUrl: string; aiSearchStreamUrl: string; restNonce: string } ) {
 		this._aiSearchUrl       = config.aiSearchUrl;
 		this._aiSearchStreamUrl = config.aiSearchStreamUrl;
@@ -257,6 +278,15 @@ export class AiAssistant implements AiAssistantApi {
 
 		this._bindEvents();
 		this._renderSuggestions();
+
+		// Re-render the command list when plugins register commands
+		// after the panel has mounted. If the palette is currently in
+		// command mode, refresh it so the new item appears live.
+		this._unsubCommands = subscribeCommands( () => {
+			if ( this._isOpen && this._input.value.startsWith( '/' ) ) {
+				this._renderCommandMode();
+			}
+		} );
 	}
 
 	// ------------------------------------------------------------------
@@ -272,10 +302,11 @@ export class AiAssistant implements AiAssistantApi {
 		this._isOpen = true;
 		this._previousFocus = document.activeElement;
 
-		// Reset the input and return the results area to the suggestion
-		// chips so every open feels like a fresh conversation — no stale
-		// query carrying over from the previous session.
-		this._input.value = '';
+		// Reset the input, keyboard-selection, and the results area so
+		// every open feels like a fresh conversation — no stale query,
+		// no leftover command highlight.
+		this._input.value        = '';
+		this._selectedCommand    = 0;
 		this._submitBtn.classList.remove( 'has-value' );
 		this._renderSuggestions();
 
@@ -364,7 +395,104 @@ export class AiAssistant implements AiAssistantApi {
 
 		// Submit.
 		this._submitBtn.addEventListener( 'click', () => this._onSubmit() );
+
+		// Keyboard handling — arrows navigate whichever list is currently
+		// visible (command picker in pick mode; argument-suggestion list
+		// in args mode if the command defines suggest()). Tab
+		// autocompletes. Enter submits or locks in a selection depending
+		// on state.
 		this._input.addEventListener( 'keydown', ( e: KeyboardEvent ) => {
+			const parsed = parseCommandInput( this._input.value );
+
+			// -----------------------------------------------------------
+			// PICK MODE — user is still typing the slug after "/".
+			// -----------------------------------------------------------
+			if ( parsed.isCommand && ! parsed.hasArgsPart ) {
+				const matches = filterCommands( parsed.slug );
+				if ( e.key === 'ArrowDown' ) {
+					e.preventDefault();
+					this._selectedCommand = Math.min(
+						this._selectedCommand + 1,
+						Math.max( 0, matches.length - 1 ),
+					);
+					this._renderCommandMode();
+					return;
+				}
+				if ( e.key === 'ArrowUp' ) {
+					e.preventDefault();
+					this._selectedCommand = Math.max( 0, this._selectedCommand - 1 );
+					this._renderCommandMode();
+					return;
+				}
+				if ( e.key === 'Tab' && matches.length > 0 ) {
+					e.preventDefault();
+					const pick = matches[ this._selectedCommand ] ?? matches[ 0 ];
+					this._input.value = `/${ pick.slug } `;
+					this._submitBtn.classList.add( 'has-value' );
+					this._selectedSuggestion = 0;
+					this._renderCommandMode();
+					return;
+				}
+				if ( e.key === 'Enter' && ! e.shiftKey ) {
+					e.preventDefault();
+					if ( matches.length === 0 ) {
+						this._showError( `Unknown command: /${ parsed.slug }` );
+						return;
+					}
+					const pick = matches[ this._selectedCommand ] ?? matches[ 0 ];
+					this._runCommand( pick, '' );
+					return;
+				}
+			}
+
+			// -----------------------------------------------------------
+			// ARGS MODE — command is locked in; user is typing arguments.
+			// If the command defines suggest(), we navigate its output.
+			// -----------------------------------------------------------
+			if ( parsed.isCommand && parsed.hasArgsPart ) {
+				const cmd = findCommand( parsed.slug );
+				const hasSuggest = !! cmd && typeof cmd.suggest === 'function';
+
+				if ( hasSuggest && this._currentSuggestions.length > 0 ) {
+					if ( e.key === 'ArrowDown' ) {
+						e.preventDefault();
+						this._selectedSuggestion = Math.min(
+							this._selectedSuggestion + 1,
+							this._currentSuggestions.length - 1,
+						);
+						this._paintSuggestionSelection();
+						return;
+					}
+					if ( e.key === 'ArrowUp' ) {
+						e.preventDefault();
+						this._selectedSuggestion = Math.max( 0, this._selectedSuggestion - 1 );
+						this._paintSuggestionSelection();
+						return;
+					}
+					if ( e.key === 'Tab' ) {
+						e.preventDefault();
+						const pick = this._currentSuggestions[ this._selectedSuggestion ];
+						if ( pick ) {
+							this._input.value = `/${ parsed.slug } ${ pick.value }`;
+						}
+						return;
+					}
+					if ( e.key === 'Enter' && ! e.shiftKey && cmd ) {
+						// Enter while a suggestion is highlighted uses
+						// that suggestion's value as the command args.
+						// Raw typed text (if different) is ignored in
+						// favour of the structured pick — mirrors how
+						// autocomplete behaves in most palette UIs.
+						e.preventDefault();
+						const pick = this._currentSuggestions[ this._selectedSuggestion ];
+						const finalArgs = pick ? pick.value : parsed.args;
+						this._runCommand( cmd, finalArgs );
+						return;
+					}
+				}
+			}
+
+			// Default: Enter submits (AI query or free-text command).
 			if ( e.key === 'Enter' && ! e.shiftKey ) {
 				e.preventDefault();
 				this._onSubmit();
@@ -372,12 +500,22 @@ export class AiAssistant implements AiAssistantApi {
 		} );
 
 		// Toggle submit arrow based on input content; also re-render
-		// suggestions when cleared.
+		// the appropriate list (command palette or suggestions).
 		this._input.addEventListener( 'input', () => {
 			const hasValue = this._input.value.trim().length > 0;
 			this._submitBtn.classList.toggle( 'has-value', hasValue );
-			if ( ! hasValue ) {
+			// Reset both selection cursors whenever the filter text
+			// changes — typing resets you to the top of the list.
+			this._selectedCommand    = 0;
+			this._selectedSuggestion = 0;
+
+			if ( this._input.value.startsWith( '/' ) ) {
+				this._renderCommandMode();
+			} else if ( ! hasValue ) {
 				this._renderSuggestions();
+			} else {
+				// User is typing a regular AI query and had results from
+				// a prior run; leave them visible so they can keep editing.
 			}
 		} );
 	}
@@ -387,9 +525,93 @@ export class AiAssistant implements AiAssistantApi {
 	// ------------------------------------------------------------------
 
 	private async _onSubmit(): Promise<void> {
-		const query = this._input.value.trim();
-		if ( ! query || this._isSearching ) return;
-		await this._runSearch( query, null, 0 );
+		const raw = this._input.value.trim();
+		if ( ! raw || this._isSearching ) return;
+
+		// Slash-command dispatch. Anything starting with `/` is treated
+		// as a plugin-contributed command — we look up the slug and
+		// invoke its handler. Non-command input falls through to the
+		// AI search path as before.
+		const parsed = parseCommandInput( this._input.value );
+		if ( parsed.isCommand ) {
+			const cmd = findCommand( parsed.slug );
+			if ( ! cmd ) {
+				this._showError( `Unknown command: /${ parsed.slug }` );
+				return;
+			}
+			await this._runCommand( cmd, parsed.args );
+			return;
+		}
+
+		await this._runSearch( raw, null, 0 );
+	}
+
+	/**
+	 * Invoke a plugin-registered command. Handles both sync and async
+	 * handlers, renders the return value the same way we render an AI
+	 * answer, and surfaces thrown errors as an error-state bubble.
+	 */
+	private async _runCommand( cmd: DesktopCommand, args: string ): Promise<void> {
+		if ( this._isSearching ) return;
+		this._isSearching        = true;
+		this._submitBtn.disabled = true;
+		this._input.disabled     = true;
+		this._showThinking( `Running /${ cmd.slug }…` );
+
+		const ctx: CommandContext = {
+			close:        () => this.close(),
+			openInWindow: ( url, title, icon ) => this._openInLegacyWindow( url, title, icon ),
+		};
+
+		try {
+			const result = await Promise.resolve( cmd.run( args, ctx ) );
+			this._renderCommandResult( cmd, result );
+		} catch ( err ) {
+			const msg = err instanceof Error ? err.message : String( err );
+			this._showError( `Command /${ cmd.slug } failed: ${ msg }` );
+		} finally {
+			this._isSearching        = false;
+			this._submitBtn.disabled = false;
+			this._input.disabled     = false;
+			this._input.focus();
+		}
+	}
+
+	/**
+	 * Render the value returned by a command. A `void` return means
+	 * the command performed a side-effect (e.g. opened a window) and
+	 * doesn't need a bubble; in that case we clear the results area.
+	 * A plain string is shorthand for `{ message: string }`.
+	 */
+	private _renderCommandResult( cmd: DesktopCommand, result: CommandResult ): void {
+		if ( result === undefined || result === null ) {
+			// Silent success — clear any prior bubble.
+			this._clearResults();
+			return;
+		}
+
+		const answer: SearchResult =
+			typeof result === 'string'
+				? {
+					answer_type: 'chat',
+					message:     result,
+					entity:      null,
+					admin_links: null,
+					iterations:  0,
+					exhausted:   true,
+					continue:    null,
+				}
+				: {
+					answer_type: result.answer_type ?? 'chat',
+					message:     result.message,
+					entity:      ( result.entity as EntityDetail | null ) ?? null,
+					admin_links: ( result.admin_links as AdminLink[] | null ) ?? null,
+					iterations:  0,
+					exhausted:   true,
+					continue:    null,
+				};
+
+		this._showResult( '', answer );
 	}
 
 	private _runSearch(
@@ -561,6 +783,251 @@ export class AiAssistant implements AiAssistantApi {
 	// ------------------------------------------------------------------
 	// Rendering
 	// ------------------------------------------------------------------
+
+	/**
+	 * Render the slash-command palette — filtered list of commands
+	 * matching the current input. If the user has typed a slug followed
+	 * by a space, we're in "args" mode so we only show the one locked-in
+	 * command with a hint rather than a filterable list.
+	 */
+	private _renderCommandMode(): void {
+		this._resultsEl.hidden = false;
+		const parsed = parseCommandInput( this._input.value );
+
+		// Args mode: one locked-in command. If it defines suggest(), we
+		// fetch and render the suggestion list; otherwise just show the
+		// command header with a "Press Enter to run" hint.
+		if ( parsed.hasArgsPart ) {
+			const cmd = findCommand( parsed.slug );
+			if ( cmd ) {
+				this._renderArgsMode( cmd, parsed.args );
+				return;
+			}
+			// Fall through to picking mode when the slug doesn't match.
+		}
+
+		// Picking mode: show filtered command list.
+		const matches = filterCommands( parsed.slug );
+
+		if ( matches.length === 0 ) {
+			this._resultsEl.innerHTML = `
+				<div class="wp-desktop-ai__state wp-desktop-ai__state--empty">
+					<span>No commands matching <strong>/${ this._esc( parsed.slug ) }</strong>.</span>
+				</div>
+			`;
+			return;
+		}
+
+		// Clamp selection so it doesn't outrun the filtered set.
+		if ( this._selectedCommand >= matches.length ) {
+			this._selectedCommand = 0;
+		}
+
+		const items = matches
+			.map( ( c, i ) => {
+				const selected = i === this._selectedCommand ? ' is-selected' : '';
+				return `
+					<button
+						type="button"
+						class="wp-desktop-ai__cmd-item${ selected }"
+						data-slug="${ this._esc( c.slug ) }"
+						data-index="${ i }"
+					>
+						<span class="wp-desktop-ai__cmd-icon dashicons ${ this._esc(
+							c.icon ?? 'dashicons-arrow-right-alt'
+						) }" aria-hidden="true"></span>
+						<span class="wp-desktop-ai__cmd-body">
+							<span class="wp-desktop-ai__cmd-title">
+								/${ this._esc( c.slug ) }
+								${ c.hint ? `<span class="wp-desktop-ai__cmd-hint">${ this._esc( c.hint ) }</span>` : '' }
+							</span>
+							${ c.description
+								? `<span class="wp-desktop-ai__cmd-desc">${ this._esc( c.description ) }</span>`
+								: '' }
+						</span>
+					</button>
+				`;
+			} )
+			.join( '' );
+
+		this._resultsEl.innerHTML = `
+			<div class="wp-desktop-ai__cmd-list">
+				<p class="wp-desktop-ai__suggestions-label">Commands</p>
+				${ items }
+			</div>
+		`;
+
+		// Click handlers — clicking a row autocompletes and locks the
+		// command in, ready for args. If the command takes no args the
+		// user can just press Enter right after.
+		this._resultsEl
+			.querySelectorAll< HTMLButtonElement >( '.wp-desktop-ai__cmd-item' )
+			.forEach( ( btn ) => {
+				btn.addEventListener( 'click', () => {
+					const slug = btn.dataset.slug ?? '';
+					this._input.value = `/${ slug } `;
+					this._submitBtn.classList.add( 'has-value' );
+					this._input.focus();
+					this._renderCommandMode();
+				} );
+				btn.addEventListener( 'mouseenter', () => {
+					const idx = parseInt( btn.dataset.index ?? '0', 10 );
+					if ( ! Number.isNaN( idx ) ) {
+						this._selectedCommand = idx;
+						this._resultsEl
+							.querySelectorAll( '.wp-desktop-ai__cmd-item' )
+							.forEach( ( el, i ) => el.classList.toggle( 'is-selected', i === idx ) );
+					}
+				} );
+			} );
+	}
+
+	/**
+	 * Render args-mode UI for a locked-in command. If the command has a
+	 * `suggest()` handler, fetch it (sync or async) and render the
+	 * returned list. Otherwise fall back to a single-row "Press Enter
+	 * to run" card.
+	 */
+	private _renderArgsMode( cmd: DesktopCommand, args: string ): void {
+		// No suggest() → static header, nothing more to do.
+		if ( typeof cmd.suggest !== 'function' ) {
+			this._currentSuggestions = [];
+			this._resultsEl.innerHTML = this._renderCommandHeader( cmd, true );
+			return;
+		}
+
+		// Increment the token — any in-flight suggest() whose result
+		// arrives AFTER a later keystroke (or different command) will
+		// be discarded on arrival.
+		const myToken = ++this._suggestToken;
+
+		const ctx: CommandContext = {
+			close:        () => this.close(),
+			openInWindow: ( url, title, icon ) => this._openInLegacyWindow( url, title, icon ),
+		};
+
+		let result: CommandSuggestion[] | Promise< CommandSuggestion[] >;
+		try {
+			result = cmd.suggest( args, ctx );
+		} catch {
+			result = [];
+		}
+
+		const render = ( suggestions: CommandSuggestion[] ) => {
+			if ( myToken !== this._suggestToken ) {
+				// A later keystroke has superseded us — drop the result.
+				return;
+			}
+			this._currentSuggestions = suggestions;
+			if ( this._selectedSuggestion >= suggestions.length ) {
+				this._selectedSuggestion = 0;
+			}
+			this._resultsEl.innerHTML =
+				this._renderCommandHeader( cmd, false ) +
+				this._renderSuggestionList( suggestions );
+
+			// Wire mouse interactions on the suggestion rows.
+			this._resultsEl
+				.querySelectorAll< HTMLButtonElement >( '.wp-desktop-ai__cmd-suggest-item' )
+				.forEach( ( btn ) => {
+					btn.addEventListener( 'click', () => {
+						const idx = parseInt( btn.dataset.index ?? '0', 10 );
+						const pick = suggestions[ idx ];
+						if ( pick ) {
+							// Click = fill and run. Matches the palette
+							// convention where a mouse click is a commit,
+							// Tab is fill-only.
+							this._input.value = `/${ cmd.slug } ${ pick.value }`;
+							this._runCommand( cmd, pick.value );
+						}
+					} );
+					btn.addEventListener( 'mouseenter', () => {
+						const idx = parseInt( btn.dataset.index ?? '0', 10 );
+						if ( ! Number.isNaN( idx ) ) {
+							this._selectedSuggestion = idx;
+							this._paintSuggestionSelection();
+						}
+					} );
+				} );
+		};
+
+		if ( result && typeof ( result as Promise< unknown > ).then === 'function' ) {
+			// Async — show the header immediately so the user has feedback,
+			// then render the list when it resolves.
+			this._resultsEl.innerHTML = this._renderCommandHeader( cmd, false );
+			( result as Promise< CommandSuggestion[] > )
+				.then( ( r ) => render( Array.isArray( r ) ? r : [] ) )
+				.catch( () => render( [] ) );
+		} else {
+			render( Array.isArray( result ) ? ( result as CommandSuggestion[] ) : [] );
+		}
+	}
+
+	/** Render the command banner used at the top of args-mode. */
+	private _renderCommandHeader( cmd: DesktopCommand, standalone: boolean ): string {
+		return `
+			<div class="wp-desktop-ai__cmd-active">
+				<span class="wp-desktop-ai__cmd-icon dashicons ${ this._esc(
+					cmd.icon ?? 'dashicons-arrow-right-alt',
+				) }" aria-hidden="true"></span>
+				<div class="wp-desktop-ai__cmd-body">
+					<span class="wp-desktop-ai__cmd-title">
+						/${ this._esc( cmd.slug ) }
+						${ cmd.hint ? `<span class="wp-desktop-ai__cmd-hint">${ this._esc( cmd.hint ) }</span>` : '' }
+					</span>
+					${ cmd.description
+						? `<span class="wp-desktop-ai__cmd-desc">${ this._esc( cmd.description ) }</span>`
+						: '' }
+					${ standalone
+						? '<span class="wp-desktop-ai__cmd-enter-hint">Press <kbd>↵</kbd> to run</span>'
+						: '' }
+				</div>
+			</div>
+		`;
+	}
+
+	/** Render the list of suggestions under the command header. */
+	private _renderSuggestionList( suggestions: CommandSuggestion[] ): string {
+		if ( suggestions.length === 0 ) {
+			return `
+				<div class="wp-desktop-ai__state wp-desktop-ai__state--empty">
+					<span>No suggestions — press <kbd>↵</kbd> to run with the text you typed.</span>
+				</div>
+			`;
+		}
+		const items = suggestions
+			.map( ( s, i ) => {
+				const selected = i === this._selectedSuggestion ? ' is-selected' : '';
+				return `
+					<button
+						type="button"
+						class="wp-desktop-ai__cmd-suggest-item${ selected }"
+						data-index="${ i }"
+					>
+						<span class="wp-desktop-ai__cmd-icon dashicons ${ this._esc(
+							s.icon ?? 'dashicons-arrow-right-alt',
+						) }" aria-hidden="true"></span>
+						<span class="wp-desktop-ai__cmd-body">
+							<span class="wp-desktop-ai__cmd-suggest-label">${ this._esc( s.label ) }</span>
+							${ s.description
+								? `<span class="wp-desktop-ai__cmd-desc">${ this._esc( s.description ) }</span>`
+								: '' }
+						</span>
+					</button>
+				`;
+			} )
+			.join( '' );
+		return `<div class="wp-desktop-ai__cmd-suggest-list">${ items }</div>`;
+	}
+
+	/** Flip the is-selected class on the suggestion rows without re-rendering the whole list. */
+	private _paintSuggestionSelection(): void {
+		this._resultsEl
+			.querySelectorAll( '.wp-desktop-ai__cmd-suggest-item' )
+			.forEach( ( el, i ) => {
+				el.classList.toggle( 'is-selected', i === this._selectedSuggestion );
+			} );
+	}
 
 	private _renderSuggestions(): void {
 		this._resultsEl.hidden   = false;

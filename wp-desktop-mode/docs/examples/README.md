@@ -21,6 +21,7 @@ defined( 'ABSPATH' ) || exit;
 - [Inject data into `wpDesktopConfig`](./inject-shell-config.md)
 - [Register a wallpaper (CSS + canvas)](./register-wallpaper.md)
 - [Register a desktop icon (Jorvy)](./register-icon.md)
+- [Register a slash-command for the AI palette](./register-command.md)
 - [Native window with tabs (auto-swap pattern)](./native-window-with-tabs.md)
 - [Layout primitives (body → panel → row → col)](./layout-primitives.md)
 - [Native windows — planned (Phase 7)](./native-windows.md)

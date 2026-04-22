@@ -645,6 +645,165 @@
 }
 
 /* -----------------------------------------------------------------
+ * Command palette — shown when the user types "/" in the input.
+ * Filtered list of plugin-registered slash-commands. Mirrors the
+ * admin-link list's visual shape (icon + title + description) but
+ * uses a dedicated set of classes so each can evolve independently.
+ * ---------------------------------------------------------------- */
+
+.wp-desktop-ai__cmd-list {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.wp-desktop-ai__cmd-item {
+	appearance: none;
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+	padding: 8px 10px;
+	background: transparent;
+	border: 1px solid transparent;
+	border-radius: 8px;
+	cursor: pointer;
+	text-align: start;
+	font: inherit;
+	color: inherit;
+	transition: background 0.1s, border-color 0.1s;
+}
+
+.wp-desktop-ai__cmd-item:hover,
+.wp-desktop-ai__cmd-item.is-selected {
+	background: color-mix( in srgb, var( --wp-admin-theme-color, #2271b1 ) 8%, #fff );
+	border-color: color-mix( in srgb, var( --wp-admin-theme-color, #2271b1 ) 25%, rgba( 0, 0, 0, 0.08 ) );
+}
+
+.wp-desktop-ai__cmd-item:focus-visible {
+	outline: 2px solid var( --wp-admin-theme-color, #2271b1 );
+	outline-offset: 2px;
+}
+
+.wp-desktop-ai__cmd-icon {
+	flex-shrink: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	font-size: 16px;
+	color: var( --wp-admin-theme-color, #2271b1 );
+	background: color-mix( in srgb, var( --wp-admin-theme-color, #2271b1 ) 10%, #fff );
+	border-radius: 6px;
+	margin-top: 1px;
+}
+
+.wp-desktop-ai__cmd-body {
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+}
+
+.wp-desktop-ai__cmd-title {
+	font-size: 13px;
+	font-weight: 600;
+	color: #1d2327;
+	font-family: Menlo, Consolas, monospace;
+	letter-spacing: -0.01em;
+}
+
+.wp-desktop-ai__cmd-hint {
+	font-weight: 400;
+	color: #8c8f94;
+	font-size: 12px;
+	margin-inline-start: 6px;
+}
+
+.wp-desktop-ai__cmd-desc {
+	font-size: 11.5px;
+	color: #646970;
+	line-height: 1.4;
+	font-family: inherit;
+	letter-spacing: 0;
+}
+
+/* Args mode — a single row showing the locked-in command. Same
+   visual language as the list item but with an "Enter to run" hint. */
+.wp-desktop-ai__cmd-active {
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+	padding: 10px 12px;
+	background: color-mix( in srgb, var( --wp-admin-theme-color, #2271b1 ) 10%, #fff );
+	border: 1px solid color-mix( in srgb, var( --wp-admin-theme-color, #2271b1 ) 30%, rgba( 0, 0, 0, 0.08 ) );
+	border-radius: 8px;
+}
+
+.wp-desktop-ai__cmd-enter-hint {
+	font-size: 11px;
+	color: #646970;
+	margin-top: 2px;
+	font-family: inherit;
+}
+
+.wp-desktop-ai__cmd-enter-hint kbd {
+	font-family: inherit;
+	font-size: 10px;
+	padding: 1px 4px;
+	border: 1px solid rgba( 0, 0, 0, 0.12 );
+	border-radius: 3px;
+	background: rgba( 0, 0, 0, 0.03 );
+	color: #646970;
+}
+
+/* Suggestion list shown under the locked-in command in args mode.
+   Visually identical to the command picker rows but without the
+   border-highlight — the "active" glow already lives on the command
+   header directly above. */
+.wp-desktop-ai__cmd-suggest-list {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	margin-top: 6px;
+}
+
+.wp-desktop-ai__cmd-suggest-item {
+	appearance: none;
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+	padding: 6px 10px;
+	background: transparent;
+	border: 1px solid transparent;
+	border-radius: 6px;
+	cursor: pointer;
+	text-align: start;
+	font: inherit;
+	color: inherit;
+	transition: background 0.1s, border-color 0.1s;
+}
+
+.wp-desktop-ai__cmd-suggest-item:hover,
+.wp-desktop-ai__cmd-suggest-item.is-selected {
+	background: color-mix( in srgb, var( --wp-admin-theme-color, #2271b1 ) 8%, #fff );
+	border-color: color-mix( in srgb, var( --wp-admin-theme-color, #2271b1 ) 25%, rgba( 0, 0, 0, 0.08 ) );
+}
+
+.wp-desktop-ai__cmd-suggest-label {
+	font-size: 13px;
+	font-weight: 500;
+	color: #1d2327;
+}
+
+/* Empty / "no matches" state for the palette */
+.wp-desktop-ai__state--empty {
+	color: #8c8f94;
+	font-size: 13px;
+}
+
+/* -----------------------------------------------------------------
  * Continue button (budget-exhausted state)
  * ---------------------------------------------------------------- */
 

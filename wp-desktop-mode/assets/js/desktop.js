@@ -7782,24 +7782,24 @@ var wpDesktop = function(exports) {
     } else {
       seed$1.push(def);
     }
-    notify();
+    notify$1();
   }
   function unregister$1(id) {
     const idx = seed$1.findIndex((w) => w.id === id);
     if (idx >= 0) {
       seed$1.splice(idx, 1);
-      notify();
+      notify$1();
     }
   }
-  const listeners = /* @__PURE__ */ new Set();
+  const listeners$1 = /* @__PURE__ */ new Set();
   function subscribe(cb) {
-    listeners.add(cb);
+    listeners$1.add(cb);
     return () => {
-      listeners.delete(cb);
+      listeners$1.delete(cb);
     };
   }
-  function notify() {
-    const snapshot = Array.from(listeners);
+  function notify$1() {
+    const snapshot = Array.from(listeners$1);
     for (const cb of snapshot) {
       try {
         cb();
@@ -9261,7 +9261,7 @@ var wpDesktop = function(exports) {
     }
     return value.replace(/["\\]/g, "\\$&");
   }
-  const registry = /* @__PURE__ */ new Map();
+  const registry$1 = /* @__PURE__ */ new Map();
   function registerModule(def) {
     if (!def || typeof def.id !== "string" || def.id === "") {
       if (typeof console !== "undefined") {
@@ -9277,16 +9277,16 @@ var wpDesktop = function(exports) {
       }
       return;
     }
-    registry.set(def.id, def);
+    registry$1.set(def.id, def);
   }
   function moduleIds() {
-    return Array.from(registry.keys());
+    return Array.from(registry$1.keys());
   }
   async function loadModules(ids) {
     if (!ids || ids.length === 0) {
       return;
     }
-    const unknown = ids.filter((id) => !registry.has(id));
+    const unknown = ids.filter((id) => !registry$1.has(id));
     if (unknown.length > 0) {
       throw new Error(
         `[wp-desktop-mode] Unknown module(s) in needs: ${unknown.map((id) => `"${id}"`).join(", ")}. Known modules: ${moduleIds().join(", ") || "(none)"}.`
@@ -9294,7 +9294,7 @@ var wpDesktop = function(exports) {
     }
     await Promise.all(
       ids.map((id) => {
-        const def = registry.get(id);
+        const def = registry$1.get(id);
         if (!def) {
           return Promise.resolve();
         }
@@ -11024,6 +11024,85 @@ var wpDesktop = function(exports) {
       }
     }
   }
+  const registry = /* @__PURE__ */ new Map();
+  const listeners = /* @__PURE__ */ new Set();
+  function registerCommand(cmd) {
+    if (!cmd || typeof cmd.slug !== "string" || cmd.slug.trim() === "") {
+      return;
+    }
+    if (typeof cmd.label !== "string" || cmd.label.trim() === "") {
+      return;
+    }
+    if (typeof cmd.run !== "function") {
+      return;
+    }
+    const slug = cmd.slug.trim().toLowerCase();
+    if (!/^[a-z0-9_\-]+$/.test(slug)) {
+      if (typeof console !== "undefined") {
+        console.warn(
+          "[wp-desktop-mode] registerCommand: slug must be [a-z0-9_-]+, got",
+          cmd.slug
+        );
+      }
+      return;
+    }
+    registry.set(slug, { ...cmd, slug });
+    notify();
+  }
+  function unregisterCommand(slug) {
+    if (registry.delete(slug.toLowerCase())) {
+      notify();
+    }
+  }
+  function listCommands() {
+    return Array.from(registry.values());
+  }
+  function findCommand(slug) {
+    return registry.get(slug.toLowerCase()) ?? null;
+  }
+  function filterCommands(query) {
+    const q = query.trim().toLowerCase();
+    if (q === "") {
+      return listCommands();
+    }
+    return listCommands().filter(
+      (c) => c.slug.toLowerCase().startsWith(q) || c.label.toLowerCase().includes(q)
+    );
+  }
+  function subscribeCommands(cb) {
+    listeners.add(cb);
+    return () => {
+      listeners.delete(cb);
+    };
+  }
+  function notify() {
+    const snapshot = Array.from(listeners);
+    for (const cb of snapshot) {
+      try {
+        cb();
+      } catch (err) {
+        if (typeof console !== "undefined") {
+          console.error("[wp-desktop-mode] command-registry listener threw:", err);
+        }
+      }
+    }
+  }
+  function parseCommandInput(input) {
+    if (!input.startsWith("/")) {
+      return { isCommand: false, slug: "", args: "", hasArgsPart: false };
+    }
+    const rest = input.slice(1);
+    const spaceIdx = rest.indexOf(" ");
+    if (spaceIdx === -1) {
+      return { isCommand: true, slug: rest, args: "", hasArgsPart: false };
+    }
+    return {
+      isCommand: true,
+      slug: rest.slice(0, spaceIdx),
+      args: rest.slice(spaceIdx + 1),
+      hasArgsPart: true
+    };
+  }
   function escapeHtmlForMd(s) {
     return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
@@ -11096,6 +11175,11 @@ var wpDesktop = function(exports) {
       this._isSearching = false;
       this._previousFocus = null;
       this._currentStream = null;
+      this._selectedCommand = 0;
+      this._unsubCommands = null;
+      this._selectedSuggestion = 0;
+      this._currentSuggestions = [];
+      this._suggestToken = 0;
       this._aiSearchUrl = config.aiSearchUrl;
       this._aiSearchStreamUrl = config.aiSearchStreamUrl;
       this._restNonce = config.restNonce;
@@ -11107,6 +11191,11 @@ var wpDesktop = function(exports) {
       this._resultsEl = this._el.querySelector(".wp-desktop-ai__results");
       this._bindEvents();
       this._renderSuggestions();
+      this._unsubCommands = subscribeCommands(() => {
+        if (this._isOpen && this._input.value.startsWith("/")) {
+          this._renderCommandMode();
+        }
+      });
     }
     // ------------------------------------------------------------------
     // Public API
@@ -11120,6 +11209,7 @@ var wpDesktop = function(exports) {
       this._isOpen = true;
       this._previousFocus = document.activeElement;
       this._input.value = "";
+      this._selectedCommand = 0;
       this._submitBtn.classList.remove("has-value");
       this._renderSuggestions();
       this._el.removeAttribute("hidden");
@@ -11187,6 +11277,80 @@ var wpDesktop = function(exports) {
       this._closeBtn.addEventListener("click", () => this.close());
       this._submitBtn.addEventListener("click", () => this._onSubmit());
       this._input.addEventListener("keydown", (e) => {
+        const parsed = parseCommandInput(this._input.value);
+        if (parsed.isCommand && !parsed.hasArgsPart) {
+          const matches = filterCommands(parsed.slug);
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            this._selectedCommand = Math.min(
+              this._selectedCommand + 1,
+              Math.max(0, matches.length - 1)
+            );
+            this._renderCommandMode();
+            return;
+          }
+          if (e.key === "ArrowUp") {
+            e.preventDefault();
+            this._selectedCommand = Math.max(0, this._selectedCommand - 1);
+            this._renderCommandMode();
+            return;
+          }
+          if (e.key === "Tab" && matches.length > 0) {
+            e.preventDefault();
+            const pick = matches[this._selectedCommand] ?? matches[0];
+            this._input.value = `/${pick.slug} `;
+            this._submitBtn.classList.add("has-value");
+            this._selectedSuggestion = 0;
+            this._renderCommandMode();
+            return;
+          }
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            if (matches.length === 0) {
+              this._showError(`Unknown command: /${parsed.slug}`);
+              return;
+            }
+            const pick = matches[this._selectedCommand] ?? matches[0];
+            this._runCommand(pick, "");
+            return;
+          }
+        }
+        if (parsed.isCommand && parsed.hasArgsPart) {
+          const cmd = findCommand(parsed.slug);
+          const hasSuggest = !!cmd && typeof cmd.suggest === "function";
+          if (hasSuggest && this._currentSuggestions.length > 0) {
+            if (e.key === "ArrowDown") {
+              e.preventDefault();
+              this._selectedSuggestion = Math.min(
+                this._selectedSuggestion + 1,
+                this._currentSuggestions.length - 1
+              );
+              this._paintSuggestionSelection();
+              return;
+            }
+            if (e.key === "ArrowUp") {
+              e.preventDefault();
+              this._selectedSuggestion = Math.max(0, this._selectedSuggestion - 1);
+              this._paintSuggestionSelection();
+              return;
+            }
+            if (e.key === "Tab") {
+              e.preventDefault();
+              const pick = this._currentSuggestions[this._selectedSuggestion];
+              if (pick) {
+                this._input.value = `/${parsed.slug} ${pick.value}`;
+              }
+              return;
+            }
+            if (e.key === "Enter" && !e.shiftKey && cmd) {
+              e.preventDefault();
+              const pick = this._currentSuggestions[this._selectedSuggestion];
+              const finalArgs = pick ? pick.value : parsed.args;
+              this._runCommand(cmd, finalArgs);
+              return;
+            }
+          }
+        }
         if (e.key === "Enter" && !e.shiftKey) {
           e.preventDefault();
           this._onSubmit();
@@ -11195,18 +11359,90 @@ var wpDesktop = function(exports) {
       this._input.addEventListener("input", () => {
         const hasValue = this._input.value.trim().length > 0;
         this._submitBtn.classList.toggle("has-value", hasValue);
-        if (!hasValue) {
+        this._selectedCommand = 0;
+        this._selectedSuggestion = 0;
+        if (this._input.value.startsWith("/")) {
+          this._renderCommandMode();
+        } else if (!hasValue) {
           this._renderSuggestions();
-        }
+        } else ;
       });
     }
     // ------------------------------------------------------------------
     // Flow
     // ------------------------------------------------------------------
     async _onSubmit() {
-      const query = this._input.value.trim();
-      if (!query || this._isSearching) return;
-      await this._runSearch(query, null, 0);
+      const raw = this._input.value.trim();
+      if (!raw || this._isSearching) return;
+      const parsed = parseCommandInput(this._input.value);
+      if (parsed.isCommand) {
+        const cmd = findCommand(parsed.slug);
+        if (!cmd) {
+          this._showError(`Unknown command: /${parsed.slug}`);
+          return;
+        }
+        await this._runCommand(cmd, parsed.args);
+        return;
+      }
+      await this._runSearch(raw, null, 0);
+    }
+    /**
+     * Invoke a plugin-registered command. Handles both sync and async
+     * handlers, renders the return value the same way we render an AI
+     * answer, and surfaces thrown errors as an error-state bubble.
+     */
+    async _runCommand(cmd, args) {
+      if (this._isSearching) return;
+      this._isSearching = true;
+      this._submitBtn.disabled = true;
+      this._input.disabled = true;
+      this._showThinking(`Running /${cmd.slug}…`);
+      const ctx = {
+        close: () => this.close(),
+        openInWindow: (url, title, icon) => this._openInLegacyWindow(url, title, icon)
+      };
+      try {
+        const result = await Promise.resolve(cmd.run(args, ctx));
+        this._renderCommandResult(cmd, result);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this._showError(`Command /${cmd.slug} failed: ${msg}`);
+      } finally {
+        this._isSearching = false;
+        this._submitBtn.disabled = false;
+        this._input.disabled = false;
+        this._input.focus();
+      }
+    }
+    /**
+     * Render the value returned by a command. A `void` return means
+     * the command performed a side-effect (e.g. opened a window) and
+     * doesn't need a bubble; in that case we clear the results area.
+     * A plain string is shorthand for `{ message: string }`.
+     */
+    _renderCommandResult(cmd, result) {
+      if (result === void 0 || result === null) {
+        this._clearResults();
+        return;
+      }
+      const answer = typeof result === "string" ? {
+        answer_type: "chat",
+        message: result,
+        entity: null,
+        admin_links: null,
+        iterations: 0,
+        exhausted: true,
+        continue: null
+      } : {
+        answer_type: result.answer_type ?? "chat",
+        message: result.message,
+        entity: result.entity ?? null,
+        admin_links: result.admin_links ?? null,
+        iterations: 0,
+        exhausted: true,
+        continue: null
+      };
+      this._showResult("", answer);
     }
     _runSearch(query, resumeTool, startOffset) {
       if (this._isSearching) return;
@@ -11337,6 +11573,189 @@ var wpDesktop = function(exports) {
     // ------------------------------------------------------------------
     // Rendering
     // ------------------------------------------------------------------
+    /**
+     * Render the slash-command palette — filtered list of commands
+     * matching the current input. If the user has typed a slug followed
+     * by a space, we're in "args" mode so we only show the one locked-in
+     * command with a hint rather than a filterable list.
+     */
+    _renderCommandMode() {
+      this._resultsEl.hidden = false;
+      const parsed = parseCommandInput(this._input.value);
+      if (parsed.hasArgsPart) {
+        const cmd = findCommand(parsed.slug);
+        if (cmd) {
+          this._renderArgsMode(cmd, parsed.args);
+          return;
+        }
+      }
+      const matches = filterCommands(parsed.slug);
+      if (matches.length === 0) {
+        this._resultsEl.innerHTML = `
+				<div class="wp-desktop-ai__state wp-desktop-ai__state--empty">
+					<span>No commands matching <strong>/${this._esc(parsed.slug)}</strong>.</span>
+				</div>
+			`;
+        return;
+      }
+      if (this._selectedCommand >= matches.length) {
+        this._selectedCommand = 0;
+      }
+      const items = matches.map((c, i) => {
+        const selected = i === this._selectedCommand ? " is-selected" : "";
+        return `
+					<button
+						type="button"
+						class="wp-desktop-ai__cmd-item${selected}"
+						data-slug="${this._esc(c.slug)}"
+						data-index="${i}"
+					>
+						<span class="wp-desktop-ai__cmd-icon dashicons ${this._esc(
+          c.icon ?? "dashicons-arrow-right-alt"
+        )}" aria-hidden="true"></span>
+						<span class="wp-desktop-ai__cmd-body">
+							<span class="wp-desktop-ai__cmd-title">
+								/${this._esc(c.slug)}
+								${c.hint ? `<span class="wp-desktop-ai__cmd-hint">${this._esc(c.hint)}</span>` : ""}
+							</span>
+							${c.description ? `<span class="wp-desktop-ai__cmd-desc">${this._esc(c.description)}</span>` : ""}
+						</span>
+					</button>
+				`;
+      }).join("");
+      this._resultsEl.innerHTML = `
+			<div class="wp-desktop-ai__cmd-list">
+				<p class="wp-desktop-ai__suggestions-label">Commands</p>
+				${items}
+			</div>
+		`;
+      this._resultsEl.querySelectorAll(".wp-desktop-ai__cmd-item").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const slug = btn.dataset.slug ?? "";
+          this._input.value = `/${slug} `;
+          this._submitBtn.classList.add("has-value");
+          this._input.focus();
+          this._renderCommandMode();
+        });
+        btn.addEventListener("mouseenter", () => {
+          const idx = parseInt(btn.dataset.index ?? "0", 10);
+          if (!Number.isNaN(idx)) {
+            this._selectedCommand = idx;
+            this._resultsEl.querySelectorAll(".wp-desktop-ai__cmd-item").forEach((el, i) => el.classList.toggle("is-selected", i === idx));
+          }
+        });
+      });
+    }
+    /**
+     * Render args-mode UI for a locked-in command. If the command has a
+     * `suggest()` handler, fetch it (sync or async) and render the
+     * returned list. Otherwise fall back to a single-row "Press Enter
+     * to run" card.
+     */
+    _renderArgsMode(cmd, args) {
+      if (typeof cmd.suggest !== "function") {
+        this._currentSuggestions = [];
+        this._resultsEl.innerHTML = this._renderCommandHeader(cmd, true);
+        return;
+      }
+      const myToken = ++this._suggestToken;
+      const ctx = {
+        close: () => this.close(),
+        openInWindow: (url, title, icon) => this._openInLegacyWindow(url, title, icon)
+      };
+      let result;
+      try {
+        result = cmd.suggest(args, ctx);
+      } catch {
+        result = [];
+      }
+      const render2 = (suggestions) => {
+        if (myToken !== this._suggestToken) {
+          return;
+        }
+        this._currentSuggestions = suggestions;
+        if (this._selectedSuggestion >= suggestions.length) {
+          this._selectedSuggestion = 0;
+        }
+        this._resultsEl.innerHTML = this._renderCommandHeader(cmd, false) + this._renderSuggestionList(suggestions);
+        this._resultsEl.querySelectorAll(".wp-desktop-ai__cmd-suggest-item").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const idx = parseInt(btn.dataset.index ?? "0", 10);
+            const pick = suggestions[idx];
+            if (pick) {
+              this._input.value = `/${cmd.slug} ${pick.value}`;
+              this._runCommand(cmd, pick.value);
+            }
+          });
+          btn.addEventListener("mouseenter", () => {
+            const idx = parseInt(btn.dataset.index ?? "0", 10);
+            if (!Number.isNaN(idx)) {
+              this._selectedSuggestion = idx;
+              this._paintSuggestionSelection();
+            }
+          });
+        });
+      };
+      if (result && typeof result.then === "function") {
+        this._resultsEl.innerHTML = this._renderCommandHeader(cmd, false);
+        result.then((r) => render2(Array.isArray(r) ? r : [])).catch(() => render2([]));
+      } else {
+        render2(Array.isArray(result) ? result : []);
+      }
+    }
+    /** Render the command banner used at the top of args-mode. */
+    _renderCommandHeader(cmd, standalone) {
+      return `
+			<div class="wp-desktop-ai__cmd-active">
+				<span class="wp-desktop-ai__cmd-icon dashicons ${this._esc(
+        cmd.icon ?? "dashicons-arrow-right-alt"
+      )}" aria-hidden="true"></span>
+				<div class="wp-desktop-ai__cmd-body">
+					<span class="wp-desktop-ai__cmd-title">
+						/${this._esc(cmd.slug)}
+						${cmd.hint ? `<span class="wp-desktop-ai__cmd-hint">${this._esc(cmd.hint)}</span>` : ""}
+					</span>
+					${cmd.description ? `<span class="wp-desktop-ai__cmd-desc">${this._esc(cmd.description)}</span>` : ""}
+					${standalone ? '<span class="wp-desktop-ai__cmd-enter-hint">Press <kbd>↵</kbd> to run</span>' : ""}
+				</div>
+			</div>
+		`;
+    }
+    /** Render the list of suggestions under the command header. */
+    _renderSuggestionList(suggestions) {
+      if (suggestions.length === 0) {
+        return `
+				<div class="wp-desktop-ai__state wp-desktop-ai__state--empty">
+					<span>No suggestions — press <kbd>↵</kbd> to run with the text you typed.</span>
+				</div>
+			`;
+      }
+      const items = suggestions.map((s, i) => {
+        const selected = i === this._selectedSuggestion ? " is-selected" : "";
+        return `
+					<button
+						type="button"
+						class="wp-desktop-ai__cmd-suggest-item${selected}"
+						data-index="${i}"
+					>
+						<span class="wp-desktop-ai__cmd-icon dashicons ${this._esc(
+          s.icon ?? "dashicons-arrow-right-alt"
+        )}" aria-hidden="true"></span>
+						<span class="wp-desktop-ai__cmd-body">
+							<span class="wp-desktop-ai__cmd-suggest-label">${this._esc(s.label)}</span>
+							${s.description ? `<span class="wp-desktop-ai__cmd-desc">${this._esc(s.description)}</span>` : ""}
+						</span>
+					</button>
+				`;
+      }).join("");
+      return `<div class="wp-desktop-ai__cmd-suggest-list">${items}</div>`;
+    }
+    /** Flip the is-selected class on the suggestion rows without re-rendering the whole list. */
+    _paintSuggestionSelection() {
+      this._resultsEl.querySelectorAll(".wp-desktop-ai__cmd-suggest-item").forEach((el, i) => {
+        el.classList.toggle("is-selected", i === this._selectedSuggestion);
+      });
+    }
     _renderSuggestions() {
       this._resultsEl.hidden = false;
       this._resultsEl.innerHTML = `
@@ -11593,6 +12012,87 @@ var wpDesktop = function(exports) {
         new CustomEvent(DRAG_BRIDGE_EVENTS.END, { detail: { payload } })
       );
     }
+  }
+  function collectOpenables() {
+    const desktop = window.wp?.desktop;
+    if (!desktop) {
+      return [];
+    }
+    const wm = desktop.windowManager;
+    const config = desktop.config;
+    if (!wm || !config) {
+      return [];
+    }
+    const items = [];
+    const fromMenu = (item, group) => ({
+      id: item.id,
+      label: item.title,
+      description: group,
+      icon: item.icon,
+      open: () => wm.open({
+        id: item.id,
+        baseId: item.id,
+        url: item.url,
+        title: item.title,
+        icon: item.icon
+      })
+    });
+    for (const item of config.dockItems ?? []) {
+      items.push(fromMenu(item, "Admin menu"));
+    }
+    for (const item of config.taskbarItems ?? []) {
+      items.push(fromMenu(item, "Plugin"));
+    }
+    const filtered = applyFilters(
+      "wp-desktop.open-command.items",
+      items
+    );
+    return Array.isArray(filtered) ? filtered : items;
+  }
+  const openCommand = {
+    slug: "open",
+    label: "Open",
+    description: "Open an admin page or registered window.",
+    hint: "[window]",
+    icon: "dashicons-external",
+    /**
+     * Suggest matching windows as the user types args. Simple
+     * case-insensitive substring match against label AND id so
+     * "add" finds "Add New Post" and "jorvy" finds Jorvy whether
+     * the plugin listed it with a friendly label or the slug.
+     */
+    suggest(args) {
+      const q = args.trim().toLowerCase();
+      const list = collectOpenables();
+      const hits = q === "" ? list : list.filter(
+        (w) => w.label.toLowerCase().includes(q) || w.id.toLowerCase().includes(q)
+      );
+      return hits.slice(0, 12).map((w) => ({
+        value: w.label,
+        label: w.label,
+        description: w.description,
+        icon: w.icon ?? "dashicons-external"
+      }));
+    },
+    run(args, ctx) {
+      const q = args.trim();
+      if (!q) {
+        return "Type the name of a window to open, for example `/open Posts`.";
+      }
+      const list = collectOpenables();
+      const ql = q.toLowerCase();
+      const match = list.find((w) => w.label.toLowerCase() === ql || w.id.toLowerCase() === ql) ?? list.find(
+        (w) => w.label.toLowerCase().includes(ql) || w.id.toLowerCase().includes(ql)
+      );
+      if (!match) {
+        return `No window matching **${q}** — try \`/open\` alone to see available options.`;
+      }
+      match.open();
+      ctx.close();
+    }
+  };
+  function registerBuiltInCommands() {
+    registerCommand(openCommand);
   }
   const clock = {
     id: "clock",
@@ -12433,9 +12933,13 @@ var wpDesktop = function(exports) {
       refreshMenu,
       config,
       ai: aiAssistant,
-      dragBridge
+      dragBridge,
+      registerCommand,
+      unregisterCommand,
+      listCommands
     };
     doAction(HOOKS.COMPONENTS_REGISTERED, { tags: [...WPD_COMPONENT_TAGS] });
+    registerBuiltInCommands();
     doAction(HOOKS.INIT, { config });
     osSettings.apply();
     widgetLayer?.hydrate();

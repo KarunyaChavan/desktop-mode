@@ -41,6 +41,13 @@ import {
 import { renderDesktopIcons } from './desktop-icons';
 import { AiAssistant, type AiAssistantApi } from './ai-assistant';
 import { DragBridge, type DragBridgeApi } from './drag-bridge';
+import {
+	registerCommand,
+	unregisterCommand,
+	listCommands,
+	type DesktopCommand,
+} from './commands';
+import { registerBuiltInCommands } from './built-in-commands';
 
 /**
  * Origin snapshot taken at shell module load. Every same-origin gate
@@ -244,6 +251,30 @@ export interface WpDesktopPublicApi {
 	 * @since 0.14.0
 	 */
 	dragBridge: DragBridgeApi;
+	/**
+	 * Register a slash-command that appears in the Cmd+K palette.
+	 *
+	 * ```js
+	 * wp.desktop.registerCommand( {
+	 *   slug: 'turn_on_comments',
+	 *   label: 'Turn on comments',
+	 *   hint: '[post id]',
+	 *   icon: 'dashicons-admin-comments',
+	 *   run: ( args, ctx ) => {
+	 *     // ...perform action...
+	 *     ctx.close();
+	 *     return `Enabled comments on post ${ args.trim() }.`;
+	 *   },
+	 * } );
+	 * ```
+	 *
+	 * @since 0.14.0
+	 */
+	registerCommand:    ( cmd: DesktopCommand ) => void;
+	/** Remove a previously registered command by slug. @since 0.14.0 */
+	unregisterCommand:  ( slug: string ) => void;
+	/** Snapshot of all currently registered commands. @since 0.14.0 */
+	listCommands:       () => DesktopCommand[];
 }
 
 declare global {
@@ -729,6 +760,9 @@ function init(): void {
 		config,
 		ai:         aiAssistant,
 		dragBridge,
+		registerCommand,
+		unregisterCommand,
+		listCommands,
 	};
 
 	// Fire `wp-desktop.init` — plugins can now register wallpapers
@@ -741,6 +775,14 @@ function init(): void {
 	// to either hook (components first, init second) and rely on the
 	// ordering.
 	doAction( HOOKS.COMPONENTS_REGISTERED, { tags: [ ...WPD_COMPONENT_TAGS ] } );
+
+	// Built-in slash-commands (`/open`). Registered AFTER the public
+	// API is mounted so the command's `suggest()` / `run()` can read
+	// `wp.desktop.config` + `windowManager`, and BEFORE `HOOKS.INIT`
+	// so plugin subscribers that want to extend via
+	// `wp-desktop.open-command.items` can rely on the command being
+	// in the registry.
+	registerBuiltInCommands();
 
 	doAction( HOOKS.INIT, { config } );
 

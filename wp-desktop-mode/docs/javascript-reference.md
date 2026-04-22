@@ -206,6 +206,165 @@ window.wp.desktop.saveSession();
 
 ---
 
+### `registerCommand( def )` — Stable
+Registers a slash-command that appears in the AI Assistant palette (⌘K). The user types `/<slug>` to invoke your handler; arguments are whatever they type after the slug.
+
+Registrations are live — if the palette is open when you call this, the new command shows up immediately. Re-registering the same slug replaces the previous definition.
+
+**Definition shape:**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `slug` | `string` | yes | Must match `/^[a-z0-9_-]+$/` |
+| `label` | `string` | yes | Human-readable name shown in the palette |
+| `description` | `string` | no | One-line description under the label |
+| `hint` | `string` | no | Argument hint, e.g. `"[post id]"` |
+| `icon` | `string` | no | Dashicons class, default `dashicons-arrow-right-alt` |
+| `suggest( args, ctx )` | `function` | no | Argument autocomplete. Returns or resolves to `CommandSuggestion[]`. When present, the palette renders a live list the user can navigate with ↑/↓ and commit with Tab / Enter. |
+| `run( args, ctx )` | `function` | yes | Handler. `args` is the raw text after `/<slug> `. May be async. |
+
+**`CommandSuggestion` shape:**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `value` | `string` | yes | Inserted into the input when Tab-completed; received as `args` by `run()` when the user commits this suggestion. |
+| `label` | `string` | yes | Rendered in the list. |
+| `description` | `string` | no | Muted second line. |
+| `icon` | `string` | no | Dashicons class. |
+
+**`CommandContext` passed to `run` and `suggest`:**
+
+- `ctx.close()` — dismiss the AI Assistant panel.
+- `ctx.openInWindow( url, title, icon? )` — open a wp-admin URL in a legacy iframe window on the desktop.
+
+**Return value** — the handler may return any of:
+
+- `void` / `undefined` — silent success. Useful when you've called `ctx.close()` or performed a side-effect.
+- `"a string"` — shorthand for a plain chat bubble.
+- `{ message, answer_type?, admin_links?, entity? }` — full AI-answer shape. `answer_type` is `"chat"` by default.
+
+**Minimal example — `/echo hello → hello`:**
+
+```javascript
+window.wp.desktop.registerCommand( {
+    slug: 'echo',
+    label: 'Echo',
+    description: 'Repeat the arguments back as a message.',
+    hint: '[text]',
+    icon: 'dashicons-format-chat',
+    run: ( args ) => args.trim() || 'Usage: /echo [text]',
+} );
+```
+
+Type `/echo hello` → the assistant replies with `hello`. Type `/echo` with no args → it replies with the usage hint.
+
+**Richer example — `/turn_on_comments` with a REST call:**
+
+```javascript
+window.wp.desktop.registerCommand( {
+    slug: 'turn_on_comments',
+    label: 'Turn on comments',
+    description: 'Re-enable the comments section on a given post.',
+    hint: '[post id]',
+    icon: 'dashicons-admin-comments',
+    run: async ( args, ctx ) => {
+        const id = parseInt( args.trim(), 10 );
+        if ( ! id ) return 'Usage: /turn_on_comments [post id]';
+
+        await fetch( `/wp-json/my-plugin/v1/enable-comments/${ id }`, {
+            method:  'POST',
+            headers: { 'X-WP-Nonce': wpDesktopConfig.restNonce },
+        } );
+
+        ctx.close();
+        return `Comments enabled on post ${ id }.`;
+    },
+} );
+```
+
+**Errors** thrown from `run` are caught and rendered as an error bubble — the panel doesn't crash.
+
+---
+
+### `unregisterCommand( slug )` — Stable
+Remove a previously registered command. Idempotent.
+
+```javascript
+window.wp.desktop.unregisterCommand( 'echo' );
+```
+
+---
+
+### `listCommands()` — Stable
+Returns a snapshot of every currently registered command as an array. Useful for a debug console or a "help" meta-command.
+
+```javascript
+window.wp.desktop.listCommands().forEach( ( c ) => console.log( `/${ c.slug } — ${ c.label }` ) );
+```
+
+---
+
+### Built-in `/open` — Stable
+The shell registers one built-in command at boot: `/open [window]`. It opens any admin menu entry (dock or taskbar) in a legacy iframe window — `/open Posts`, `/open Plugins`, `/open Media`, etc. Autocomplete starts empty; as the user types, the list filters by case-insensitive substring match against label and id.
+
+Plugins extend the `/open` autocomplete via the **`wp-desktop.open-command.items`** filter:
+
+```javascript
+wp.hooks.addFilter(
+    'wp-desktop.open-command.items',
+    'my-plugin',
+    ( items ) => [
+        ...items,
+        {
+            id: 'jorvy',
+            label: 'Jorvy',
+            description: 'Marvel quotes',
+            icon: 'dashicons-star-filled',
+            open: () => wp.desktop.windowManager.focus( 'jorvy' ),
+        },
+    ],
+);
+```
+
+Each entry is `{ id, label, description?, icon?, open }`. The filter runs every time the user opens the palette, so a plugin can show/hide entries dynamically (e.g. by user capability).
+
+---
+
+### Example: a command with `suggest()` autocomplete
+
+```javascript
+window.wp.desktop.registerCommand( {
+    slug:  'assign_author',
+    label: 'Assign author',
+    hint:  '[post id] [username]',
+    icon:  'dashicons-admin-users',
+
+    // Async suggestions — fetch users from the REST API as the
+    // user types the second argument.
+    suggest: async ( args ) => {
+        const parts = args.split( /\s+/ );
+        if ( parts.length < 2 ) return [];  // still typing post id
+        const q = parts[ 1 ];
+        if ( q.length < 2 ) return [];
+
+        const res = await fetch( `/wp-json/wp/v2/users?search=${ encodeURIComponent( q ) }` );
+        const users = await res.json();
+        return users.map( ( u ) => ( {
+            value: `${ parts[ 0 ] } ${ u.slug }`,
+            label: u.name,
+            description: `@${ u.slug }`,
+            icon: 'dashicons-admin-users',
+        } ) );
+    },
+
+    run: async ( args, ctx ) => {
+        // ...
+    },
+} );
+```
+
+---
+
 ## 3. `postMessage` bridge
 
 For communication between the parent shell and iframe admin pages. Every message is validated for `event.origin === window.location.origin`.

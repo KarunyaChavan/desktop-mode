@@ -89,10 +89,10 @@ Works with any WordPress you already have: [Studio by WordPress.com](https://dev
 Package the repo as a plugin zip:
 
 ```bash
-git archive --format=zip --prefix=wp-desktop-mode/ -o wp-desktop-mode.zip HEAD
+npm run package
 ```
 
-> Uses the last committed state. If you changed source, run `npm run build` and commit the regenerated `assets/js/desktop*.js` first — they're tracked.
+> Packages `HEAD` with correct file/dir permissions (0644 / 0755) so WordPress can read the files after extraction. If you changed source, run `npm run build` and commit the regenerated `assets/js/desktop*.js` first — they're tracked.
 
 Then in WP Admin go to **Plugins → Add New → Upload Plugin**, choose `wp-desktop-mode.zip`, and activate. Skip ahead to [§4 Activate & toggle](#4-activate--toggle).
 

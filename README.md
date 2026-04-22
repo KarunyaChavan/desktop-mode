@@ -6,7 +6,7 @@ Zero Core patches. Every feature is wired through public WordPress hooks.
 
 ## Demo
 
-<video src="https://github.com/user-attachments/assets/588f2e7f-4ed0-403d-b7f6-79d31fd1c730" controls width="720"></video>
+<video src="https://github.com/user-attachments/assets/590aacc2-e9d7-4213-889e-b91e060e1bd8" controls width="720"></video>
 
 ---
 

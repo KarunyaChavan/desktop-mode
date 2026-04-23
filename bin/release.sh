@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # End-to-end local release: bump, commit, push, wait for CI, tag, push tag.
-# The tag push fires release.yml, which builds and publishes the Release.
+# Idempotent — safe to re-run if a previous attempt failed mid-flow.
 
 set -euo pipefail
 
@@ -31,9 +31,26 @@ if [[ "$(git rev-parse HEAD)" != "$(git rev-parse origin/trunk)" ]]; then
 	exit 1
 fi
 
-./bin/bump-version.sh "$new"
-git commit -am "chore: bump to $new"
-git push origin trunk
+# Refuse to clobber an existing release.
+if git rev-parse "$tag" >/dev/null 2>&1; then
+	echo "error: tag $tag already exists locally. Delete it or choose a different version." >&2
+	exit 1
+fi
+if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+	echo "error: tag $tag already exists on origin. Choose a different version." >&2
+	exit 1
+fi
+
+# Resume-friendly: skip bump+commit+push if HEAD is already at the target
+# version (the sync check above guarantees HEAD == origin/trunk).
+current=$(node -p "require('./package.json').version")
+if [[ "$current" == "$new" ]]; then
+	echo "package.json already at $new — skipping bump, resuming at CI wait."
+else
+	./bin/bump-version.sh "$new"
+	git commit -am "chore: bump to $new"
+	git push origin trunk
+fi
 
 sha=$(git rev-parse HEAD)
 echo "Waiting for CI on ${sha}..."

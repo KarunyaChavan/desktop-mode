@@ -1,23 +1,81 @@
 name: Release
 
-# Fires when a vX.Y.Z tag is pushed. The tag must match package.json,
-# the plugin header Version:, and the WPDM_VERSION constant — otherwise
-# the workflow fails loudly. Catches "forgot to bump one of the three".
+# Two entry points, same outcome (tag + published Release with zip):
+#   1. push a vX.Y.Z tag       → skips the `bump` job, goes straight to build+publish
+#   2. workflow_dispatch with a version → `bump` job edits trunk and pushes the tag,
+#      then build+publish runs against it.
 
 on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (no v prefix, e.g., 0.5.0 or 0.5.0-rc1)'
+        required: true
+        type: string
 
 permissions:
   contents: write
 
 jobs:
-  release:
-    name: Build & publish release
+  bump:
+    name: Bump and tag
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: trunk
+          fetch-depth: 0
+
+      - name: Validate version
+        run: |
+          v="${{ inputs.version }}"
+          if ! [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$ ]]; then
+            echo "::error::'$v' is not a valid version (expected X.Y.Z or X.Y.Z-prerelease)"
+            exit 1
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Bump, commit, tag, push
+        run: |
+          v="${{ inputs.version }}"
+          ./bin/bump-version.sh "$v"
+          git commit -am "chore: bump to $v"
+          git push origin trunk
+          git tag "v$v"
+          git push origin "v$v"
+
+  release:
+    name: Build & publish release
+    needs: [bump]
+    # Runs in both paths: when `bump` succeeded (dispatch) or was skipped (tag push).
+    if: always() && (needs.bump.result == 'success' || needs.bump.result == 'skipped')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Determine tag
+        id: tag
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "tag=v${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -31,11 +89,12 @@ jobs:
 
       - name: Verify tag matches plugin version
         run: |
-          tag="${GITHUB_REF_NAME#v}"
+          tag="${{ steps.tag.outputs.tag }}"
+          tag="${tag#v}"
           pkg=$(node -p "require('./package.json').version")
           header=$(grep -oP '^\s*\*\s*Version:\s*\K\S+' wp-desktop-mode.php)
           constant=$(grep -oP "WPDM_VERSION',\s*'\K[^']+" wp-desktop-mode.php)
-          if [[ "$tag" != "$pkg" || "$tag" != "$header" || "$tag" != "$constant" ]]; then
+          if ! [[ "$tag" == "$pkg" && "$tag" == "$header" && "$tag" == "$constant" ]]; then
             echo "::error::Version mismatch — tag '$tag' vs package.json=$pkg header=$header WPDM_VERSION=$constant"
             exit 1
           fi
@@ -50,12 +109,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          tag="${{ steps.tag.outputs.tag }}"
           flags=()
-          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+          if [[ "$tag" == *-* ]]; then
             flags+=(--prerelease)
           fi
-          gh release create "$GITHUB_REF_NAME" \
-            --title "$GITHUB_REF_NAME" \
+          gh release create "$tag" \
+            --title "$tag" \
             --generate-notes \
             "${flags[@]}" \
             wp-desktop-mode.zip

@@ -36,7 +36,7 @@ git commit -am "chore: bump to $new"
 git push origin trunk
 
 sha=$(git rev-parse HEAD)
-echo "Waiting for CI on $sha…"
+echo "Waiting for CI on ${sha}..."
 
 # CI may take a couple of seconds to register the run after the push.
 run_id=""

@@ -1,0 +1,61 @@
+name: Release
+
+# Fires when a vX.Y.Z tag is pushed. The tag must match package.json,
+# the plugin header Version:, and the WPDM_VERSION constant — otherwise
+# the workflow fails loudly. Catches "forgot to bump one of the three".
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & publish release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify tag matches plugin version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg=$(node -p "require('./package.json').version")
+          header=$(grep -oP '^\s*\*\s*Version:\s*\K\S+' wp-desktop-mode.php)
+          constant=$(grep -oP "WPDM_VERSION',\s*'\K[^']+" wp-desktop-mode.php)
+          if [[ "$tag" != "$pkg" || "$tag" != "$header" || "$tag" != "$constant" ]]; then
+            echo "::error::Version mismatch — tag '$tag' vs package.json=$pkg header=$header WPDM_VERSION=$constant"
+            exit 1
+          fi
+
+      - name: Build
+        run: npm run build
+
+      - name: Package plugin zip
+        run: bin/package.sh
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          flags=()
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            flags+=(--prerelease)
+          fi
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            "${flags[@]}" \
+            wp-desktop-mode.zip

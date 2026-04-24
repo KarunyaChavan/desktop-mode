@@ -70,7 +70,20 @@ export interface CommandContext {
 	 * @param details Optional secondary line shown below the message.
 	 */
 	confirm( message: string, details?: string ): Promise< boolean >;
-	/** Show a toast / ephemeral message (future). Currently a no-op. */
+	/**
+	 * Show a toast / ephemeral message to the user.
+	 *
+	 * **Not yet wired — calls are silently dropped today.** Planned to
+	 * route through the shared toast layer in a follow-up release. If
+	 * you need user feedback from a command `run()` right now, return
+	 * a `string` or `{ message: string }` from `run()` and the
+	 * assistant overlay / `wp.desktop.ai.ask()` caller will surface
+	 * it as `res.message`. For out-of-band toasts, dispatch
+	 * `wp-desktop.shell.toast` via `wp.desktop.hooks.doAction()`.
+	 *
+	 * This field stays typed so command code written today compiles
+	 * against the final API unchanged.
+	 */
 	notify?: ( message: string ) => void;
 }
 
@@ -174,6 +187,25 @@ export interface DesktopCommand {
 	 * @since 0.15.0
 	 */
 	owner?: string;
+	/**
+	 * Opt into being callable by the AI Copilot as a tool.
+	 *
+	 * When `true`, `wp.desktop.ai.ask()` harvests this command into
+	 * the `command_tools` array sent to `/ai/search`. If the model
+	 * matches the user's query to this command, the server returns
+	 * `{ answer_type: 'tool_call', tool: { slug, args } }` and the
+	 * shell invokes the command's `run()` locally.
+	 *
+	 * Default `false`. Opt-in was chosen deliberately: the AI is a
+	 * natural-language surface, and handing it every registered
+	 * command (including destructive ones like `/delete_all_posts`)
+	 * would turn a typo into a catastrophe. Commands that are safe
+	 * to invoke via a paraphrased user intent ("turn on the lights")
+	 * set this explicitly.
+	 *
+	 * @since 0.17.0
+	 */
+	aiCallable?: boolean;
 	/**
 	 * Optional argument autocomplete. Called as the user types after
 	 * `/<slug> `, with the current args prefix. Returns (or resolves
@@ -292,6 +324,41 @@ export function unregisterByOwner( owner: string ): number {
 /** Return every registered command in insertion order. */
 export function listCommands(): DesktopCommand[] {
 	return Array.from( registry.values() );
+}
+
+/**
+ * Return every command opted in as an AI tool via `aiCallable: true`.
+ * The shape the AI Copilot wants is narrow — slug plus a bit of
+ * metadata for the model's tool-description field — so we project
+ * here rather than shipping the full `DesktopCommand` (including
+ * `run`/`suggest` closures) over the wire.
+ *
+ * @since 0.17.0
+ */
+export function listAiCallableCommands(): Array< {
+	slug: string;
+	label: string;
+	description: string;
+	hint: string;
+} > {
+	const out: Array< {
+		slug: string;
+		label: string;
+		description: string;
+		hint: string;
+	} > = [];
+	for ( const cmd of registry.values() ) {
+		if ( cmd.aiCallable !== true ) {
+			continue;
+		}
+		out.push( {
+			slug: cmd.slug,
+			label: cmd.label,
+			description: cmd.description ?? '',
+			hint: cmd.hint ?? '',
+		} );
+	}
+	return out;
 }
 
 /**

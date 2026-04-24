@@ -42,6 +42,8 @@ export type {
 	DesktopConfig,
 	DockItemConfig,
 	MonitorEntry,
+	DesktopSettingsTabScriptServerEntry,
+	DesktopSettingsTabServerEntry,
 	DesktopWallpaperServerEntry,
 	DesktopWidgetServerEntry,
 	NativeWindowDef,
@@ -116,7 +118,16 @@ export {
 	removeAction,
 	removeFilter,
 	whenReady,
+	whenReady as ready,
 } from './hooks';
+
+// ----- Settings tabs (OS Settings window extensibility) -----
+
+export type { DesktopSettingsTab, SettingsTabRenderCtx } from './settings/registry';
+
+// ----- AI Copilot programmatic API -----
+
+export type { AskFn, AskOptions, AskResult, AskToolCall } from './ai/ask';
 
 // ----- Public class types (for plugins that need to type-cast an
 // instance returned by `wp.desktop.windowManager` / `.dock`) -----
@@ -162,6 +173,7 @@ export {
 	WpdButton,
 	WpdCheckboxLabel,
 	WpdCluster,
+	WpdCode,
 	WpdColorField,
 	WpdDisplay,
 	WpdEmptyState,
@@ -176,6 +188,8 @@ export {
 	WpdSegment,
 	WpdSegmented,
 	WpdStack,
+	WpdStep,
+	WpdSteps,
 	WpdSwatch,
 	WpdSwatchGrid,
 	WpdTab,

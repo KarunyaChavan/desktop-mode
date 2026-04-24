@@ -1476,6 +1476,58 @@ function wpdm_chromeless_bridge_script() {
 		__wpdLog( '[wpd-cmd:iframe] bridge-ready postMessage threw', err );
 	}
 
+	/*
+	 * ` / Shift+` forwarder — window switcher.
+	 *
+	 * Bare backtick with no modifier. Must skip when focus is in a
+	 * text-entry element, otherwise typing ` into a block, a text
+	 * field, or TinyMCE would steal the keystroke. Non-text inputs
+	 * (checkbox, button, select) don't accept character input, so
+	 * cycling on those is fine.
+	 *
+	 * Same iframe-crossing rationale as the Cmd+K forwarder above:
+	 * native keydown doesn't reach the parent, so we postMessage.
+	 */
+	document.addEventListener( 'keydown', function ( e ) {
+		if ( e.ctrlKey || e.metaKey || e.altKey ) return;
+		if ( e.code !== 'Backquote' ) return;
+
+		// IFRAME case catches Gutenberg: the block canvas is a nested
+		// iframe, and Gutenberg re-dispatches cloned keydowns up to
+		// this document for its shortcut system. Without this branch
+		// typing ` in a block would cycle windows. Any other nested
+		// iframe owning keyboard handling gets the same treatment.
+		var el = document.activeElement;
+		if ( el ) {
+			var tag = el.tagName;
+			if ( tag === 'IFRAME' ) return;
+			if ( tag === 'TEXTAREA' ) return;
+			if ( tag === 'INPUT' ) {
+				var type = ( el.type || '' ).toLowerCase();
+				var textTypes = [
+					'text', 'search', 'url', 'email', 'password',
+					'tel', 'number', 'date', 'datetime-local',
+					'month', 'week', 'time'
+				];
+				if ( textTypes.indexOf( type ) !== -1 ) return;
+			}
+			if ( el.isContentEditable ) return;
+		}
+
+		e.preventDefault();
+		e.stopImmediatePropagation();
+
+		try {
+			window.parent.postMessage(
+				{
+					type:      'wp-desktop-window-switch',
+					direction: e.shiftKey ? 'prev' : 'next'
+				},
+				window.location.origin
+			);
+		} catch ( err ) { /* cross-origin parent; swallow */ }
+	}, true );
+
 	var links = document.getElementById( 'screen-meta-links' );
 	if ( ! links ) {
 		return;

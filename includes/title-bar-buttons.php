@@ -85,6 +85,10 @@ function wp_desktop_register_titlebar_button_script( $handle ) {
 function wpdm_desktop_titlebar_button_script_registry( $handle = '', $value = null ) {
 	static $store = array();
 
+	if ( '__flush__' === (string) $handle ) {
+		$store = array();
+		return array();
+	}
 	if ( '' === (string) $handle ) {
 		return $store;
 	}
@@ -92,6 +96,16 @@ function wpdm_desktop_titlebar_button_script_registry( $handle = '', $value = nu
 		$store[ (string) $handle ] = (bool) $value;
 	}
 	return isset( $store[ (string) $handle ] ) ? $store[ (string) $handle ] : false;
+}
+
+/**
+ * Test-only: clear the registry between PHPUnit cases. See
+ * {@see wpdm_flush_script_handle_registries()}.
+ *
+ * @since 0.18.0
+ */
+function wpdm_flush_desktop_titlebar_button_script_registry() {
+	wpdm_desktop_titlebar_button_script_registry( '__flush__' );
 }
 
 /**
@@ -116,6 +130,18 @@ function wpdm_build_desktop_titlebar_button_scripts_payload() {
 		}
 		$url = wpdm_resolve_script_url( $handle );
 		if ( '' === $url ) {
+			// Loud diagnostic — visible under WP_DEBUG. Plugin
+			// authors who pass a typo'd handle, or call our
+			// register helper before `wp_register_script()`, used
+			// to silently register nothing and stare at an empty
+			// title bar. Deduped by `wpdm_warn_unresolvable_script_handle`
+			// so the notice fires exactly once per handle per
+			// request, not on every shell-config rebuild.
+			wpdm_warn_unresolvable_script_handle(
+				'wp_desktop_register_titlebar_button_script',
+				'Title-bar button',
+				(string) $handle
+			);
 			continue;
 		}
 		$out[]           = array(

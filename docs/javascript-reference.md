@@ -1770,9 +1770,129 @@ Call it each frame (or throttled — the function is cheap but it does walk the 
 
 ---
 
+## DevTools / cross-plugin instrumentation (since 0.6.0)
+
+`wp.desktop.devtools` is the supported surface for third-party plugins that instrument windows registered by other plugins (SQL inspector, perf profiler, request logger). Reach for these primitives instead of wrapping `iframe.contentWindow` globals — multiple devtools can compose against the same window without fighting each other.
+
+### `wp.desktop.devtools.addRequestHeader( windowId, name, value )` — Experimental
+
+Contribute an HTTP header that the target window's iframe attaches to every fetch / XHR / sendBeacon. Returns a disposer.
+
+```js
+const stop = wp.desktop.devtools.addRequestHeader(
+    'wp-window-edit-php',
+    'X-WP-Debug-Session',
+    sessionId,
+);
+// later:
+stop();
+```
+
+`value` may be a literal string or a `() => string` thunk that recomputes per-request. Multiple contributors to the same name are joined with `, ` per RFC 7230. The header is removed when the last contributor disposes.
+
+### `wp.desktop.devtools.onRequest( windowId, cb, { observe } )` — Experimental
+
+Subscribe to every completed request from the target window. Returns a disposer.
+
+```js
+const stop = wp.desktop.devtools.onRequest(
+    windowId,
+    ( req ) => console.log( req.method, req.url, req.status ),
+    { observe: true }, // include request + response headers
+);
+```
+
+Default payload: `{ windowId, method, url, status, duration, failed }`. With `observe: true`: also `requestHeaders`, `responseHeaders`. The shell aggregates — as long as any active subscriber wants `observe`, the iframe runs in observation mode; otherwise it ships only the privacy-conscious summary.
+
+### `wp.desktop.devtools.reloadWithDebugSession( windowId, sessionId, opts? )` — Experimental
+
+Reload a window's iframe with a debug session id baked into both the URL and the request-header contribution registry. Bundles four boilerplate steps every devtool would otherwise re-derive:
+
+```js
+const sessionId = wp.desktop.devtools.debug.startSession();
+const handle = wp.desktop.devtools.reloadWithDebugSession( windowId, sessionId );
+// later:
+handle.dispose(); // removes header + cleans up
+```
+
+What it does:
+
+1. Adds an `X-WP-Debug-Session: <sessionId>` header contribution (overridable via `opts.headerName`).
+2. Rewrites `iframe.src` with a `wp_debug_session=<sessionId>` query-arg (overridable via `opts.queryArg`) so the document load itself carries the session — HTTP headers can't ride along on full-document navigations, only the URL can.
+3. Re-pushes the header contribution on the iframe's native `load` event so a fresh document picks up its instrumentation deterministically. (This was a real timing race plugins were hitting — a manual `iframe.src = newUrl` could land with `__wpdInstrument.headers` empty.)
+4. Returns a single disposer that tears down everything.
+
+Returns `null` when the window doesn't exist or has no iframe (native windows).
+
+Server side, read the URL flag in your capture hook:
+
+```php
+add_action( 'init', function () {
+    $sid = desktop_mode_debug_session_for_request();
+    if ( '' === $sid && isset( $_GET['wp_debug_session'] ) ) {
+        $sid = sanitize_key( wp_unslash( $_GET['wp_debug_session'] ) );
+    }
+    if ( '' === $sid ) {
+        return;
+    }
+    if ( ! defined( 'SAVEQUERIES' ) ) {
+        define( 'SAVEQUERIES', true );
+    }
+    // … shutdown hook publishes via desktop_mode_debug_publish( $sid, … )
+}, 1 );
+```
+
+### `wp.desktop.devtools.debug` — Experimental
+
+Generic per-session pub/sub bus. Pair with PHP `desktop_mode_debug_publish()`.
+
+```js
+const sessionId = wp.desktop.devtools.debug.startSession();   // opaque uuid
+
+// Tag every request with this session.
+wp.desktop.devtools.addRequestHeader( windowId, 'X-WP-Debug-Session', sessionId );
+
+// Subscribe to a channel.
+const stop = wp.desktop.devtools.debug.subscribe(
+    sessionId, 'query',
+    ( ev ) => console.log( ev.payload ),
+);
+
+// Optional — local-echo without a server round-trip.
+wp.desktop.devtools.debug.publish( sessionId, 'query', { sql: '…' } );
+```
+
+The shell polls `GET /wp-desktop/v1/debug?sessionId=…&since=…` every 1 s while at least one subscription is active for the session, and stops polling when the last subscription disposes.
+
+### `Window.config.ownerHandle` — Experimental
+
+The script handle of the plugin that registered a native window. Read for attribution:
+
+```js
+wp.desktop.registerTitleBarButton( {
+    id: 'sql-inspector/attach',
+    match: ( win ) => win.config.ownerHandle !== '',
+    // ...
+} );
+```
+
+Always populated for windows registered via PHP `desktop_mode_register_window( $args )` (carries `$args['script']`); undefined for iframe windows backed by a core admin page.
+
+### postMessage protocol additions
+
+| Type | Direction | Payload |
+|---|---|---|
+| `wp-desktop-instrument-set` | parent → iframe | `{ headers: { name: value, … }, observe: boolean }`. Replaces the iframe's instrumentation slot wholesale on every change. |
+| `wp-desktop-iframe-network` | iframe → parent | Existing payload + optional `requestHeaders`, `responseHeaders` when the parent has set `observe: true`. |
+
+See [`docs/examples/devtools-instrumentation.md`](./examples/devtools-instrumentation.md) for a complete worked example.
+
+---
+
 ## See also
 
 - [Hooks Reference](./hooks-reference.md) — the PHP side of the API.
 - [Examples — React to window events](./examples/react-to-window-events.md)
 - [Examples — Add a dock badge](./examples/dock-badge.md)
 - [Examples — Register a wallpaper](./examples/register-wallpaper.md)
+- [Examples — Cross-window devtools](./examples/devtools-instrumentation.md)

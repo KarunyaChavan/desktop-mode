@@ -72,16 +72,16 @@ fi
 sha=$(git rev-parse HEAD)
 echo "Waiting for CI on ${sha}..."
 
-# CI may take up to a minute to register the run after the push.
+# CI may take a few minutes to register the run after the push.
 run_id=""
-for _ in $(seq 1 20); do
+for _ in $(seq 1 100); do
 	run_id=$(gh run list --branch trunk --workflow ci.yml --commit "$sha" --limit 1 --json databaseId -q '.[0].databaseId' 2>/dev/null || true)
 	[[ -n "$run_id" ]] && break
 	sleep 3
 done
 
 if [[ -z "$run_id" ]]; then
-	echo "error: no CI run found for $sha after 60s" >&2
+	echo "error: no CI run found for $sha after 5 minutes" >&2
 	exit 1
 fi
 

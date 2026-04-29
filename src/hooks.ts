@@ -271,6 +271,23 @@ export const HOOKS = {
 	/** Action, fires when a window is added to the stack. */
 	WINDOW_OPENED: 'wp-desktop.window.opened',
 	/**
+	 * Action, fires when `manager.open(...)` is called for a baseId
+	 * whose window already exists on the active desktop. This is the
+	 * unambiguous "user requested to open this window again" signal
+	 * — distinct from focus changes (which double-fire on alt-tab and
+	 * skip when already focused) and from `WINDOW_OPENED` (which only
+	 * fires on first creation). Payload:
+	 * `{ windowId: string, baseId: string, wasMinimized: boolean }`.
+	 *
+	 * Plugins that hold per-window state (e.g. the code-editor's
+	 * active file) should listen here to re-orient the existing
+	 * window's content to whatever the caller wants to show — the
+	 * open-window call is synchronous, so any state the caller sets
+	 * BEFORE invoking `openWindow` is already in place when this
+	 * fires.
+	 */
+	WINDOW_REOPENED: 'wp-desktop.window.reopened',
+	/**
 	 * Action, fires BEFORE the window's element is detached from the
 	 * DOM but AFTER the manager has already removed it from the stack.
 	 * Payload: `{ windowId: string, element: HTMLElement }`.
@@ -287,6 +304,22 @@ export const HOOKS = {
 	WINDOW_CLOSED: 'wp-desktop.window.closed',
 	/** Action, fires when focus changes to a different window. */
 	WINDOW_FOCUSED: 'wp-desktop.window.focused',
+	/**
+	 * Action, fires for the window that LOST focus when another
+	 * window takes over. Symmetric counterpart to
+	 * `WINDOW_FOCUSED`. Payload: `{ windowId: string, focusedTo:
+	 * string | null }` — `focusedTo` identifies the new top of
+	 * the stack so blur subscribers can ignore alt-tabs to a
+	 * sibling they own.
+	 *
+	 * No-op when there's no previously-focused window (initial
+	 * boot, all-windows-closed). Manager fires this BEFORE
+	 * `WINDOW_FOCUSED` so subscribers see "blur old, focus new"
+	 * in deterministic order.
+	 *
+	 * @since 0.5.5
+	 */
+	WINDOW_BLURRED: 'wp-desktop.window.blurred',
 	/** Action, fires when a window is minimized. */
 	WINDOW_MINIMIZED: 'wp-desktop.window.minimized',
 	/** Action, fires when a window is restored from minimized. */
@@ -334,6 +367,17 @@ export const HOOKS = {
 	WINDOW_DETACHED: 'wp-desktop.window.detached',
 	/** Action, fires when iframe title updates change the window title. */
 	WINDOW_TITLE_CHANGED: 'wp-desktop.window.title-changed',
+	/**
+	 * Action, fires when a window's `setHighlight()` mode changes.
+	 * Payload: `{ windowId: string, mode: 'preview' | 'persistent' | null,
+	 * color?: string }`. Lets onboarding / guidance / drag-bridge
+	 * plugins react when another module flagged one of their
+	 * windows as the focus of a multi-step interaction without
+	 * having to observe DOM mutations.
+	 *
+	 * @since 0.24.0
+	 */
+	WINDOW_HIGHLIGHT_CHANGED: 'wp-desktop.window.highlight-changed',
 	/**
 	 * Action, fires when a window's body element's dimensions
 	 * change — mount, user resize, viewport reflow. Payload: `{
@@ -397,10 +441,17 @@ export const HOOKS = {
 	/**
 	 * Action, fires after the wallpaper icon grid is rendered or
 	 * re-rendered. Payload: `{ ids: string[] }` — the ids in the
-	 * order they were painted. Plugins that decorate icons
-	 * (notification badges, drag handles, status dots) subscribe
-	 * to this so their decorations survive a live menu refresh
-	 * that legitimately rebuilds the grid.
+	 * order they were painted. Plugins that decorate icons with
+	 * surfaces the framework doesn't natively expose (drag handles,
+	 * status dots) subscribe to this so their decorations survive a
+	 * live menu refresh that legitimately rebuilds the grid.
+	 *
+	 * Notification badges have a first-class API since 0.24.0 —
+	 * use `wp.desktop.icons.setBadge( id, count )` (and subscribe
+	 * to {@link ICON_BADGE_CHANGED}) instead of decorating from
+	 * here. The framework persists badge state across rebuilds, so
+	 * a plugin that uses the API doesn't need to re-decorate on
+	 * every render.
 	 *
 	 * Idempotent payload (`{ ids: [] }`) when the icon list is
 	 * empty; suppressed entirely when the rendered DOM is
@@ -410,6 +461,22 @@ export const HOOKS = {
 	 * @since 0.21.0
 	 */
 	DESKTOP_ICONS_RENDERED: 'wp-desktop.desktop-icons.rendered',
+	/**
+	 * Action, fires whenever the badge count on a desktop icon
+	 * changes. Payload: `{ iconId: string, count: number,
+	 * previousCount: number }`. Symmetric to {@link DOCK_ITEM_APPENDED}
+	 * and the dock/taskbar `wpd-dock-item-badge-changed` CustomEvent
+	 * — the icon rail's lifecycle hook for badge transitions.
+	 *
+	 * Mirrors `wp-desktop/badge-changed` on the activity bus with
+	 * `rail: 'icon'`. Subscribe to whichever surface fits — the
+	 * activity channel composes across rails for global widgets,
+	 * this hook fires only for icon-rail badges with the previous
+	 * count carried alongside for delta-aware consumers.
+	 *
+	 * @since 0.24.0
+	 */
+	ICON_BADGE_CHANGED: 'wp-desktop.icon.badge-changed',
 
 	// ------------------------------------------------------------------
 	// Cross-plugin composition.
@@ -432,6 +499,17 @@ export const HOOKS = {
 	 * analytics, theming, per-tile badges.
 	 */
 	DOCK_ITEM_APPENDED: 'wp-desktop.dock.item-appended',
+	/**
+	 * Action, fires after a system tile is removed from a rail
+	 * via `Dock.removeSystemItem()` (typically the server-driven
+	 * native-window-sync path on plugin deactivation). Payload:
+	 * `{ id: string, placement: 'dock' | 'taskbar' }`. Symmetric
+	 * to {@link DOCK_ITEM_APPENDED}; lets analytics / decorators /
+	 * cleanup hooks see the full lifecycle without polling the DOM.
+	 *
+	 * @since 0.24.0
+	 */
+	DOCK_ITEM_REMOVED: 'wp-desktop.dock.item-removed',
 
 	// ------------------------------------------------------------------
 	// Overview / Arrange lifecycle actions.

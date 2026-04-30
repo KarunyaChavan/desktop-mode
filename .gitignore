@@ -6,3 +6,5 @@
 # Vite build output — regenerate locally with `npm run build`.
 /assets/js/desktop.js
 /assets/js/desktop.min.js
+
+.DS_Store

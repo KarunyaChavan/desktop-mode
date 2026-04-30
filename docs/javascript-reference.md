@@ -74,6 +74,50 @@ document.addEventListener( 'wp-desktop-window-reopened', ( e ) => {
 
 ---
 
+### `wp-desktop-window-content-loading` — Stable *(since 0.6.0)*
+
+Fires every time a window enters the **loading** state — at construction (every window starts loading) and whenever a plugin calls `Window.markContentLoading()` or the native render context's `ctx.window.markLoading()` mid-life (e.g. before refetching data).
+
+The shell paints a `<wpd-spinner>` overlay over the body while the window is loading and fades the body content out. The overlay's spinner is sized responsively (`clamp(96px, 14vw, 192px)`) so it scales with the window's width.
+
+**Edge-triggered.** Idempotent calls don't re-fire — a plugin that calls `markLoading()` twice in a row sees the event exactly once.
+
+```javascript
+document.addEventListener( 'wp-desktop-window-content-loading', ( e ) => {
+    if ( e.detail.windowId === 'my-plugin/inbox' ) {
+        analytics.start( 'inbox-load' );
+    }
+} );
+```
+
+**`detail` shape:** `{ windowId: string }`
+
+Companion `wp.hooks` action: `HOOKS.WINDOW_CONTENT_LOADING` (`wp-desktop.window.content-loading`).
+
+---
+
+### `wp-desktop-window-content-loaded` — Stable *(since 0.6.0)*
+
+Fires when a window's body content becomes ready — for iframe windows the moment the chromeless bridge announces `wp-desktop-ready`, for native windows after the user's `render( body )` callback (or its returned Promise) resolves, and whenever a plugin calls `Window.markContentLoaded()` or `ctx.window.markReady()` mid-life. The shell removes the loading overlay and fades the body content in on this transition.
+
+**Use this instead of branching on iframe vs. native.** The unified signal across both render strategies. Iframe-only consumers can still subscribe to `wp-desktop.iframe.ready`, which fires alongside this event for iframe windows.
+
+**Edge-triggered.** Only fires on a loading → ready transition. A plugin that arms loading via `markContentLoading()` and then calls `markContentLoaded()` again will see a fresh event each cycle.
+
+```javascript
+document.addEventListener( 'wp-desktop-window-content-loaded', ( e ) => {
+    if ( e.detail.windowId === 'my-plugin/inbox' ) {
+        analytics.complete( 'inbox-load' );
+    }
+} );
+```
+
+**`detail` shape:** `{ windowId: string }`
+
+Companion `wp.hooks` action: `HOOKS.WINDOW_CONTENT_LOADED` (`wp-desktop.window.content-loaded`).
+
+---
+
 ### `wp-desktop-window-focused` — Stable
 Fires when a window is focused (promoted to topmost z-index).
 
@@ -972,6 +1016,42 @@ Routes through the `wp-desktop/toast-requested` activity filter before painting;
 
 ---
 
+### `repaintLoadingOverlays()` — Stable *(since 0.6.0)*
+
+Re-paint every currently-loading window's spinner overlay through the customization pipeline (per-window `config.loading.render` + `WINDOW_LOADING_OVERLAY` filter).
+
+**You almost never need this.** Filters registered inside `wp.desktop.whenReady( … )` are picked up automatically by the shell's post-`HOOKS.INIT` sweep, including for F5 / session-restored windows that were constructed before the plugin script ran. The canonical plugin shape:
+
+```js
+wp.desktop.whenReady( () => {
+    wp.desktop.hooks.addFilter(
+        'wp-desktop.window.loading-overlay',
+        'my-skin/branded',
+        ( host ) => { /* … */ },
+    );
+} );
+```
+
+just works on F5 with no extra plumbing.
+
+`repaintLoadingOverlays()` exists as an escape hatch for plugins that register their `WINDOW_LOADING_OVERLAY` filter **mid-life** — after a deferred async import, a runtime feature-flag flip, or a settings change. Call it after `addFilter` and the shell will sweep every still-loading window through the pipeline:
+
+```js
+async function activateBrandSkin() {
+    const { brandRenderer } = await import( './brand-renderer.js' );
+    wp.desktop.hooks.addFilter(
+        'wp-desktop.window.loading-overlay',
+        'my-skin/lazy-branded',
+        brandRenderer,
+    );
+    wp.desktop.repaintLoadingOverlays();
+}
+```
+
+Idempotent + cheap — windows that already finished loading are unaffected.
+
+---
+
 ### `renderKeyedList( host, items, opts )` / `clearKeyedList( host )` — Stable *(since 0.23.0)*
 
 Keyed-list reconciler for any plugin that paints a dynamic list of items into a DOM container. Reuses element instances when keys match across renders so event listeners survive data updates — the only reliable way to keep clicks working on rows that may re-render mid-press.
@@ -1350,6 +1430,36 @@ Update a window's title bar from outside it. Useful for plugins that want to ret
 const w = wp.desktop.windowManager.getById( 'my-preview' );
 w.setTitle( `Live Preview — ${ postTitle }` );
 ```
+
+---
+
+### `Window.markContentLoading()` / `Window.markContentLoaded()` — Stable *(since 0.6.0)*
+
+Drive the spinner overlay over a window's body programmatically. Mirrors the `ctx.window.markLoading` / `ctx.window.markReady` pair available inside a native `render` callback — these methods are the equivalent for code that holds a `Window` instance from outside.
+
+```javascript
+const w = wp.desktop.windowManager.getById( 'my-app' );
+
+// Show the spinner (e.g. before refetching the body's data).
+w.markContentLoading();
+
+await refetchData();
+w.appendBody( renderTable( data ) );
+
+// Hide the spinner, fade the content in.
+w.markContentLoaded();
+```
+
+Idempotent: calling `markContentLoading()` twice in a row only fires `WINDOW_CONTENT_LOADING` once; the same edge-trigger logic applies to `markContentLoaded()`.
+
+The framework calls `markContentLoaded()` automatically when:
+- An iframe window's chromeless bridge posts `wp-desktop-ready`.
+- A native window's `render( body )` callback returns synchronously (next animation frame).
+- A native window's `render( body )` returns a `Promise` (when the promise resolves).
+
+Plugins only need to call these directly for **refetch** patterns or for **event-listener-driven async loads** the framework can't observe.
+
+See also: [the `wp-desktop-window-content-loaded` CustomEvent](#wp-desktop-window-content-loaded--stable-since-060) and the [`HOOKS.WINDOW_CONTENT_LOADED`](#hookswindow_content_loaded) action.
 
 ---
 
@@ -2151,6 +2261,9 @@ All window actions include at minimum `{ windowId: string }` — additional fiel
 |---|---|---|---|
 | `wp-desktop.window.opened` | action | Stable | `{ windowId, page, title, url }` |
 | `wp-desktop.window.reopened` | action | Stable | `{ windowId, baseId, wasMinimized }` — fires when `openWindow()` is called for an already-open window |
+| `wp-desktop.window.content-loading` | action | Stable *(0.6.0)* | `{ windowId }` — fires on the loading entry edge (construction + every `markContentLoading()`). Edge-triggered. |
+| `wp-desktop.window.content-loaded` | action | Stable *(0.6.0)* | `{ windowId }` — fires on the loading → ready transition (iframe `load` / `wp-desktop-ready`, native render Promise resolves, or `markContentLoaded()`). Edge-triggered. |
+| `wp-desktop.window.loading-overlay` | filter | Stable *(0.6.0)* | `(host: HTMLElement, ctx: { windowId, config }) → HTMLElement`. Receives the default overlay element (or whatever a per-window `config.loading.render` produced) and may mutate it or return a replacement. Plugins use this to brand every window's loader, swap the spinner preset, append status text. |
 | `wp-desktop.window.closing` | action | Stable | `{ windowId, element }` — fires BEFORE the element is detached (use this when you need an element reference, e.g. for anchored wallpaper overlays) |
 | `wp-desktop.window.closed` | action | Stable | `{ windowId }` |
 | `wp-desktop.window.focused` | action | Stable | `{ windowId }` — fires on focus changes |

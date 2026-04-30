@@ -12,6 +12,10 @@
 
 import { WindowManager } from './window-manager';
 import { installWindowSwitcherShortcut } from './window-manager/switcher';
+import {
+	installWindowLoadingTransitions,
+	repaintLoadingOverlays,
+} from './window/loading';
 import { Dock, type SystemDockItem } from './dock';
 import { OsSettings } from './settings';
 import { deriveWindowId, urlMatchKey } from './utils';
@@ -885,6 +889,36 @@ export interface WpDesktopPublicApi {
 	 */
 	showToast: ( opts: ToastOptions ) => () => void;
 	/**
+	 * Re-paint every currently-loading window's spinner overlay
+	 * through the customization pipeline (per-window
+	 * `config.loading.render` + `WINDOW_LOADING_OVERLAY` filter).
+	 *
+	 * Call this after registering a `WINDOW_LOADING_OVERLAY` filter
+	 * **mid-life** — i.e. NOT inside `whenReady( … )`. Filters
+	 * registered in `whenReady` are picked up automatically by the
+	 * shell's post-`HOOKS.INIT` sweep, so the typical plugin shape:
+	 *
+	 * ```js
+	 * wp.desktop.whenReady( () => {
+	 *     wp.desktop.hooks.addFilter(
+	 *         'wp-desktop.window.loading-overlay',
+	 *         'my-skin/branded',
+	 *         ( host ) => { ... }
+	 *     );
+	 * } );
+	 * ```
+	 *
+	 * never needs this. The escape hatch exists for plugins that
+	 * register their filter from a deferred async import, a
+	 * runtime feature flag flip, or a settings change after init.
+	 *
+	 * Idempotent. Safe to call multiple times — windows that
+	 * already finished loading are unaffected.
+	 *
+	 * @since 0.6.0
+	 */
+	repaintLoadingOverlays: () => void;
+	/**
 	 * Keyed-list rendering helper for any plugin that paints a dynamic
 	 * list of items into a DOM container. Reuses element instances when
 	 * the keys match across renders so event listeners survive data
@@ -1579,6 +1613,13 @@ function init(): void {
 	attachBroadcastBus( manager );
 	installBroadcastReceiver();
 
+	// Loading-state transitions — show the `<wpd-spinner>` overlay
+	// while a window's iframe boots / native render fetches data,
+	// fade the content in once `WINDOW_CONTENT_LOADED` fires. The
+	// hook firing itself is in `src/window-channels.ts`; this just
+	// wires the visual side.
+	installWindowLoadingTransitions();
+
 	// `wp-desktop.shell.toast` action — the documented way for plugins
 	// to surface a transient notification without importing
 	// `showToast` directly. Payload mirrors the `ToastOptions` type
@@ -1742,6 +1783,7 @@ function init(): void {
 		getWallpaperSurfaces: () => collectWallpaperSurfaces( manager ),
 		registerWindow,
 		openWindow: nativeWindows.openById,
+		repaintLoadingOverlays,
 		cloneTemplate,
 		onWindow,
 		registerSystemTile: ( item, placement = 'taskbar' ) => {

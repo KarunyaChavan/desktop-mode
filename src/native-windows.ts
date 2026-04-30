@@ -29,7 +29,7 @@ import { activity } from './activity';
 import { HOOKS, addAction, doAction, removeAction } from './hooks';
 import { loadVendorScript } from './wallpapers/vendor-loader';
 import { registerSyntheticIframe } from './connection';
-import type { Dock } from './dock';
+import type { SystemDockItem } from './dock';
 import type {
 	NativeRenderContext,
 	NativeWindowDef,
@@ -599,9 +599,15 @@ export function onWindow(
  */
 export interface NativeWindowRegistryDeps {
 	manager: WindowManager;
-	dock: Dock | null;
-	taskbar: Dock | null;
-	taskbarEl: HTMLElement | null;
+	/**
+	 * Append a JS-owned tile to the bottom dock rail. Plugin-registered
+	 * native windows hand their tile here; the layout dispatcher tracks
+	 * the registration so it survives a layout rebuild without the sync
+	 * having to re-run.
+	 */
+	appendSystemTile: ( item: SystemDockItem ) => void;
+	/** Remove a previously-appended system tile by id. */
+	removeSystemTile: ( id: string ) => void;
 	desktopArea: HTMLElement;
 }
 
@@ -636,7 +642,7 @@ interface NativeWindowGlobals {
  */
 export interface NativeWindowSync {
 	/**
-	 * Reconcile the dock/taskbar tiles to a server-supplied list.
+	 * Reconcile the dock tiles to a server-supplied list.
 	 * Adds tiles for new entries, removes tiles whose entry has
 	 * disappeared. Idempotent.
 	 */
@@ -659,7 +665,7 @@ export interface NativeWindowSync {
 export function createNativeWindowSync(
 	deps: NativeWindowRegistryDeps,
 ): NativeWindowSync {
-	const { manager, dock, taskbar, taskbarEl, desktopArea } = deps;
+	const { manager, appendSystemTile, removeSystemTile } = deps;
 
 	const registered = new Set< string >();
 	const injectedTemplates = new Set< string >();
@@ -668,13 +674,6 @@ export function createNativeWindowSync(
 	// or AI-command paths request "open whatever's registered as <id>".
 	// Always reflects the most recent sync.
 	const entriesById = new Map< string, NativeWindowServerEntry >();
-
-	const ensureTaskbarVisible = (): void => {
-		if ( taskbarEl && taskbarEl.hidden ) {
-			taskbarEl.hidden = false;
-			desktopArea.classList.add( 'wp-desktop-area--with-taskbar' );
-		}
-	};
 
 	const ensureTemplate = ( entry: NativeWindowServerEntry ): void => {
 		if ( injectedTemplates.has( entry.templateId ) ) {
@@ -790,34 +789,15 @@ export function createNativeWindowSync(
 		ensureTemplate( entry );
 		await ensureScript( entry );
 
-		const rail = 'dock' === entry.placement ? dock : taskbar;
-		if ( ! rail ) {
-			// Rail element missing (old shell markup) — fall back
-			// to dock to keep the tile visible.
-			dock?.appendSystemItem( {
-				id: entry.id,
-				title: entry.title,
-				icon: entry.icon,
-				isOpen: () => !! manager.getById( entry.id ),
-				onOpen: () => openFromEntry( entry ),
-			} );
-		} else {
-			rail.appendSystemItem( {
-				id: entry.id,
-				title: entry.title,
-				icon: entry.icon,
-				isOpen: () => !! manager.getById( entry.id ),
-				onOpen: () => openFromEntry( entry ),
-			} );
-			if ( rail === taskbar ) {
-				ensureTaskbarVisible();
-			}
-		}
-
-		doAction( HOOKS.DOCK_ITEM_APPENDED, {
+		appendSystemTile( {
 			id: entry.id,
-			placement: 'dock' === entry.placement ? 'dock' : 'taskbar',
+			title: entry.title,
+			icon: entry.icon,
+			isOpen: () => !! manager.getById( entry.id ),
+			onOpen: () => openFromEntry( entry ),
 		} );
+
+		doAction( HOOKS.DOCK_ITEM_APPENDED, { id: entry.id } );
 
 		registered.add( entry.id );
 	};
@@ -826,8 +806,7 @@ export function createNativeWindowSync(
 		if ( ! registered.has( id ) ) {
 			return;
 		}
-		dock?.removeSystemItem( id );
-		taskbar?.removeSystemItem( id );
+		removeSystemTile( id );
 		registered.delete( id );
 		entriesById.delete( id );
 	};

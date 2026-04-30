@@ -456,6 +456,7 @@ function desktop_mode_build_dock_items() {
 			'submenu'   => $sub_items,
 			'multi'     => desktop_mode_dock_item_is_multi( $item[2] ),
 			'placement' => desktop_mode_dock_placement( $item[2] ),
+			'isCore'    => desktop_mode_is_core_menu_slug( $item[2] ),
 		);
 
 		/**
@@ -488,7 +489,13 @@ function desktop_mode_build_dock_items() {
  *
  *   - A Dashicons class (e.g. `dashicons-admin-post`)
  *   - An http/https URL pointing at an image asset
- *   - `'none'` or `'div'` (CSS hooks, no icon asset)
+ *   - A `data:image/svg+xml;base64,…` URI (common for plugins that
+ *     ship inline vector art — Jetpack, WooCommerce, etc.). Rendered
+ *     as a CSS background-image, where per-spec SVG script content
+ *     does not execute, so the surface is safe.
+ *   - `'none'` or `'div'` (CSS hooks, no icon asset). The dock's JS
+ *     layer extracts the real icon from the hidden `#adminmenu` DOM
+ *     for these cases.
  *
  * Inline SVG data URIs (`data:image/svg+xml;base64,…` and
  * `data:image/svg+xml,…`) are also accepted because that's how the
@@ -508,7 +515,7 @@ function desktop_mode_build_dock_items() {
  * @since 0.11.0 Rejected `data:` URIs outright (regression — see 0.18.x).
  * @since 0.18.x Re-allowed `data:image/svg+xml{;base64,|,}` so plugin
  *               icons (Yoast, WooCommerce, Jetpack, etc.) appear on the
- *               dock/taskbar instead of collapsing to the gear fallback.
+ *               dock instead of collapsing to the gear fallback.
  *               Other `data:` schemes still rejected.
  *
  * @param mixed $icon Raw icon value from the menu registration.
@@ -522,11 +529,6 @@ function desktop_mode_sanitize_dock_icon( $icon ) {
 
 	$icon = trim( $icon );
 
-	// 'none' and 'div' tell WordPress to render an empty div for the
-	// admin-menu icon (the plugin styles it from CSS). We pass the
-	// fallback through; the JS dock has a getComputedStyle-based
-	// extractor that pulls the real icon from the hidden #adminmenu
-	// for these cases.
 	if ( 'none' === $icon || 'div' === $icon ) {
 		return $fallback;
 	}
@@ -624,8 +626,9 @@ function desktop_mode_dock_item_is_multi( $menu_slug ) {
 /**
  * Returns true when `$menu_slug` maps to a first-party WordPress
  * Core admin menu item (Dashboard, Posts, Pages, Media, Settings,
- * etc.), false otherwise — the caller uses the answer to route the
- * item to the left dock (core) vs the bottom taskbar (plugin).
+ * etc.), false otherwise. The caller uses the answer as an ordering
+ * hint — core items are placed ahead of plugin items in the
+ * unified dock rail.
  *
  * The rule:
  *
@@ -704,73 +707,48 @@ function desktop_mode_is_core_menu_slug( $menu_slug ) {
 }
 
 /**
- * Resolve the dock placement for a given menu slug. Returns one of
- * three values:
+ * Resolve whether a given menu slug is rendered in the dock.
+ * Returns one of two values:
  *
- *   - `'dock'`    — render on the left-edge rail (default for core
- *                   WordPress pages: Dashboard, Posts, Plugins,
- *                   Users, Settings, CPTs, taxonomies, …).
- *   - `'taskbar'` — render on the bottom-edge taskbar (default for
- *                   everything else — installed plugins routed
- *                   through `admin.php?page=*`).
- *   - `'hidden'`  — don't render this item anywhere in the desktop
- *                   shell. The underlying admin menu entry still
- *                   exists server-side; this only affects dock /
- *                   taskbar rendering.
+ *   - `'dock'`   — render this item on the unified dock rail.
+ *   - `'hidden'` — don't render this item anywhere in the desktop
+ *                  shell. The underlying admin menu entry still
+ *                  exists server-side; this only suppresses the
+ *                  desktop-shell tile.
  *
- * Plugins + site admins can override any answer via the
- * `desktop_mode_dock_placement` filter. A plugin that wants to
- * completely opt out of the shell chrome (e.g. a utility plugin that
- * only registers sub-screens and shouldn't take up a tile) returns
- * `'hidden'` for its slug; one that wants first-class billing
- * returns `'dock'`; the default returns `'taskbar'`.
+ * Default is `'dock'` for every menu item. Plugins + site admins can
+ * hide individual items via the `desktop_mode_dock_placement` filter.
  *
  * @since 0.9.0
  *
  * @param string $menu_slug The menu slug (e.g. `edit.php`, `woocommerce`).
- * @return string `'dock'`, `'taskbar'`, or `'hidden'`.
+ * @return string `'dock'` or `'hidden'`.
  */
 function desktop_mode_dock_placement( $menu_slug ) {
-	$placement = desktop_mode_is_core_menu_slug( $menu_slug ) ? 'dock' : 'taskbar';
-
 	/**
-	 * Filter the dock placement for a specific menu item.
+	 * Filter whether a specific menu item is shown in the dock.
 	 *
-	 * Return `'dock'` to show the item in the left-edge core dock,
-	 * `'taskbar'` to show it in the bottom plugin taskbar, or
-	 * `'hidden'` to suppress it from both rails entirely. Any other
-	 * value coerces to the default heuristic answer — a defensive
-	 * guard so a misbehaving filter can't corrupt the split with
-	 * `null` / `false` / arbitrary strings.
+	 * Return `'dock'` to render the item on the dock (default) or
+	 * `'hidden'` to suppress it entirely. Any other value coerces to
+	 * `'dock'` — a defensive guard so a misbehaving filter can't
+	 * corrupt the dock with `null` / `false` / arbitrary strings.
 	 *
 	 * @since 0.9.0
 	 *
-	 * @param string $placement Default placement — `'dock'` for core
-	 *                          items, `'taskbar'` for everything else.
+	 * @param string $placement Default — always `'dock'`.
 	 * @param string $menu_slug The menu slug triggering the lookup.
 	 */
-	$filtered = apply_filters( 'desktop_mode_dock_placement', $placement, $menu_slug );
-	if ( 'dock' === $filtered || 'taskbar' === $filtered || 'hidden' === $filtered ) {
-		return $filtered;
-	}
-	return $placement;
+	$filtered = apply_filters( 'desktop_mode_dock_placement', 'dock', $menu_slug );
+	return 'hidden' === $filtered ? 'hidden' : 'dock';
 }
 
 /**
- * Assemble the split menu payload consumed by the shell.
+ * Assemble the menu payload consumed by the shell.
  *
- * Runs the full dock-builder, then partitions the items into the two
- * rails by each item's `placement` key. Items with `placement` of
- * `'hidden'` are dropped entirely — plugins that want to stay out of
- * the desktop chrome (either because they're background-only tools
- * or because they own their own surface) filter themselves to
- * `'hidden'` and disappear from both rails without their server-side
- * menu entry going away.
- *
- * Returns the same shape the boot-time shell config exposes as
- * `dockItems` + `taskbarItems`, so the client can swap the `config`
- * values in place after a live refresh (e.g. after plugin activation
- * / deactivation).
+ * Runs the full dock-builder and returns a single `dockItems` array —
+ * core WordPress menus first (Dashboard, Posts, Media, …), then
+ * plugin-contributed top-level menus. Items whose `placement` is
+ * `'hidden'` are dropped entirely.
  *
  * Extracted out of `includes/render.php` so both the initial PHP
  * localize AND the `/wp-desktop/v1/menu` REST endpoint read from a
@@ -778,13 +756,13 @@ function desktop_mode_dock_placement( $menu_slug ) {
  *
  * @since 0.9.0
  *
- * @return array{dockItems: array[], taskbarItems: array[]} Split payload.
+ * @return array{dockItems: array[]} Menu payload.
  */
 function desktop_mode_build_menu_payload() {
 	$all = desktop_mode_build_dock_items();
 
-	// Hidden items disappear from both rails. The partition below
-	// only ever sees visible items.
+	// Drop hidden items; preserve the default "core first, plugins
+	// after" ordering by partitioning on the core classifier.
 	$visible = array_values(
 		array_filter(
 			$all,
@@ -794,27 +772,26 @@ function desktop_mode_build_menu_payload() {
 		)
 	);
 
-	$dock = array_values(
-		array_filter(
-			$visible,
-			static function ( $item ) {
-				return 'taskbar' !== ( $item['placement'] ?? 'dock' );
-			}
-		)
-	);
+	// Partition on the per-item `isCore` flag set in
+	// desktop_mode_build_dock_items — that classifier ran against the
+	// raw menu slug ($item[2]), which is what
+	// desktop_mode_is_core_menu_slug actually compares. The outer 'id'
+	// field is a sanitized CSS id (e.g. `toplevel_page_jetpack`) and
+	// would never match.
+	$core = array();
+	$plugin = array();
+	foreach ( $visible as $item ) {
+		if ( ! empty( $item['isCore'] ) ) {
+			$core[] = $item;
+		} else {
+			$plugin[] = $item;
+		}
+	}
 
-	$taskbar = array_values(
-		array_filter(
-			$visible,
-			static function ( $item ) {
-				return 'taskbar' === ( $item['placement'] ?? 'dock' );
-			}
-		)
-	);
+	$dock = array_merge( $core, $plugin );
 
 	return array(
 		'dockItems'        => $dock,
-		'taskbarItems'     => $taskbar,
 		'nativeWindows'    => desktop_mode_build_native_windows_payload(),
 		'serverWidgets'    => function_exists( 'desktop_mode_build_desktop_widgets_payload' )
 			? desktop_mode_build_desktop_widgets_payload()

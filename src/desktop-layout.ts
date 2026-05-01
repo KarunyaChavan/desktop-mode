@@ -35,8 +35,18 @@ import type {
 	DockItemConfig,
 } from './types';
 import { Dock, type DockItem, type SystemDockItem } from './dock';
+import {
+	defaultDockRailRenderer,
+	resolveActiveDockRailRenderer,
+	subscribeDockRailRenderers,
+	unwrapDefaultDock,
+	type DockRailController,
+	type DockRailMountDeps,
+} from './dock-rail';
 import type { WindowManager } from './window-manager';
+import { deriveWindowId } from './utils';
 import type { DesktopLayoutId } from './settings/types';
+import { doAction, HOOKS } from './hooks';
 
 /**
  * Where a system tile prefers to live. `'core'` follows the rail
@@ -127,6 +137,38 @@ export interface LayoutDispatcher {
 	): void;
 	/** Remove a previously-appended system tile by id. */
 	removeSystemTile( id: string ): void;
+	/**
+	 * Snapshot of every system tile registered across both rails.
+	 * Read-only entry view ({ id, title, icon, affinity }) — use
+	 * {@link getSystemTile} to fetch the underlying `SystemDockItem`
+	 * with its `onOpen` / `isOpen` callbacks.
+	 *
+	 * @since 0.18.0
+	 */
+	listSystemTiles(): Array< {
+		id: string;
+		title: string;
+		icon: string;
+		affinity: SystemTileAffinity;
+	} >;
+	/**
+	 * Look up a system tile by id. Returns the underlying
+	 * `SystemDockItem` so callers can invoke `onOpen()` directly.
+	 * Returns `null` for unknown ids.
+	 *
+	 * @since 0.18.0
+	 */
+	getSystemTile( id: string ): SystemDockItem | null;
+	/**
+	 * Snapshot of the complete admin-menu list — the same data the
+	 * dispatcher partitions across rails based on layout. Use this
+	 * when a custom rail renderer needs the full picture (Classic
+	 * layout's primary rail only sees `!isCore` items via
+	 * mount-deps; this returns every item).
+	 *
+	 * @since 0.18.0
+	 */
+	getMenuItems(): DockItem[];
 	/** Tear down all docks. Called on shell unload (or in tests). */
 	destroy(): void;
 }
@@ -164,8 +206,17 @@ export function createLayoutDispatcher(
 	let layout: DesktopLayoutId = initialLayout;
 	let items: DockItem[] = initialDockItems;
 	let serverIcons: DesktopIconServerEntry[] = initialServerIcons ?? [];
-	let primary: Dock | null = null;
-	let side: Dock | null = null;
+	// Two-tier storage: controllers drive every live update (built
+	// from `renderer.mount()`), and the unwrapped Dock instances are
+	// kept alongside ONLY when the active renderer is the built-in
+	// `'default'`. The Dock references back the public `wp.desktop.dock`
+	// / `wp.desktop.sideDock` API surface unchanged; custom-renderer
+	// controllers expose null there. Plugin authors who want renderer-
+	// agnostic access reach for the controller via the dispatcher.
+	let primary: DockRailController | null = null;
+	let side: DockRailController | null = null;
+	let primaryDock: Dock | null = null;
+	let sideDock: Dock | null = null;
 	let sideDockEl: HTMLElement | null = null;
 	// System tiles tracked here so they survive layout rebuilds. The
 	// shell adds the OS Settings tile right after construction; native-
@@ -178,7 +229,9 @@ export function createLayoutDispatcher(
 		{ item: SystemDockItem; affinity: SystemTileAffinity }
 	>();
 
-	const railFor = ( affinity: SystemTileAffinity ): Dock | null => {
+	const railFor = (
+		affinity: SystemTileAffinity,
+	): DockRailController | null => {
 		if ( affinity === 'core' && side ) {
 			return side;
 		}
@@ -243,14 +296,134 @@ export function createLayoutDispatcher(
 
 	const tearDownDocks = (): void => {
 		if ( primary ) {
-			primary.destroy();
+			try {
+				primary.destroy();
+			} catch ( err ) {
+				doAction( HOOKS.SHELL_ERROR, {
+					scope: 'dock-rail-renderer/destroy',
+					error: err,
+				} );
+			}
 			primary = null;
+			primaryDock = null;
 		}
 		if ( side ) {
-			side.destroy();
+			try {
+				side.destroy();
+			} catch ( err ) {
+				doAction( HOOKS.SHELL_ERROR, {
+					scope: 'dock-rail-renderer/destroy',
+					error: err,
+				} );
+			}
 			side = null;
+			sideDock = null;
 		}
 	};
+
+	/**
+	 * Mount the active renderer onto a container. Wrapped in
+	 * try/catch with fallback to the built-in `'default'` renderer
+	 * — a buggy plugin renderer can't kill the dock.
+	 */
+	const mountRail = (
+		mountDeps: DockRailMountDeps,
+	): DockRailController | null => {
+		const renderer = resolveActiveDockRailRenderer();
+		if ( ! renderer ) {
+			doAction( HOOKS.SHELL_ERROR, {
+				scope: 'dock-rail-renderer',
+				message: 'No dock rail renderer is registered.',
+			} );
+			return null;
+		}
+		try {
+			return renderer.mount( mountDeps );
+		} catch ( err ) {
+			doAction( HOOKS.SHELL_ERROR, {
+				scope: 'dock-rail-renderer/mount',
+				rendererId: renderer.id,
+				error: err,
+			} );
+			// Fall back: if the user's pick crashed, mount the
+			// built-in default renderer directly so the rail is
+			// never empty. We import the default by name (rather
+			// than going through `resolveActive`) because the
+			// active id still points at the broken renderer.
+			if ( renderer === defaultDockRailRenderer ) {
+				return null;
+			}
+			try {
+				return defaultDockRailRenderer.mount( mountDeps );
+			} catch {
+				return null;
+			}
+		}
+	};
+
+	/** Build mount-deps for one rail. */
+	const buildMountDeps = (
+		container: HTMLElement,
+		railItems: DockItem[],
+		orientation: 'left' | 'right' | 'bottom',
+	): DockRailMountDeps => ( {
+		container,
+		items: railItems,
+		// `fullMenu` is the complete admin-menu list. Renderers that
+		// want to ignore the layout's partitioning (e.g., paint
+		// every menu item in one ring regardless of `isCore`) read
+		// this instead of `items`. Snapshot per-mount so a renderer
+		// holding the array sees a stable list; live updates flow
+		// through `replaceItems`.
+		fullMenu: items.slice(),
+		// Same idea for system tiles — OS Settings, plugin-owned
+		// native-window launchers, etc. Lets a renderer apply
+		// uniform treatment across menu + system cohorts in one
+		// pass. Live updates flow through `appendSystemItem` /
+		// `removeSystemItem`.
+		fullSystemTiles: Array.from( systemTiles.values() ).map(
+			( entry ) => entry.item,
+		),
+		orientation,
+		windowManager: deps.windowManager,
+		adminUrl: deps.adminUrl,
+		// `openItem` / `openSubmenuPick` / `openSystemItem` /
+		// `requestSubmenu` are routing callbacks for custom
+		// renderers. They mirror exactly what the default renderer
+		// (`Dock.openPage` / `Dock.openSubmenuPick`) does internally
+		// — same `deriveWindowId(url, adminUrl)` call, same window-
+		// config shape — so a custom renderer addresses the same
+		// window with the same id at runtime. Switching renderer
+		// mid-session doesn't lose the user's open windows.
+		openItem: ( item ) => {
+			const baseId = deriveWindowId( item.url, deps.adminUrl );
+			deps.windowManager.open( {
+				id: baseId,
+				baseId,
+				url: item.url,
+				title: item.title,
+				icon: item.icon.startsWith( 'dashicons-' )
+					? item.icon
+					: 'dashicons-admin-generic',
+				submenu: item.submenu,
+				multi: !! item.multi,
+			} );
+		},
+		openSubmenuPick: ( item, sub ) => {
+			deps.windowManager.open( {
+				id: deriveWindowId( sub.url, deps.adminUrl ),
+				baseId: deriveWindowId( item.url, deps.adminUrl ),
+				url: sub.url,
+				title: item.title,
+				icon: item.icon.startsWith( 'dashicons-' )
+					? item.icon
+					: 'dashicons-admin-generic',
+				submenu: item.submenu,
+				multi: !! item.multi,
+			} );
+		},
+		openSystemItem: ( item ) => item.onOpen(),
+	} );
 
 	const buildDocksForCurrentLayout = (): void => {
 		tearDownDocks();
@@ -258,40 +431,28 @@ export function createLayoutDispatcher(
 
 		if ( layout === 'classic' ) {
 			sideDockEl = ensureSideDockEl();
-			side = new Dock(
-				sideDockEl,
-				deps.windowManager,
-				core,
-				deps.adminUrl,
-				'left',
+			side = mountRail(
+				buildMountDeps( sideDockEl, core, 'left' ),
 			);
-			primary = new Dock(
-				deps.bottomDockEl,
-				deps.windowManager,
-				plugin,
-				deps.adminUrl,
-				'bottom',
+			sideDock = unwrapDefaultDock( side );
+			primary = mountRail(
+				buildMountDeps( deps.bottomDockEl, plugin, 'bottom' ),
 			);
+			primaryDock = unwrapDefaultDock( primary );
 		} else if ( layout === 'unified' ) {
 			removeSideDockEl();
-			primary = new Dock(
-				deps.bottomDockEl,
-				deps.windowManager,
-				items,
-				deps.adminUrl,
-				'bottom',
+			primary = mountRail(
+				buildMountDeps( deps.bottomDockEl, items, 'bottom' ),
 			);
+			primaryDock = unwrapDefaultDock( primary );
 		} else {
 			// Spatial — bottom dock holds plugins; core items are
 			// emitted as wallpaper icons by `repaintIcons()` below.
 			removeSideDockEl();
-			primary = new Dock(
-				deps.bottomDockEl,
-				deps.windowManager,
-				plugin,
-				deps.adminUrl,
-				'bottom',
+			primary = mountRail(
+				buildMountDeps( deps.bottomDockEl, plugin, 'bottom' ),
 			);
+			primaryDock = unwrapDefaultDock( primary );
 		}
 
 		// Re-attach every tracked system tile to the rebuilt rails
@@ -304,8 +465,8 @@ export function createLayoutDispatcher(
 
 	const dispatcher: LayoutDispatcher = {
 		getLayout: () => layout,
-		getPrimary: () => primary,
-		getSide: () => side,
+		getPrimary: () => primaryDock,
+		getSide: () => sideDock,
 		setLayout: ( next: DesktopLayoutId ): void => {
 			if ( next === layout ) {
 				return;
@@ -316,7 +477,11 @@ export function createLayoutDispatcher(
 			repaintIcons();
 			document.dispatchEvent(
 				new CustomEvent( 'wp-desktop-layout-changed', {
-					detail: { layout: next, primary, side },
+					detail: {
+						layout: next,
+						primary: primaryDock,
+						side: sideDock,
+					},
 				} ),
 			);
 		},
@@ -357,6 +522,16 @@ export function createLayoutDispatcher(
 			// when the tile lives on only one of them.
 			railFor( entry.affinity )?.removeSystemItem( id );
 		},
+		listSystemTiles: () =>
+			Array.from( systemTiles.values() ).map( ( entry ) => ( {
+				id: entry.item.id,
+				title: entry.item.title,
+				icon: entry.item.icon,
+				affinity: entry.affinity,
+			} ) ),
+		getSystemTile: ( id: string ): SystemDockItem | null =>
+			systemTiles.get( id )?.item ?? null,
+		getMenuItems: () => items.slice(),
 		destroy: (): void => {
 			tearDownDocks();
 			removeSideDockEl();
@@ -369,6 +544,31 @@ export function createLayoutDispatcher(
 	deps.shellRoot.setAttribute( 'data-wp-desktop-layout', layout );
 	buildDocksForCurrentLayout();
 	repaintIcons();
+
+	// Rebuild the rails when the active rail-renderer flips. The
+	// registry notifies on every change (register / unregister /
+	// setActive); we only rebuild when the resolved renderer id
+	// changes — a plugin registering five renderers in a row only
+	// produces one rebuild.
+	let lastResolvedId = resolveActiveDockRailRenderer()?.id ?? null;
+	subscribeDockRailRenderers( () => {
+		const nextId = resolveActiveDockRailRenderer()?.id ?? null;
+		if ( nextId === lastResolvedId ) {
+			return;
+		}
+		lastResolvedId = nextId;
+		buildDocksForCurrentLayout();
+		repaintIcons();
+		document.dispatchEvent(
+			new CustomEvent( 'wp-desktop-layout-changed', {
+				detail: {
+					layout,
+					primary: primaryDock,
+					side: sideDock,
+				},
+			} ),
+		);
+	} );
 
 	return dispatcher;
 }

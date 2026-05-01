@@ -50,6 +50,7 @@ function desktop_mode_default_os_settings() {
 		'accent'       => 'wp-blue',
 		'dockSize'     => 'default',
 		'desktopLayout' => 'classic',
+		'dockRailRenderer' => 'default',
 		'customGradient' => array(
 			'from'  => '#2271b1',
 			'to'    => '#7c3aed',
@@ -152,6 +153,22 @@ function desktop_mode_sanitize_os_settings( $raw ) {
 		? (string) $raw['desktopLayout']
 		: $defaults['desktopLayout'];
 
+	// Submenu renderer id — accept any sanitize_key()-clean string.
+	// We don't gate on a server-side allow-list because renderers
+	// register from JS at runtime; existence is checked by the
+	// client at resolve time and falls back to `'default'` when
+	// missing.
+	// Dock rail renderer id — accept any sanitize_key()-clean
+	// string. JS-side registry resolves at use time and falls back
+	// to `'default'` when the picked renderer isn't registered.
+	$dock_rail_renderer = $defaults['dockRailRenderer'];
+	if ( isset( $raw['dockRailRenderer'] ) && is_string( $raw['dockRailRenderer'] ) ) {
+		$slug = sanitize_key( $raw['dockRailRenderer'] );
+		if ( '' !== $slug ) {
+			$dock_rail_renderer = $slug;
+		}
+	}
+
 	// Custom gradient — { from, to: valid hex; angle: int 0–360 }.
 	$custom_gradient = $defaults['customGradient'];
 	if ( isset( $raw['customGradient'] ) && is_array( $raw['customGradient'] ) ) {
@@ -232,14 +249,15 @@ function desktop_mode_sanitize_os_settings( $raw ) {
 	}
 
 	return array(
-		'wallpaper'     => $wallpaper,
-		'accent'        => $accent,
-		'dockSize'      => $dock_size,
-		'desktopLayout' => $desktop_layout,
-		'customGradient' => $custom_gradient,
-		'customImage'   => $custom_image,
-		'libraryHdOnly' => $library_hd_only,
-		'ai'            => $ai,
+		'wallpaper'        => $wallpaper,
+		'accent'           => $accent,
+		'dockSize'         => $dock_size,
+		'desktopLayout'    => $desktop_layout,
+		'dockRailRenderer' => $dock_rail_renderer,
+		'customGradient'   => $custom_gradient,
+		'customImage'      => $custom_image,
+		'libraryHdOnly'    => $library_hd_only,
+		'ai'               => $ai,
 	);
 }
 

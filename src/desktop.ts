@@ -16,7 +16,16 @@ import {
 	installWindowLoadingTransitions,
 	repaintLoadingOverlays,
 } from './window/loading';
-import { Dock, type SystemDockItem } from './dock';
+import { Dock, type DockItem, type SystemDockItem } from './dock';
+import { renderIcon } from './icon';
+import {
+	applyTileClasses,
+	applyTileElement,
+	applyTileTooltip,
+	dispatchTileRendered,
+	isDockElement,
+	registerDockSelector,
+} from './dock-helpers';
 import { OsSettings } from './settings';
 import { deriveWindowId, urlMatchKey } from './utils';
 import {
@@ -46,6 +55,7 @@ import {
 	type TitleBarButtonDef,
 } from './title-bar-buttons/registry';
 import { createTitleBarButtonRegistrySync } from './title-bar-buttons/server-sync';
+import { createDockRailRendererSync } from './dock-rail/server-sync';
 import {
 	registerWindowTheme,
 	unregisterWindowTheme,
@@ -147,6 +157,13 @@ import { bootHeartbeatBus, heartbeat, type HeartbeatBus } from './heartbeat';
  */
 const INITIAL_ORIGIN = window.location.origin;
 import { registerBuiltInWidgets } from './widgets/built-in';
+import {
+	installDefaultDockRailRenderer,
+	listDockRailRenderers,
+	registerDockRailRenderer,
+	unregisterDockRailRenderer,
+	type DockRailRenderer,
+} from './dock-rail';
 import * as widgetRegistry from './widgets/registry';
 import { createWidgetRegistrySync } from './widgets/server-sync';
 import { WPD_COMPONENT_TAGS } from './ui/components';
@@ -549,6 +566,165 @@ export interface WpDesktopPublicApi {
 	unregisterSettingsTab: ( id: string ) => void;
 	/** Snapshot of all registered third-party settings tabs. @since 0.17.0 */
 	listSettingsTabs: () => DesktopSettingsTab[];
+	/**
+	 * Register a renderer that REPLACES the dock rail entirely.
+	 * Plugins can ship a circular ring, a Stage-Manager-style
+	 * stack, a floating cluster — anything that fits the
+	 * controller contract. The user picks among registered
+	 * renderers in OS Settings → Appearance → Dock style.
+	 *
+	 * See `docs/examples/dock-rail-renderer.md` for the full
+	 * contract.
+	 *
+	 * @since 0.18.0
+	 */
+	registerDockRailRenderer: ( renderer: DockRailRenderer ) => void;
+	/** Remove a previously registered rail renderer. @since 0.18.0 */
+	unregisterDockRailRenderer: ( id: string ) => void;
+	/** Snapshot of all registered rail renderers. @since 0.18.0 */
+	listDockRailRenderers: () => DockRailRenderer[];
+	/**
+	 * Open (or focus, if already open) the shell's OS Settings
+	 * window. Routes through the same `manager.open()` call the
+	 * dock's OS Settings tile uses, so a window opened here is
+	 * indistinguishable from one opened by a dock click — same
+	 * id, same render callback, same dimensions, same focus and
+	 * minimize behaviour.
+	 *
+	 * Useful for custom dock rail renderers that want to surface
+	 * OS Settings inside their own UI without relying on the
+	 * dock's system tile being reachable (Classic layout puts OS
+	 * Settings on the side rail, which a custom primary-rail
+	 * renderer can't see).
+	 *
+	 * @since 0.18.0
+	 */
+	openOsSettings: () => void;
+	/**
+	 * Derive a stable window id from an admin URL — the same id the
+	 * default rail renderer uses when it opens a tile. Matches the
+	 * shell's internal slugifier; a custom renderer that calls
+	 * `wp.desktop.deriveWindowId(url)` and
+	 * `wp.desktop.windowManager.open({ id, … })` addresses the same
+	 * window the default renderer would, so switching renderer
+	 * mid-session doesn't lose the user's open windows.
+	 *
+	 * Plugins almost always want this over rolling their own
+	 * slugifier — a custom slug means the renderer can't
+	 * reuse-or-focus a window the default renderer opened.
+	 *
+	 * `adminUrl` defaults to `wp.desktop.config.adminUrl` so callers
+	 * normally pass just the URL.
+	 *
+	 * @since 0.18.0
+	 */
+	deriveWindowId: ( url: string, adminUrl?: string ) => string;
+	/**
+	 * Snapshot of every JS-registered system tile across both
+	 * rails. Returns `[]` when the layout dispatcher hasn't booted
+	 * yet (rare; only happens before `wp-desktop.init` fires).
+	 *
+	 * Custom rail renderers use this to compose against the same
+	 * tile set the default renderer paints — e.g., a launcher
+	 * palette that lists every native-window plugin tile + the
+	 * OS Settings tile in one place.
+	 *
+	 * @since 0.18.0
+	 */
+	listSystemTiles: () => Array< {
+		id: string;
+		title: string;
+		icon: string;
+		affinity: 'core' | 'plugin';
+	} >;
+	/**
+	 * Look up a system tile by id. Returns the underlying
+	 * `SystemDockItem` so callers can read its `title` / `icon` /
+	 * `isOpen()` predicate, or invoke `onOpen()` to forward the
+	 * action — the canonical "open by id" path that doesn't
+	 * require DOM scraping.
+	 *
+	 * Returns `null` when the id isn't registered or when the
+	 * dispatcher hasn't booted yet.
+	 *
+	 * @since 0.18.0
+	 */
+	getSystemTile: ( id: string ) => SystemDockItem | null;
+	/**
+	 * Read the complete admin-menu list, regardless of which rail
+	 * it would partition to under the active layout. The default
+	 * Classic layout splits the menu (core to side rail, plugin to
+	 * primary rail), so a custom rail renderer's `mount-deps.items`
+	 * is layout-scoped — this returns the full picture.
+	 *
+	 * Snapshots `config.dockItems` (the boot payload + the most
+	 * recent live-refresh result). Returns `[]` before the shell
+	 * has finished booting.
+	 *
+	 * @since 0.18.0
+	 */
+	getMenuItems: () => DockItem[];
+	/**
+	 * Render an icon-string into a DOM element using the canonical
+	 * dispatch (dashicon class → `<span>`, base64 SVG data URI →
+	 * `<span>` background, http(s) URL → `<img>`, anything else →
+	 * letter-badge fallback). Use this so your renderer's icons
+	 * look consistent with the default dock's.
+	 *
+	 * @since 0.18.0
+	 */
+	renderIcon: (
+		icon: string,
+		opts: { title: string; className?: string },
+	) => HTMLElement;
+	/**
+	 * Run the registered `wp-desktop.dock.tile-class` filter against
+	 * a base classNames list. Custom rail renderers SHOULD use this
+	 * during tile build so decoration plugins compose with any
+	 * renderer the user picks. See `docs/examples/dock-rail-renderer.md`
+	 * for the full composition contract.
+	 *
+	 * @since 0.18.0
+	 */
+	applyTileClasses: typeof import( './dock-helpers' ).applyTileClasses;
+	/**
+	 * Run the registered `wp-desktop.dock.tile-element` filter so
+	 * decoration plugins can wrap a renderer's tile element.
+	 *
+	 * @since 0.18.0
+	 */
+	applyTileElement: typeof import( './dock-helpers' ).applyTileElement;
+	/**
+	 * Resolve the tooltip text for a tile through the registered
+	 * `wp-desktop.dock.tile-tooltip` filter. Empty return suppresses
+	 * the tooltip.
+	 *
+	 * @since 0.18.0
+	 */
+	applyTileTooltip: typeof import( './dock-helpers' ).applyTileTooltip;
+	/**
+	 * Fire the `wp-desktop.dock.tile-rendered` action after a tile
+	 * lands in the DOM.
+	 *
+	 * @since 0.18.0
+	 */
+	dispatchTileRendered: typeof import( './dock-helpers' ).dispatchTileRendered;
+	/**
+	 * Walk an event target's composedPath looking for a known dock
+	 * element. Custom rail renderers should register their root
+	 * selector via {@link registerDockSelector} at mount time, then
+	 * use this in click-outside-to-dismiss handlers.
+	 *
+	 * @since 0.18.0
+	 */
+	isDockElement: ( target: EventTarget | null ) => boolean;
+	/**
+	 * Register an additional CSS selector treated as "inside the
+	 * dock" by {@link isDockElement}. Returns an unregister callback.
+	 *
+	 * @since 0.18.0
+	 */
+	registerDockSelector: ( selector: string ) => () => void;
 	/**
 	 * Register a custom button in the title bar of any matching
 	 * window. Predicate decides which windows show it. See
@@ -1083,7 +1259,15 @@ const RESERVED_NAMESPACE_KEYS: ReadonlySet< string > = new Set( [
 	'loadModules', 'whenReady', 'ready', 'isReady', 'setDefaultWindow',
 	'refreshMenu', 'config', 'ai', 'dragBridge', 'registerCommand',
 	'unregisterCommand', 'listCommands', 'registerSettingsTab',
-	'unregisterSettingsTab', 'listSettingsTabs', 'registerTitleBarButton',
+	'unregisterSettingsTab', 'listSettingsTabs',
+	'registerDockRailRenderer', 'unregisterDockRailRenderer', 'listDockRailRenderers',
+	'openOsSettings', 'deriveWindowId',
+	'listSystemTiles', 'getSystemTile', 'getMenuItems',
+	'renderIcon',
+	'applyTileClasses', 'applyTileElement', 'applyTileTooltip',
+	'dispatchTileRendered',
+	'isDockElement', 'registerDockSelector',
+	'registerTitleBarButton',
 	'unregisterTitleBarButton', 'listTitleBarButtons',
 	'registerWindowTheme', 'unregisterWindowTheme', 'listWindowThemes',
 	'applyWindowTheme',
@@ -1136,6 +1320,11 @@ function init(): void {
 	const widgetsEl = document.getElementById( 'wp-desktop-widgets' );
 	let widgetLayer: WidgetLayer | null = null;
 	registerBuiltInWidgets();
+	// Dock rail renderer registry — install the built-in `'default'`
+	// icon-strip renderer before `wp-desktop.init` fires so the
+	// layout dispatcher (constructed below) can resolve it on the
+	// very first paint.
+	installDefaultDockRailRenderer();
 	if ( widgetsEl ) {
 		widgetLayer = new WidgetLayer( widgetsEl, pluginUrl );
 	}
@@ -1335,24 +1524,43 @@ function init(): void {
 						manager.getActiveDesktopId()
 					);
 				},
-				onOpen: () => {
-					manager.open( {
-						id: OS_SETTINGS_WINDOW_ID,
-						baseId: OS_SETTINGS_WINDOW_ID,
-						url: '#os-settings',
-						title: 'OS Settings',
-						icon: 'dashicons-desktop',
-						native: true,
-						render: ( body ) => osSettings.renderPanel( body ),
-						width: 820,
-						height: 720,
-						minWidth: 560,
-						minHeight: 480,
-					} );
-				},
+				onOpen: openOsSettings,
 			},
 			'core',
 		);
+	}
+
+	/**
+	 * Public OS Settings opener. Routes through the same
+	 * `manager.open()` call the system tile uses so a window
+	 * reopened from `wp.desktop.openOsSettings()` is identical to
+	 * one opened by clicking the dock tile — same id, same render
+	 * callback, same dimensions, same focus / minimize behaviour.
+	 *
+	 * Defined as a closure so the OS Settings tile registration
+	 * AND the public API both reach the same opener; previously the
+	 * opener lived inside the tile's `onOpen` closure with no way
+	 * for plugin authors to invoke it short of DOM-scraping the
+	 * tile element. See gap report (`docs/dock-customization.md`)
+	 * — custom rail renderers needed a portable way to surface OS
+	 * Settings inside their own UI.
+	 *
+	 * @since 0.18.0
+	 */
+	function openOsSettings(): void {
+		manager.open( {
+			id: OS_SETTINGS_WINDOW_ID,
+			baseId: OS_SETTINGS_WINDOW_ID,
+			url: '#os-settings',
+			title: 'OS Settings',
+			icon: 'dashicons-desktop',
+			native: true,
+			render: ( body ) => osSettings.renderPanel( body ),
+			width: 820,
+			height: 720,
+			minWidth: 560,
+			minHeight: 480,
+		} );
 	}
 	const dock: Dock | null = layoutDispatcher?.getPrimary() ?? null;
 
@@ -1536,6 +1744,21 @@ function init(): void {
 			? config.serverTitleBarButtonScripts
 			: [],
 	);
+
+	// Dock rail renderer sync — loads plugin renderer scripts on
+	// activation so OS Settings → Dock style surfaces them
+	// without an F5; owner-tagged sweep on deactivation. The
+	// dispatcher's subscription to the rail-renderer registry
+	// rebuilds the rails automatically if the user's active id
+	// now resolves to a freshly-loaded renderer.
+	const syncServerDockRailRenderers = createDockRailRendererSync();
+	void syncServerDockRailRenderers(
+		Array.isArray( config.serverDockRailRendererScripts )
+			? config.serverDockRailRendererScripts
+			: [],
+	);
+
+	// Submenu renderer sync — same shape, different registry.
 
 	// Window-theme sync — Layer 1 of the chrome-customization
 	// framework. Loads scripts opted-in via
@@ -1754,6 +1977,7 @@ function init(): void {
 		syncServerCommands,
 		syncServerSettingsTabs,
 		syncServerTitleBarButtons,
+		syncServerDockRailRenderers,
 		renderIcons,
 	);
 
@@ -1839,6 +2063,23 @@ function init(): void {
 		registerSettingsTab,
 		unregisterSettingsTab,
 		listSettingsTabs,
+		registerDockRailRenderer,
+		unregisterDockRailRenderer,
+		listDockRailRenderers,
+		openOsSettings,
+		deriveWindowId: ( url: string, overrideAdminUrl?: string ) =>
+			deriveWindowId( url, overrideAdminUrl ?? config.adminUrl ),
+		listSystemTiles: () => layoutDispatcher?.listSystemTiles() ?? [],
+		getSystemTile: ( id: string ) =>
+			layoutDispatcher?.getSystemTile( id ) ?? null,
+		getMenuItems: () => layoutDispatcher?.getMenuItems() ?? [],
+		renderIcon,
+		applyTileClasses,
+		applyTileElement,
+		applyTileTooltip,
+		dispatchTileRendered,
+		isDockElement,
+		registerDockSelector,
 		registerTitleBarButton,
 		unregisterTitleBarButton,
 		listTitleBarButtons,
@@ -2122,19 +2363,12 @@ function init(): void {
 		if ( desktopArea.classList.contains( 'wp-desktop-area--overview' ) ) {
 			return;
 		}
-		const windows = manager.getAll();
-		const allMinimized = windows.length > 0 && windows.every( ( w ) => w.state === 'minimized' );
-		if ( allMinimized ) {
-			for ( const win of windows ) {
-				win.restore();
-			}
-		} else {
-			for ( const win of windows ) {
-				if ( win.state !== 'minimized' ) {
-					win.minimize();
-				}
-			}
-		}
+		// One call instead of an inline loop — keeps the wallpaper
+		// click and the public `windowManager.toggleShowDesktop()`
+		// API in lock-step (plugins building expand/collapse UIs
+		// that mimic the gesture get the same focus / restore-order
+		// behaviour the shell uses).
+		manager.toggleShowDesktop();
 	} );
 
 	// The URL bar is intentionally NOT normalized to /wp-desktop/.
@@ -2626,6 +2860,9 @@ function bindMenuRefresh(
 	syncServerTitleBarButtons: (
 		scripts: import( './types' ).DesktopTitleBarButtonScriptServerEntry[],
 	) => Promise< void >,
+	syncServerDockRailRenderers: (
+		scripts: import( './types' ).DesktopDockRailRendererScriptServerEntry[],
+	) => Promise< void >,
 	renderIcons: (
 		icons: import( './types' ).DesktopIconServerEntry[] | undefined,
 	) => void,
@@ -2643,6 +2880,7 @@ function bindMenuRefresh(
 		syncServerCommands,
 		syncServerSettingsTabs,
 		syncServerTitleBarButtons,
+		syncServerDockRailRenderers,
 		renderIcons,
 	} );
 
@@ -2699,6 +2937,7 @@ function bindMenuRefresh(
 				serverCommands?: unknown;
 				serverSettingsTabScripts?: unknown;
 				serverSettingsTabs?: unknown;
+				serverDockRailRendererScripts?: unknown;
 				serverTitleBarButtonScripts?: unknown;
 				desktopIcons?: unknown;
 			};

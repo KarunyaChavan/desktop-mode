@@ -10,7 +10,7 @@
  */
 
 import { activity } from './activity';
-import { doAction, HOOKS } from './hooks';
+import { applyFilters, doAction, HOOKS } from './hooks';
 import type { WindowManager } from './window-manager';
 import { deriveWindowId } from './utils';
 import { __, _n, sprintf } from './i18n';
@@ -47,6 +47,20 @@ export interface SystemDockItem {
 /**
  * A single dock item from the PHP menu data.
  */
+/**
+ * A single child link of a parent admin menu — what arrives in
+ * `DockItem.submenu`. Custom rail renderers that surface submenus
+ * with their own UI receive this shape via the `openSubmenuPick`
+ * mount-deps callback.
+ *
+ * @public
+ * @since 0.18.0
+ */
+export interface SubmenuItem {
+	title: string;
+	url: string;
+}
+
 export interface DockItem {
 	/** Unique identifier (menu slug). */
 	id: string;
@@ -74,6 +88,54 @@ export interface DockItem {
 
 /** Which edge of the screen the rail hugs. Drives tooltip anchoring + modifier CSS. */
 export type DockOrientation = 'left' | 'right' | 'bottom';
+
+/**
+ * Context object passed to every dock decoration hook detail. Lets a
+ * single subscriber disambiguate between rails when two coexist
+ * (Classic layout's left side bar + bottom dock) without reaching
+ * into the DOM.
+ *
+ * `dockId` is the host element's `id` attribute — `'wp-desktop-dock'`
+ * for the bottom rail, `'wp-desktop-side-dock'` for the Classic side
+ * rail. `rail` mirrors `Dock.rail` (`'dock'` or `'taskbar'`) and
+ * `orientation` carries the placement.
+ *
+ * @public
+ * @since 0.18.0
+ */
+export interface DockHookContextBase {
+	rail: 'dock' | 'taskbar';
+	orientation: DockOrientation;
+	dockId: string;
+	container: HTMLElement;
+}
+
+/**
+ * Context for a single tile being painted. `isSystem` is the
+ * discriminator: when `true`, `item` is a {@link SystemDockItem};
+ * when `false`, a {@link DockItem} from the admin menu.
+ *
+ * @public
+ * @since 0.18.0
+ */
+export interface DockTileContext extends DockHookContextBase {
+	item: DockItem | SystemDockItem;
+	isSystem: boolean;
+}
+
+/**
+ * Context for the bulk render hooks ({@link HOOKS.DOCK_BEFORE_RENDER}
+ * / {@link HOOKS.DOCK_AFTER_RENDER}). `tileElements` is a frozen
+ * map of menu-tile id → DOM element — read-only; mutating it
+ * desyncs the rail.
+ *
+ * @public
+ * @since 0.18.0
+ */
+export interface DockRenderContext extends DockHookContextBase {
+	items: DockItem[];
+	tileElements: ReadonlyMap<string, HTMLElement>;
+}
 
 /** Attention modes accepted by `Dock.setAttention()` and `Window.requestAttention()`. */
 export type DockAttentionMode = 'pulse' | 'shake' | 'bounce' | null;
@@ -148,6 +210,20 @@ export class Dock {
 
 	private static instanceCounter = 0;
 
+	/**
+	 * Build the base context object every dock decoration hook
+	 * receives. Read from `this` so a single subscriber can
+	 * disambiguate two coexisting rails by `dockId`.
+	 */
+	private buildHookContextBase(): DockHookContextBase {
+		return {
+			rail: this.rail,
+			orientation: this.orientation,
+			dockId: this.container.id,
+			container: this.container,
+		};
+	}
+
 	constructor(
 		container: HTMLElement,
 		windowManager: WindowManager,
@@ -178,10 +254,17 @@ export class Dock {
 		this.tooltip = document.createElement( 'div' );
 		this.tooltip.className = 'wp-desktop-dock__tooltip';
 		this.tooltip.setAttribute( 'role', 'tooltip' );
+		// Anchor modifier — applied directly to the tooltip element
+		// (not via a descendant selector on the dock) because the
+		// tooltip lives in `document.body` for stacking-context
+		// reasons. CSS keys off this class for the slide-in animation
+		// direction; `positionTooltip()` writes the absolute coords.
 		if ( orientation === 'bottom' ) {
 			this.tooltip.classList.add( 'wp-desktop-dock__tooltip--above' );
 		} else if ( orientation === 'right' ) {
 			this.tooltip.classList.add( 'wp-desktop-dock__tooltip--before' );
+		} else {
+			this.tooltip.classList.add( 'wp-desktop-dock__tooltip--after' );
 		}
 		document.body.appendChild( this.tooltip );
 
@@ -228,11 +311,14 @@ export class Dock {
 		this.tooltip.classList.remove(
 			'wp-desktop-dock__tooltip--above',
 			'wp-desktop-dock__tooltip--before',
+			'wp-desktop-dock__tooltip--after',
 		);
 		if ( orientation === 'bottom' ) {
 			this.tooltip.classList.add( 'wp-desktop-dock__tooltip--above' );
 		} else if ( orientation === 'right' ) {
 			this.tooltip.classList.add( 'wp-desktop-dock__tooltip--before' );
+		} else {
+			this.tooltip.classList.add( 'wp-desktop-dock__tooltip--after' );
 		}
 	}
 
@@ -249,6 +335,13 @@ export class Dock {
 		this.itemElements.clear();
 
 		this.items = items;
+
+		const base = this.buildHookContextBase();
+		doAction( HOOKS.DOCK_BEFORE_RENDER, {
+			...base,
+			items,
+			tileElements: this.itemElements as ReadonlyMap<string, HTMLElement>,
+		} );
 
 		let insertedGroupSeparator = false;
 		let tilesInsertedThisPass = 0;
@@ -288,9 +381,21 @@ export class Dock {
 				);
 				_applyBadgeNode( primary ?? btn, override );
 			}
+			doAction( HOOKS.DOCK_TILE_RENDERED, {
+				...base,
+				item,
+				isSystem: false,
+				el: btn,
+			} );
 		}
 
 		this.updateActiveStates();
+
+		doAction( HOOKS.DOCK_AFTER_RENDER, {
+			...base,
+			items,
+			tileElements: this.itemElements as ReadonlyMap<string, HTMLElement>,
+		} );
 	}
 
 	/**
@@ -504,6 +609,13 @@ export class Dock {
 		this.systemItemElements.set( item.id, tile );
 		this.container.appendChild( tile );
 		this.updateActiveStates();
+
+		doAction( HOOKS.DOCK_TILE_RENDERED, {
+			...this.buildHookContextBase(),
+			item,
+			isSystem: true,
+			el: tile,
+		} );
 	}
 
 	/**
@@ -519,6 +631,13 @@ export class Dock {
 	 */
 	private render(): void {
 		this.container.innerHTML = '';
+
+		const base = this.buildHookContextBase();
+		doAction( HOOKS.DOCK_BEFORE_RENDER, {
+			...base,
+			items: this.items,
+			tileElements: this.itemElements as ReadonlyMap<string, HTMLElement>,
+		} );
 
 		let insertedGroupSeparator = false;
 		for ( const item of this.items ) {
@@ -538,7 +657,19 @@ export class Dock {
 			const btn = this.createItemButton( item );
 			this.itemElements.set( item.id, btn );
 			this.container.appendChild( btn );
+			doAction( HOOKS.DOCK_TILE_RENDERED, {
+				...base,
+				item,
+				isSystem: false,
+				el: btn,
+			} );
 		}
+
+		doAction( HOOKS.DOCK_AFTER_RENDER, {
+			...base,
+			items: this.items,
+			tileElements: this.itemElements as ReadonlyMap<string, HTMLElement>,
+		} );
 	}
 
 	/**
@@ -548,8 +679,23 @@ export class Dock {
 	 * styling is shared.
 	 */
 	private createSystemItemButton( item: SystemDockItem ): HTMLElement {
+		const ctx: DockTileContext = {
+			...this.buildHookContextBase(),
+			item,
+			isSystem: true,
+		};
+
 		const tile = document.createElement( 'div' );
-		tile.className = 'wp-desktop-dock__item wp-desktop-dock__item--system';
+		const baseClasses = [
+			'wp-desktop-dock__item',
+			'wp-desktop-dock__item--system',
+		];
+		const filteredClasses = applyFilters< string[] >(
+			HOOKS.DOCK_TILE_CLASS,
+			baseClasses,
+			ctx,
+		);
+		tile.className = filteredClasses.join( ' ' );
 		tile.dataset.systemId = item.id;
 
 		const primary = document.createElement( 'button' );
@@ -563,9 +709,13 @@ export class Dock {
 		primary.addEventListener( 'click', () => item.onOpen() );
 
 		tile.appendChild( primary );
-		this.bindTooltip( tile, item.title );
+		this.bindTooltipFiltered( tile, item.title, ctx );
 
-		return tile;
+		return applyFilters< HTMLElement >(
+			HOOKS.DOCK_TILE_ELEMENT,
+			tile,
+			ctx,
+		);
 	}
 
 	/**
@@ -578,12 +728,24 @@ export class Dock {
 	 * container so the DOM is stable.
 	 */
 	private createItemButton( item: DockItem ): HTMLElement {
+		const ctx: DockTileContext = {
+			...this.buildHookContextBase(),
+			item,
+			isSystem: false,
+		};
+
 		const tile = document.createElement( 'div' );
-		tile.className = 'wp-desktop-dock__item';
-		tile.dataset.menuSlug = item.id;
+		const baseClasses = [ 'wp-desktop-dock__item' ];
 		if ( item.multi ) {
-			tile.classList.add( 'wp-desktop-dock__item--multi' );
+			baseClasses.push( 'wp-desktop-dock__item--multi' );
 		}
+		const filteredClasses = applyFilters< string[] >(
+			HOOKS.DOCK_TILE_CLASS,
+			baseClasses,
+			ctx,
+		);
+		tile.className = filteredClasses.join( ' ' );
+		tile.dataset.menuSlug = item.id;
 
 		// Primary button — the icon body. Focuses existing or opens first.
 		const primary = document.createElement( 'button' );
@@ -660,7 +822,11 @@ export class Dock {
 			addBtn.addEventListener( 'pointerleave', ( e: PointerEvent ) => {
 				const next = e.relatedTarget as Node | null;
 				if ( next && tile.contains( next ) ) {
-					this.positionTooltip( tile, item.title );
+					// Restore the bind-time tooltip text — filtered
+					// once via {@link HOOKS.DOCK_TILE_TOOLTIP}, stored
+					// on the dataset by `bindTooltipFiltered`.
+					const restored = tile.dataset.dockTooltip ?? item.title;
+					this.positionTooltip( tile, restored );
 					return;
 				}
 				this.tooltip.classList.remove( 'wp-desktop-dock__tooltip--visible' );
@@ -669,9 +835,13 @@ export class Dock {
 			tile.appendChild( addBtn );
 		}
 
-		this.bindTooltip( tile, item.title );
+		this.bindTooltipFiltered( tile, item.title, ctx );
 
-		return tile;
+		return applyFilters< HTMLElement >(
+			HOOKS.DOCK_TILE_ELEMENT,
+			tile,
+			ctx,
+		);
 	}
 
 	/**
@@ -895,13 +1065,37 @@ export class Dock {
 	 * left side, bottom dock → above the tile. We set the relevant
 	 * coordinate inline each enter; the CSS takes care of the rest.
 	 */
-	private bindTooltip( el: HTMLElement, text: string ): void {
-		el.addEventListener( 'pointerenter', () => {
-			this.positionTooltip( el, text );
+	/**
+	 * Resolves the tooltip text through {@link HOOKS.DOCK_TILE_TOOLTIP}
+	 * once at bind time (so the dock doesn't re-filter on every
+	 * pointerenter) and stashes the resolved text on
+	 * `tile.dataset.dockTooltip` so the multi-instance chip can
+	 * restore it on its own pointerleave without going through the
+	 * filter again.
+	 *
+	 * Returning an empty string from the filter suppresses the
+	 * tooltip — the listener short-circuits and never adds the
+	 * `--visible` class.
+	 */
+	private bindTooltipFiltered(
+		tile: HTMLElement,
+		text: string,
+		ctx: DockTileContext,
+	): void {
+		const filtered = applyFilters< string >(
+			HOOKS.DOCK_TILE_TOOLTIP,
+			text,
+			ctx,
+		);
+		tile.dataset.dockTooltip = filtered;
+		if ( filtered === '' ) {
+			return;
+		}
+		tile.addEventListener( 'pointerenter', () => {
+			this.positionTooltip( tile, filtered );
 			this.tooltip.classList.add( 'wp-desktop-dock__tooltip--visible' );
 		} );
-
-		el.addEventListener( 'pointerleave', () => {
+		tile.addEventListener( 'pointerleave', () => {
 			this.tooltip.classList.remove( 'wp-desktop-dock__tooltip--visible' );
 		} );
 	}
@@ -915,20 +1109,26 @@ export class Dock {
 		const rect = el.getBoundingClientRect();
 		this.tooltip.textContent = text;
 		if ( this.orientation === 'bottom' ) {
-			// Horizontal centering; CSS handles the vertical offset.
+			// Horizontal centering; CSS `--above` modifier handles the
+			// vertical translate.
 			this.tooltip.style.left = `${ rect.left + rect.width / 2 }px`;
 			this.tooltip.style.top = `${ rect.top - 14 }px`;
 		} else if ( this.orientation === 'right' ) {
 			// Tooltip sits to the LEFT of the tile — anchor on the
-			// tile's left edge; CSS --before modifier translates it
+			// tile's left edge; CSS `--before` modifier translates it
 			// further left + centers vertically.
 			this.tooltip.style.top = `${ rect.top + rect.height / 2 - 14 }px`;
 			this.tooltip.style.left = `${ rect.left }px`;
 		} else {
-			// Left orientation (default). Vertical centering; CSS
-			// handles the horizontal offset.
+			// Left orientation (default). Tooltip sits to the RIGHT
+			// of the tile — anchor on the tile's right edge with an
+			// 8px gap so it clears the rail's outer border. Vertical
+			// centering computed inline; CSS `--after` modifier
+			// handles only the slide-in animation. (Body-attached
+			// tooltips can't rely on `.wp-desktop-dock[…] .tooltip`
+			// descendant selectors; the position lives in JS.)
 			this.tooltip.style.top = `${ rect.top + rect.height / 2 - 14 }px`;
-			this.tooltip.style.left = '';
+			this.tooltip.style.left = `${ rect.right + 8 }px`;
 		}
 	}
 

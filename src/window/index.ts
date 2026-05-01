@@ -59,6 +59,7 @@ import {
 } from './../window-chrome/chrome/registry';
 import {
 	captureChromeState,
+	CUSTOM_CHROME_CLASS,
 	mountWindowChrome,
 	resolveChromeId,
 	STANDARD_CHROME_ID,
@@ -1007,6 +1008,11 @@ export class Window {
 			}
 			this._chromeHandle = null;
 		}
+		// Drop the marker class while no chrome is mounted — the
+		// default chrome should be visible during the brief window
+		// between teardown and the next mount. `mountWindowChrome`
+		// re-adds the class on success.
+		this.element.classList.remove( CUSTOM_CHROME_CLASS );
 		const mounted = mountWindowChrome( this );
 		if ( mounted ) {
 			this._chromeHandle = mounted.handle;
@@ -1042,6 +1048,16 @@ export class Window {
 	 * @since 0.6.0
 	 */
 	public _notifyChromeStateChanged(): void {
+		// Belt-and-braces: a window mid-close (or fully torn down)
+		// must NEVER re-enter the plugin's `update()`. A plugin's
+		// update implementation might re-render from scratch — if it
+		// fires during the close fade, the user could briefly see a
+		// half-rebuilt chrome (or, worse, the default chrome
+		// underneath if the plugin's render races). Block the call
+		// at the source.
+		if ( this._isDestroyed ) {
+			return;
+		}
 		if ( ! this._chromeHandle?.update ) {
 			return;
 		}
@@ -1153,6 +1169,62 @@ export class Window {
 		this.element.style.height = `${ height }px`;
 		this.state = zone === 'left' ? 'snapped-left' : 'snapped-right';
 		this._emitChange( 'state' );
+	}
+
+	/**
+	 * Predicate: is this window currently minimized?
+	 *
+	 * Equivalent to `state === 'minimized'`, but expressed as a
+	 * method so callers don't have to grep for the canonical
+	 * state-string values. The state machine is:
+	 * `'normal' | 'minimized' | 'maximized' | 'fullscreen' |
+	 * 'snapped-left' | 'snapped-right'`.
+	 *
+	 * @public
+	 * @since 0.18.0
+	 */
+	public isMinimized(): boolean {
+		return this.state === 'minimized';
+	}
+
+	/** Predicate: is this window currently maximized? @since 0.18.0 */
+	public isMaximized(): boolean {
+		return this.state === 'maximized';
+	}
+
+	/** Predicate: is this window in fullscreen mode? @since 0.18.0 */
+	public isFullscreen(): boolean {
+		return this.state === 'fullscreen';
+	}
+
+	/**
+	 * Predicate: is this window currently snapped to a screen edge?
+	 * Returns `true` for both half-screen positions; pass an explicit
+	 * side string if you need to distinguish.
+	 *
+	 * @since 0.18.0
+	 */
+	public isSnapped( side?: 'left' | 'right' ): boolean {
+		if ( side === 'left' ) {
+			return this.state === 'snapped-left';
+		}
+		if ( side === 'right' ) {
+			return this.state === 'snapped-right';
+		}
+		return (
+			this.state === 'snapped-left' || this.state === 'snapped-right'
+		);
+	}
+
+	/**
+	 * Predicate: is this window currently the focused (top of stack)
+	 * window? Reads the `wp-desktop-window--focused` class the manager
+	 * toggles in `focus()` so the result matches what's visible.
+	 *
+	 * @since 0.18.0
+	 */
+	public isFocused(): boolean {
+		return this.element.classList.contains( 'wp-desktop-window--focused' );
 	}
 
 	public minimize(): void {
@@ -1972,79 +2044,40 @@ export class Window {
 			this._titleBarButtonsUnsubscribe = null;
 		}
 
-		// Drop the window-theme subscription + clear any inline
-		// theme variables we wrote to the outer element. Strictly
-		// belt-and-braces — the element is about to leave the DOM —
-		// but keeps the WeakMap bookkeeping consistent if anyone
-		// holds a reference to the element after close.
+		// Drop the window-theme subscription pre-animation — no
+		// visible effect; just stops registry-change callbacks from
+		// firing while the window is animating away. The actual
+		// theme-variable wipe (`clearWindowTheme`) is deferred into
+		// `onDone()` because it MUTATES inline CSS — running it
+		// pre-animation snaps the window back to the default theme
+		// (border, shadow, bg, fg, accent, …) the instant the user
+		// clicks close, before the fade has a chance to run. With
+		// the wipe deferred, the window keeps its themed appearance
+		// for the entire fade-out.
 		if ( this._windowThemesUnsubscribe ) {
 			this._windowThemesUnsubscribe();
 			this._windowThemesUnsubscribe = null;
 		}
-		clearWindowTheme( this );
 
-		// Drop the window-controls subscription + tear down the
-		// last paint's plugin-supplied event listeners. The element
-		// is about to leave the DOM but explicit teardown keeps
-		// retained references (devtools, plugin caches) clean.
+		// Subscription teardowns that have no visible effect happen
+		// pre-animation. The matching plugin-supplied teardowns
+		// (which CAN mutate visible DOM — destroy() the chrome,
+		// remove control buttons, drop slot content, clear native-
+		// window body, wipe theme CSS variables) are deferred into
+		// `onDone()` below so the window's fade-out doesn't reveal
+		// the default chrome / a blank body / missing buttons /
+		// reset theme mid-animation.
 		if ( this._windowControlsUnsubscribe ) {
 			this._windowControlsUnsubscribe();
 			this._windowControlsUnsubscribe = null;
 		}
-		if ( this._windowControlsTeardown ) {
-			try {
-				this._windowControlsTeardown();
-			} catch {
-				// see notes in repaintWindowControls.
-			}
-			this._windowControlsTeardown = null;
-		}
-
-		// Same teardown for Layer-3 slots — drop subscriber +
-		// invoke any teardowns plugins returned from `render()`.
 		if ( this._windowSlotsUnsubscribe ) {
 			this._windowSlotsUnsubscribe();
 			this._windowSlotsUnsubscribe = null;
 		}
-		if ( this._windowSlotsTeardown ) {
-			try {
-				this._windowSlotsTeardown();
-			} catch {
-				// see notes in repaintWindowSlots.
-			}
-			this._windowSlotsTeardown = null;
-		}
-
-		// Layer-4 — drop chrome registry subscriber + destroy() the
-		// custom chrome handle if one is mounted.
 		if ( this._windowChromesUnsubscribe ) {
 			this._windowChromesUnsubscribe();
 			this._windowChromesUnsubscribe = null;
-		}
-		if ( this._chromeHandle ) {
-			try {
-				this._chromeHandle.destroy();
-			} catch {
-				// Plugin teardown failures shouldn't take the close down.
-			}
-			this._chromeHandle = null;
-		}
-
-		// Invoke the optional teardown returned by the native-window
-		// render callback. Without this, plugin authors could never
-		// reliably dispose listeners scoped to a window's lifetime —
-		// the framework was discarding the return value.
-		if ( this._nativeRenderTeardown ) {
-			try {
-				this._nativeRenderTeardown();
-			} catch ( err ) {
-				doAction( HOOKS.SHELL_ERROR, {
-					scope: 'native-window-teardown',
-					id: this.id,
-					error: err,
-				} );
-			}
-			this._nativeRenderTeardown = null;
 		}
 
 		// Tear down the body resize observer now rather than on
@@ -2082,6 +2115,57 @@ export class Window {
 				return;
 			}
 			removed = true;
+
+			// Visible-DOM teardowns deferred from above — run them
+			// here, after the closing animation has faded the window
+			// to opacity 0, so a custom chrome unmounting (or a
+			// plugin slot / control / native body teardown) can't
+			// flash the default chrome through the live pixels
+			// mid-fade. The window leaves the DOM in the next step
+			// regardless; whatever the children look like during
+			// these calls is invisible.
+			if ( this._windowControlsTeardown ) {
+				try {
+					this._windowControlsTeardown();
+				} catch {
+					// see notes in repaintWindowControls.
+				}
+				this._windowControlsTeardown = null;
+			}
+			if ( this._windowSlotsTeardown ) {
+				try {
+					this._windowSlotsTeardown();
+				} catch {
+					// see notes in repaintWindowSlots.
+				}
+				this._windowSlotsTeardown = null;
+			}
+			if ( this._chromeHandle ) {
+				try {
+					this._chromeHandle.destroy();
+				} catch {
+					// Plugin teardown failures shouldn't take the close down.
+				}
+				this._chromeHandle = null;
+			}
+			// Theme CSS-variable wipe — also deferred so the themed
+			// appearance survives the entire fade-out. The element is
+			// about to leave the DOM regardless; the wipe is purely
+			// belt-and-braces against retained references.
+			clearWindowTheme( this );
+			if ( this._nativeRenderTeardown ) {
+				try {
+					this._nativeRenderTeardown();
+				} catch ( err ) {
+					doAction( HOOKS.SHELL_ERROR, {
+						scope: 'native-window-teardown',
+						id: this.id,
+						error: err,
+					} );
+				}
+				this._nativeRenderTeardown = null;
+			}
+
 			window.removeEventListener( 'message', this._boundOnMessage );
 			if ( this._boundOnDocumentPointerDown ) {
 				document.removeEventListener(

@@ -31,6 +31,8 @@ document.addEventListener( 'wp-desktop-init', ( e ) => {
 { config: DesktopConfig, restored: boolean }
 ```
 
+> **Use `wp.desktop.ready( cb )` for bootstrap, not this event.** `ready()` (and its alias `whenReady()`) handles both the already-fired and not-yet-fired cases — a script loaded after `wp-desktop-init` (server-sync-injected widgets, settings tabs, command scripts) still gets its callback invoked via microtask. A raw `addEventListener( 'wp-desktop-init', cb )` listener registered after the event has dispatched silently never fires. The CustomEvent stays around for non-bootstrap analytics / instrumentation; bootstrap goes through `ready`. See ["Bootstrap" under Hooks](#bootstrap) for the full story.
+
 ---
 
 ### `wp-desktop-window-opened` — Stable
@@ -324,6 +326,9 @@ manager.getVisibleRects(): VisibleWindowRect[];
 
 // Batch operations
 manager.closeAll( options?: { exceptIds?: string[] } ): number;          // since 0.14.0
+manager.minimizeAll(): Window[];                                         // since 0.18.0
+manager.restoreFrom( windows: Window[] ): void;                          // since 0.18.0
+manager.toggleShowDesktop(): boolean;                                    // since 0.18.0
 manager.cascade(): void;
 manager.tile(): void;
 
@@ -353,6 +358,24 @@ manager.closeDesktop( id: string ): void;                                // sinc
     height?:       number;
     initialState?: 'normal' | 'minimized' | 'maximized' | 'fullscreen';
     submenu?:      { title: string; url: string }[];
+}
+```
+
+> **`open()` requires a config object.** Passing a URL string used to silently produce a window stuck on a loading spinner with no error in the console. Since 0.18.0 the manager throws `TypeError` at the call site if `config` isn't an object, or if `id` / `url` / `title` are missing or wrong-typed. Build the config; don't shorthand it.
+
+**`config.submenu`** — when present, the shell renders the array as an in-window tab strip below the title bar so the user can navigate child pages without leaving the window. Pass `item.submenu` whenever you open a window from a dock context — `openItem` and `openSubmenuPick` (in custom rail renderers) propagate it for you. Skip it for native windows that don't have admin sub-pages. The shell strips WordPress's auto-prepended self-link entry server-side, so `submenu.length > 0` reliably means "has real children" (no defensive filtering needed in your code).
+
+**`minimizeAll()` / `restoreFrom( windows )` / `toggleShowDesktop()`** — the "Show Desktop" gesture decomposed into reusable primitives. `minimizeAll()` returns the windows it actually minimized (skipping windows already in the `'minimized'` state), so you can pair it with a later `restoreFrom( minimizedSet )` that touches only what you minimized. `toggleShowDesktop()` is the higher-level call mirroring the wallpaper-click behaviour exactly — minimize when anything is visible, restore when everything's hidden. Returns `true` when the new state is "showing the desktop."
+
+```js
+// Plugin building an expand/collapse UI.
+let parked = [];
+function expand() {
+    parked = wp.desktop.windowManager.minimizeAll();
+}
+function collapse() {
+    wp.desktop.windowManager.restoreFrom( parked );
+    parked = [];
 }
 ```
 
@@ -409,7 +432,15 @@ interface Window {
     readonly id:      string;     // stable identifier
     readonly config:  WindowConfig;
     readonly element: HTMLElement; // outer .wp-desktop-window node
-    state: 'normal' | 'minimized' | 'maximized' | 'fullscreen';
+    state: 'normal' | 'minimized' | 'maximized' | 'fullscreen' | 'snapped-left' | 'snapped-right';
+
+    // State predicates — added 0.18.0; equivalent to `state === '…'`
+    // but easier to discover and harder to misspell at the call site.
+    isMinimized():  boolean;
+    isMaximized():  boolean;
+    isFullscreen(): boolean;
+    isSnapped( side?: 'left' | 'right' ): boolean;
+    isFocused():    boolean;        // mirrors the wp-desktop-window--focused class
 
     // Lifecycle
     close(): void;
@@ -427,11 +458,14 @@ interface Window {
 }
 ```
 
-The `state` property is read-only-ish — mutate via the methods (`minimize()`, `restore()`, `maximize()`) so the manager fires the right lifecycle hooks (`wp-desktop.window.minimized`, etc.). Reading it is fine and cheap.
+The `state` property is read-only-ish — mutate via the methods (`minimize()`, `restore()`, `maximize()`) so the manager fires the right lifecycle hooks (`wp-desktop.window.minimized`, etc.). Reading it is fine and cheap; the `is…()` predicates are equivalent and added in 0.18.0 so you don't have to remember the canonical state-string values.
 
 ```javascript
 const win = wp.desktop.windowManager.getById( 'edit-php' );
-if ( win && win.state === 'normal' ) win.minimize();
+// Both work; the predicate is harder to misuse than `! win.isMinimized?.()`
+// (which used to silently coerce undefined → true on every plugin author's
+// first attempt before the predicates landed).
+if ( win && ! win.isMinimized() ) win.minimize();
 ```
 
 #### `Window.send( channel, payload? )` — Stable *(since 0.5.5)*
@@ -1827,6 +1861,236 @@ Snapshot of every currently registered third-party settings tab, sorted by `orde
 
 ---
 
+### `registerDockRailRenderer( def )` — Stable *(since 0.18.0)*
+
+Register a renderer that **replaces the dock rail entirely**. The default `'default'` renderer is the shipped icon-strip backed by the `Dock` class; plugin authors can ship anything from a circular ring to a Stage-Manager-style stack to a floating cluster. The user picks among registered renderers in OS Settings → Appearance → Dock style (persisted to user meta as `dockRailRenderer`).
+
+The active renderer is mounted into the dock container by the layout dispatcher; the controller it returns drives every subsequent live update (live menu refresh, system tile add/remove, badge updates, attention animations). A renderer that throws from `mount()` is caught — the failure is logged via `HOOKS.SHELL_ERROR` and the dispatcher falls back to the built-in `'default'` so the user never sees an empty dock.
+
+**Definition shape:**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `id` | `string` | yes | Unique. `[a-z0-9_-]+`. Re-registering with the same id replaces the previous entry. `'default'` is reserved for the shipped icon-strip renderer; a plugin that registers `id: 'default'` replaces the baseline. |
+| `label` | `string` | yes | Shown in the OS Settings picker. |
+| `description` | `string` | no | One-line preview text for the picker. |
+| `icon` | `string` | no | Dashicon class for the picker icon. |
+| `apiVersion` | `1` | no | Reserved for forward-compat. Omit to match the current contract. |
+| `owner` | `string` | no | Plugin-deactivation auto-unregisters every renderer with this tag. |
+| `mount( deps )` | `function` | yes | Build the rail UI. Return a controller. See below. |
+
+**`mount( deps )` contract — `deps` shape:**
+
+| Field | Type | Notes |
+|---|---|---|
+| `container` | `HTMLElement` | The rail's host element. The renderer owns everything inside it; the shell does not paint here after `mount()` returns. |
+| `items` | `DockItem[]` | Initial menu-derived tile list. |
+| `orientation` | `'left' \| 'right' \| 'bottom'` | Reflected on the container's `data-wp-desktop-dock-placement` attribute. |
+| `openItem( item )` | `function` | Primary tile click. Routes through the same `windowManager.open()` the default renderer uses (multi-instance, submenu propagation, session restore). Renderers SHOULD use this instead of calling the manager directly. |
+| `openSystemItem( item )` | `function` | System-tile click (OS Settings, plugin-owned native windows). Mirrors `openItem` for the non-menu cohort. |
+| `requestSubmenu( item, anchor )` | `function` | Invoke the active submenu renderer. Lets a custom rail renderer participate in the right-click → popover flow without re-implementing the submenu surface. |
+| `windowManager` | `WindowManager` | Full instance. Use sparingly; prefer the routing callbacks. |
+| `adminUrl` | `string` | Admin URL prefix for window-id derivation. |
+
+**Returned controller — `DockRailController`:**
+
+Required: `replaceItems`, `appendSystemItem`, `removeSystemItem`, `destroy`. Optional: `setBadge`, `setAttention`, `setOrientation`. Optional methods are silently skipped when the active renderer doesn't implement them — a renderer without a badge surface still works; those signals just don't paint.
+
+```javascript
+wp.desktop.ready( () => {
+    wp.desktop.registerDockRailRenderer( {
+        id:    'my-ring',
+        label: 'Ring',
+        owner: 'my-plugin',
+        mount( { container, items, openItem } ) {
+            // … paint items on a circle, click → openItem(item) …
+            return {
+                replaceItems( next )  { /* repaint */ },
+                appendSystemItem( i ) { /* add a system tile */ },
+                removeSystemItem( id ){ /* remove it */ },
+                destroy()             { container.innerHTML = ''; },
+            };
+        },
+    } );
+} );
+```
+
+See the full walk-through in [`docs/examples/dock-rail-renderer.md`](./examples/dock-rail-renderer.md).
+
+> **`wp.desktop.dock` with a custom renderer.** When the default renderer is active, `wp.desktop.dock` / `wp.desktop.sideDock` continue to return the underlying `Dock` instance (backwards compat). With a custom renderer active, both return `null` — plugins that need renderer-agnostic access should reach for `windowManager`, `activity`, or the public hook surface instead.
+
+---
+
+### `unregisterDockRailRenderer( id )` — Stable *(since 0.18.0)*
+
+Remove a rail renderer by id. Idempotent — unknown ids are silent no-ops.
+
+---
+
+### `listDockRailRenderers()` — Stable *(since 0.18.0)*
+
+Snapshot of every currently registered rail renderer in registration order. Used by the OS Settings picker; plugin authors rarely need it directly.
+
+---
+
+### `openOsSettings()` — Stable *(since 0.18.0)*
+
+Open (or focus, if already open) the shell's OS Settings window. Routes through the same `windowManager.open()` call the dock's OS Settings tile uses, so a window opened via `wp.desktop.openOsSettings()` is indistinguishable from one opened by clicking the dock tile — same id, same render callback, same dimensions, same focus / minimize behaviour.
+
+```js
+wp.desktop.openOsSettings();
+```
+
+The motivating use case: a custom dock rail renderer in **Classic** layout doesn't see the OS Settings tile (it lives on the side rail with the core menus, not the primary rail the custom renderer owns). Opening OS Settings from inside the renderer used to require DOM-scraping `[data-system-id="wp-desktop-os-settings"]` and clicking it; this method is the documented portable path.
+
+---
+
+### `deriveWindowId( url, adminUrl? )` — Stable *(since 0.18.0)*
+
+Derive a stable window id from an admin URL — the same id the default rail renderer uses when it opens a tile. Matches the shell's internal slugifier; a custom renderer that calls `wp.desktop.deriveWindowId( url )` and `wp.desktop.windowManager.open( { id, … } )` addresses the same window the default renderer would. Switching renderer mid-session preserves the user's open windows because both renderers agree on ids.
+
+`adminUrl` defaults to `wp.desktop.config.adminUrl` so callers normally pass just the URL:
+
+```js
+const id = wp.desktop.deriveWindowId( '/wp-admin/edit.php' );
+// → 'edit-php' (or whatever the shell's slugifier produces)
+wp.desktop.windowManager.open( { id, baseId: id, url: '/wp-admin/edit.php', /* … */ } );
+```
+
+> **For rail renderers** — prefer `openItem( item )` / `openSubmenuPick( item, sub )` from `DockRailMountDeps`. They call `deriveWindowId` internally with the right `adminUrl` and build the rest of the window config for you. Only reach for `deriveWindowId` directly when you need the id for something other than `windowManager.open()` (e.g., an indicator, a deep-link, an analytics event).
+
+> **Don't pass a string to `windowManager.open()`.** It accepts a config object only — passing a URL string silently produces a hung iframe with no console error. Build the config with `deriveWindowId` for the id, or use the routing callbacks above.
+
+---
+
+### `listSystemTiles()` — Stable *(since 0.18.0)*
+
+Snapshot of every JS-registered system tile across both rails. Returns `[]` when the layout dispatcher hasn't booted yet (rare; only happens before `wp-desktop.init` fires).
+
+Each entry is a read-only descriptor — the underlying `SystemDockItem` (with its `onOpen` / `isOpen` callbacks) lives behind `getSystemTile( id )`.
+
+```typescript
+[
+    {
+        id:       string,
+        title:    string,
+        icon:     string,
+        affinity: 'core' | 'plugin',  // 'core' tiles route to side rail in Classic
+    },
+    …
+]
+```
+
+```js
+const tiles = wp.desktop.listSystemTiles();
+const settings = tiles.find( ( t ) => t.id === 'wp-desktop-os-settings' );
+// settings → { id, title: 'OS Settings', icon: 'dashicons-desktop', affinity: 'core' }
+```
+
+A custom rail renderer that wants to compose against the same tile set the default renderer paints — e.g., a launcher palette that lists every native-window plugin tile + the OS Settings tile in one place — uses this to enumerate.
+
+---
+
+### `getSystemTile( id )` — Stable *(since 0.18.0)*
+
+Look up a system tile by id. Returns the underlying `SystemDockItem` so callers can read its `title` / `icon` / `isOpen()` predicate, or invoke `onOpen()` to forward the action.
+
+Returns `null` when the id isn't registered or the dispatcher hasn't booted yet.
+
+```js
+// Open a known system tile from anywhere — no DOM scraping.
+wp.desktop.getSystemTile( 'wp-desktop-os-settings' )?.onOpen();
+```
+
+---
+
+### `getMenuItems()` — Stable *(since 0.18.0)*
+
+Read the complete admin-menu list, regardless of how the active layout would partition it across rails. The default Classic layout splits the menu (core to side rail, plugin to primary rail), so a custom rail renderer's `mount-deps.items` is layout-scoped — `getMenuItems()` returns the full picture for renderers that want to paint a unified view of the entire admin.
+
+```js
+const everything = wp.desktop.getMenuItems();   // [ DockItem, DockItem, … ]
+```
+
+Returns a defensive copy — mutating the result doesn't change shell state. Updates with every live menu refresh; call from inside `wp-desktop.window.dock-items-changed` listeners (or the rail renderer's `replaceItems`) to get the fresh post-refresh snapshot.
+
+> **For renderers using the registry path:** `DockRailMountDeps.fullMenu` and `fullSystemTiles` carry the same data and are preferable inside a `mount()` body — they're snapshots at the moment the rail mounts, so a renderer holding the arrays sees stable references.
+
+---
+
+### `renderIcon( icon, opts )` — Stable *(since 0.18.0)*
+
+Render an icon-string into a DOM element using the canonical dispatch the default dock uses. One implementation, four shapes:
+
+| Input | Output |
+|---|---|
+| `'dashicons-…'` | `<span class="dashicons dashicons-…">` |
+| `'data:image/svg+xml;base64,…'` | `<span>` with the SVG as a CSS background-image |
+| `'http(s)://…'` | `<img src=…>` |
+| Anything else (`''`, `'none'`, `'div'`, …) | Letter-badge fallback — coloured circle with the first one or two letters of `opts.title`, hue hashed from the title so the swatch is stable per plugin |
+
+```js
+const iconEl = wp.desktop.renderIcon( item.icon, {
+    title: item.title,
+    className: 'my-renderer__icon',
+} );
+host.appendChild( iconEl );
+```
+
+Custom rail renderers should use this so their icons look consistent with the default dock (and the letter-badge fallback colour stays stable across reloads — same hash function).
+
+---
+
+### `applyTileClasses( base, item, ctx )` / `applyTileElement` / `applyTileTooltip` / `dispatchTileRendered` — Stable *(since 0.18.0)*
+
+Run the registered dock decoration hooks against a tile your custom renderer is building. **Custom rail renderers SHOULD invoke these** at the equivalent points the default `Dock` renderer does — otherwise decoration plugins (glow, animations, custom tooltips) silently fail to apply when the user picks your renderer.
+
+```js
+const classes = wp.desktop.applyTileClasses(
+    [ 'my-renderer__tile' ],
+    item,
+    { dockId: 'my-renderer', orientation: 'bottom', isSystem: false },
+);
+tile.className = classes.join( ' ' );
+
+const tooltip = wp.desktop.applyTileTooltip( item.title, item, ctx );
+if ( tooltip ) {
+    tile.title = tooltip;
+}
+
+const finalEl = wp.desktop.applyTileElement( tile, item, ctx );
+host.appendChild( finalEl );
+
+wp.desktop.dispatchTileRendered( finalEl, item, ctx );
+```
+
+`ctx` shape: `{ dockId: string; orientation: 'left' | 'right' | 'bottom'; isSystem: boolean; rail?: 'dock' | 'taskbar'; container?: HTMLElement }`.
+
+---
+
+### `isDockElement( target )` / `registerDockSelector( selector )` — Stable *(since 0.18.0)*
+
+`isDockElement` walks an event target's `composedPath` looking for a known dock element. Returns `true` when the click landed on the default dock, the side dock, the dock tooltip, the submenu popover, or any custom-renderer root registered via `registerDockSelector`. Use in click-outside-to-dismiss handlers so plugins compose cleanly.
+
+```js
+document.addEventListener( 'pointerdown', ( e ) => {
+    if ( wp.desktop.isDockElement( e.target ) ) {
+        return; // click landed on the dock — keep my popover open
+    }
+    closeMyPopover();
+} );
+```
+
+`registerDockSelector` adds a CSS selector to the "inside the dock" set. Custom rail renderers should call this from `mount()` so other plugins' click-outside handlers correctly classify clicks on the renderer's surface. Returns an unregister function.
+
+```js
+const unregister = wp.desktop.registerDockSelector( '.my-renderer__root' );
+// later, in destroy():
+unregister();
+```
+
+---
+
 ### `registerPalette( def )` — Stable  *(since 0.14.0)*
 
 Register a Cmd+K-triggered overlay ("palette"). The shell owns a single global shortcut handler that **cycles** through every registered palette — first press opens palette 0, second press closes it and opens palette 1, and so on. Pressing Cmd+K when the last palette is open closes it entirely; the next press re-opens palette 0.
@@ -2334,6 +2598,93 @@ All window actions include at minimum `{ windowId: string }` — additional fiel
 The window hooks fan out alongside the existing `wp-desktop-window-*` CustomEvents (see section 2) — both APIs fire for every state change. New code should prefer the hook bus.
 
 All hooks can be listed via `wp.hooks.hasAction()` / `hasFilter()` for defensive checks.
+
+#### `DockItem` shape
+
+The canonical menu-item type, surfaced everywhere a custom dock surface needs to read what the admin menu contains: `wp.desktop.getMenuItems()`, the rail renderer's `mount-deps.items` and `mount-deps.fullMenu`, the controller's `replaceItems( items )` parameter, every dock decoration hook context.
+
+```typescript
+interface DockItem {
+    id:       string;        // menu slug — `'edit.php'`, `'wpseo_dashboard'`, …
+    title:    string;        // human-readable label
+    icon:     string;        // dashicon class | `data:` URI | `http(s):` URL
+    url:      string;        // admin URL the tile opens
+    badge:    number;        // numeric badge; 0 = no badge
+    submenu:  { title: string; url: string }[];
+    multi:    boolean;       // multi-instance "+" chip eligibility
+    isCore:   boolean;       // true for WP-shipped menus, false for plugin-contributed
+}
+```
+
+**`submenu` invariant** — the shell strips self-link entries server-side before the array reaches the JS layer (WordPress's `$submenu[$slug]` includes a self-link as the first entry; the dock data builder removes it). So:
+
+- `submenu.length === 0` reliably means "no real children" — the right-click context menu suppresses the popover trigger, the in-window tab strip stays hidden.
+- `submenu.length > 0` reliably means "has real child links" — every entry points at a distinct URL.
+
+A custom rail renderer that decides whether to show a submenu indicator (a chevron, a hover treatment) can read `item.submenu.length > 0` without defensive `submenu.length > 1` or self-URL filtering. The framework owns the contract.
+
+**Lifecycle pairing — `replaceItems` ↔ `appendSystemItem`** — these are independent update paths. `replaceItems( items )` swaps the menu-derived tiles wholesale (the live menu refresh fires it on every plugin activation / deactivation). `appendSystemItem` / `removeSystemItem` track the JS-owned cohort (OS Settings, plugin native-window launchers).
+
+A custom rail renderer's controller MUST persist its system-tile DOM across `replaceItems` calls — the shell does NOT re-emit `appendSystemItem` for previously-added tiles after a menu refresh. Practical pattern: track system tiles in a closure-scoped `Map`, re-paint them in `replaceItems()` after rebuilding the menu cohort.
+
+```js
+let systemTiles = new Map();
+return {
+    replaceItems( menu ) {
+        renderMenu( menu );
+        // Re-attach every tracked system tile so a menu refresh
+        // doesn't lose them.
+        for ( const item of systemTiles.values() ) {
+            renderSystemTile( item );
+        }
+    },
+    appendSystemItem( item ) {
+        systemTiles.set( item.id, item );
+        renderSystemTile( item );
+    },
+    removeSystemItem( id ) {
+        systemTiles.delete( id );
+        unrenderSystemTile( id );
+    },
+    destroy() { /* clean both cohorts */ },
+};
+```
+
+The default renderer uses exactly this pattern internally — `Dock.replaceItems()` re-renders menu tiles + re-applies cached badge overrides + leaves system tiles in place untouched.
+
+---
+
+#### Dock decoration
+
+Render-pipeline hooks the default `Dock` renderer fires while painting tiles. Use these to add classNames, wrap tiles, customize tooltips, or animate tiles in — without forking the renderer. See [`docs/examples/dock-decoration-hooks.md`](./examples/dock-decoration-hooks.md).
+
+Custom rail renderers (registered via `wp.desktop.registerDockRailRenderer`, see below) **should** fire the same hooks at equivalent points so plugin decoration keeps working when the user picks a different renderer.
+
+| Hook | Kind | Status | Payload |
+|---|---|---|---|
+| `wp-desktop.dock.before-render` | action | Stable *(0.18.0)* | `DockRenderContext` — fires at start of every paint pass (initial mount + every `replaceItems`) |
+| `wp-desktop.dock.tile-class` | filter | Stable *(0.18.0)* | `( classes: string[], ctx: DockTileContext ) → string[]` — order preserved |
+| `wp-desktop.dock.tile-element` | filter | Stable *(0.18.0)* | `( el: HTMLElement, ctx: DockTileContext ) → HTMLElement` — wrap, don't replace; the shell still finds `[data-menu-slug]` / `[data-system-id]` descendants for active state |
+| `wp-desktop.dock.tile-tooltip` | filter | Stable *(0.18.0)* | `( label: string, ctx: DockTileContext ) → string` — runs once at bind time; empty string suppresses the tooltip |
+| `wp-desktop.dock.tile-rendered` | action | Stable *(0.18.0)* | `DockTileContext & { el: HTMLElement }` — fires once per tile after insertion (computed layout is ready) |
+| `wp-desktop.dock.after-render` | action | Stable *(0.18.0)* | `DockRenderContext` with frozen `tileElements: ReadonlyMap<string, HTMLElement>` |
+| `wp-desktop.dock.item-appended` | action | Stable *(0.22.0)* | `{ id }` — fires when `wp.desktop.registerSystemTile()` lands a tile |
+| `wp-desktop.dock.item-removed` | action | Stable *(0.24.0)* | `{ id, placement }` — symmetric counterpart to `item-appended` |
+
+**`DockHookContextBase`** (shared by both context types):
+
+```typescript
+{
+    rail: 'dock' | 'taskbar';            // mirrors Dock.rail discriminator
+    orientation: 'left' | 'right' | 'bottom';
+    dockId: string;                       // host element id — disambiguates two-rail layouts
+    container: HTMLElement;
+}
+```
+
+**`DockTileContext`** (per-tile hooks): `DockHookContextBase` plus `{ item: DockItem | SystemDockItem; isSystem: boolean }`. `isSystem` is the discriminator for narrowing `item`.
+
+**`DockRenderContext`** (bulk hooks): `DockHookContextBase` plus `{ items: DockItem[]; tileElements: ReadonlyMap<string, HTMLElement> }`. The map is read-only — mutating it desyncs the rail.
 
 #### Iframe observability
 

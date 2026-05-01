@@ -452,18 +452,24 @@
 	display: none;
 }
 
-/* Tooltip — left dock: tile's right side; right dock: tile's left side. */
-.wp-desktop-dock__tooltip {
+/* Tooltip — anchor modifiers are applied directly to the tooltip
+ * element (NOT via a descendant selector on `.wp-desktop-dock`)
+ * because the tooltip lives in `document.body`. JS writes the
+ * absolute `top` / `left` coords; CSS handles the slide-in
+ * animation direction per modifier.
+ *
+ *   - `--after`   : left-placed dock  (tooltip to the RIGHT of tile)
+ *   - `--before`  : right-placed dock (tooltip to the LEFT of tile)
+ *   - `--above`   : bottom-placed dock (tooltip ABOVE the tile)
+ */
+
+/* Left dock — tooltip slides in from the left by 4px. JS sets
+ * `left` to `tile.right + 8px`; the transform animates the entry. */
+.wp-desktop-dock__tooltip--after {
 	transform: translateX( -4px );
 }
 
-.wp-desktop-dock[ data-wp-desktop-dock-placement="left" ]
-	.wp-desktop-dock__tooltip {
-	inset-inline-start: calc( var( --wp-desktop-dock-width ) + 8px );
-}
-
-.wp-desktop-dock[ data-wp-desktop-dock-placement="left" ]
-	.wp-desktop-dock__tooltip--visible {
+.wp-desktop-dock__tooltip--after.wp-desktop-dock__tooltip--visible {
 	transform: translateX( 0 );
 }
 
@@ -596,3 +602,5 @@
 .wp-desktop-dock__tooltip--above.wp-desktop-dock__tooltip--visible {
 	transform: translate( -50%, -100% );
 }
+
+

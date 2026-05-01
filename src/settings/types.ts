@@ -82,6 +82,14 @@ export interface OsSettingsState {
 	accent: AccentId;
 	dockSize: DockSizeId;
 	desktopLayout: DesktopLayoutId;
+	/**
+	 * Active dock rail-renderer id. Resolves through the dock-rail
+	 * registry; missing or invalid falls back to `'default'` (the
+	 * built-in icon-strip renderer).
+	 *
+	 * @since 0.18.0
+	 */
+	dockRailRenderer: string;
 	customGradient: CustomGradient;
 	customImage: CustomImage | null;
 	/**

@@ -37,15 +37,61 @@
  * The class carries a `padding-top: var(--wp-admin--admin-bar--height)`
  * that would leave a 32px (or 46px) dead gap at the top of the iframe.
  * Zero it out inside chromeless iframes.
+ *
+ * We also rebind `--wp-admin--admin-bar--height` (and the derived
+ * `--wp-admin--admin-bar--position-offset` from block-library) to 0px
+ * inside chromeless so plugins that position UI relative to the admin
+ * bar resolve their math against the iframe's actual chrome state.
+ *
+ * WooCommerce's activity-panel wrapper, the block editor's sticky
+ * header, and several others use `top: var(--wp-admin--admin-bar--height)`
+ * to clear the bar. Without this override they reserve a 32px (or 46px
+ * on small screens) gap that no longer exists, producing visible jumps
+ * on first paint and dead space at the top of the content area.
  */
 html.wp-toolbar:has( body.wp-desktop-chromeless ) {
 	padding-top: 0 !important;
+	--wp-admin--admin-bar--height: 0px;
+	--wp-admin--admin-bar--position-offset: 0px;
 }
 
 /* Remove the sidebar gutter on #wpcontent and let the body fill the frame. */
 .wp-desktop-chromeless #wpcontent {
 	margin-inline-start: 0 !important;
 	padding-inline-start: 0 !important;
+}
+
+/*
+ * WooCommerce sidebar-reservation override.
+ *
+ * `.woocommerce-layout__header` is a `position: fixed` bar WC
+ * mounts on every wc-admin and wc-embedded page. Its width is
+ * compiled from the SCSS source (header/style.scss) as a literal:
+ *
+ *       position: fixed;
+ *       top: 32px;                       // $adminbar-height
+ *       width: calc(100% - 160px);        // reserves classic sidebar
+ *       z-index: 1001;
+ *
+ * The 160px subtraction is the classic admin menu width — WC bakes
+ * it in at build time so the header doesn't overlap the sidebar
+ * in standard admin. Inside chromeless we hide the sidebar, but
+ * the header keeps the reservation — so the header ends 160px
+ * short of the iframe right edge, and `.woocommerce-layout__activity-panel-wrapper`
+ * (`position: absolute; right: 0; top: 100%; transform: translateX(100%)`,
+ * containing block = the fixed header) translates past the
+ * header's right edge, NOT past the iframe's right edge. The
+ * resulting visible strip is exactly 160px wide — the size of the
+ * sidebar gap WC reserved for nothing.
+ *
+ * Reclaim the reservation: pin the header to full iframe width
+ * inside chromeless. The activity panel then translates past the
+ * iframe edge as WC's design intended, the gray strip disappears,
+ * and the header's content uses the full window width. No
+ * transform / overflow / visibility tricks needed.
+ */
+.wp-desktop-chromeless .woocommerce-layout__header {
+	width: 100% !important;
 }
 
 /* ---------------------------------------------------------------

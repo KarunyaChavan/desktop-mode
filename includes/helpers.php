@@ -426,7 +426,15 @@ function desktop_mode_build_dock_items() {
 		$icon = desktop_mode_sanitize_dock_icon( $item[6] ?? '' );
 
 		// Build the full URL for the menu item.
-		$url = desktop_mode_menu_item_url( $item[2] );
+		//
+		// `$parent_url` is the slug-derived URL (`admin.php?page=<slug>`
+		// for plugin pages, the file path for Core ones). It's the
+		// reference value the self-link strip below compares against.
+		// The effective `$url` we ship to the shell can be rewritten
+		// further down to the first visible submenu's URL — see the
+		// note after the loop.
+		$parent_url = desktop_mode_menu_item_url( $item[2] );
+		$url        = $parent_url;
 
 		// Build submenu items.
 		//
@@ -445,7 +453,8 @@ function desktop_mode_build_dock_items() {
 		// Detection by URL (post-`desktop_mode_menu_item_url()` normalize)
 		// rather than slug equality covers plugins that register a child
 		// at a different slug pointing at the parent's URL.
-		$sub_items = array();
+		$sub_items             = array();
+		$first_visible_sub_url = null;
 		if ( ! empty( $submenu[ $item[2] ] ) ) {
 			foreach ( $submenu[ $item[2] ] as $sub_item ) {
 				if ( ! empty( $sub_item[1] ) && ! current_user_can( $sub_item[1] ) ) {
@@ -456,18 +465,50 @@ function desktop_mode_build_dock_items() {
 					continue;
 				}
 				$sub_url = desktop_mode_menu_item_url( $sub_item[2] );
-				// Self-link strip — `$sub_url === $url` covers WP's
-				// auto-prepended entry AND any plugin-registered alias
-				// that happens to land on the parent URL.
-				if ( $sub_url === $url ) {
+				// Capture the first capability-passing submenu URL so
+				// we can use it as the parent's effective URL below
+				// (mirrors `wp-admin/menu-header.php`). Captured BEFORE
+				// the self-link strip so plugins whose first submenu IS
+				// the auto-prepended self-link land on the parent URL
+				// (a no-op rewrite — preserves existing behavior).
+				if ( null === $first_visible_sub_url ) {
+					$first_visible_sub_url = $sub_url;
+				}
+				// Self-link strip — `$sub_url === $parent_url` covers
+				// WP's auto-prepended entry AND any plugin-registered
+				// alias that happens to land on the parent URL.
+				if ( $sub_url === $parent_url ) {
 					continue;
 				}
-				$sub_raw_title = preg_replace( '/<span[^>]*>.*?<\/span>/s', '', $sub_item[0] );
-				$sub_items[]   = array(
-					'title' => trim( wp_strip_all_tags( $sub_raw_title ) ),
+				$sub_raw_title = preg_replace( '/<span[^>]*>.*?<\/span>/s', '', (string) $sub_item[0] );
+				$sub_title     = trim( wp_strip_all_tags( $sub_raw_title ) );
+				// Skip entries with no resolvable title. Plugins (e.g.
+				// WooCommerce's `wc-addons` Extensions row) register
+				// `menu_title => null` to hide a row from classic admin's
+				// left menu while keeping the page reachable. Without
+				// this guard the dock renders an empty, label-less tab
+				// that visually duplicates a sibling entry.
+				if ( '' === $sub_title ) {
+					continue;
+				}
+				$sub_items[] = array(
+					'title' => $sub_title,
 					'url'   => $sub_url,
 				);
 			}
+		}
+
+		// Mirror `wp-admin/menu-header.php`: when a parent menu has any
+		// visible submenu, classic admin rewrites the parent's
+		// clickable URL to the first submenu's URL. Plugins like
+		// WooCommerce rely on this — their top-level slug
+		// (`woocommerce`) has no working callback and 500s when hit
+		// directly. The real landing page is the first submenu
+		// (`?page=wc-admin` for WC). Without this rewrite the dock
+		// icon points users at a broken URL that classic admin would
+		// never have linked to.
+		if ( null !== $first_visible_sub_url ) {
+			$url = $first_visible_sub_url;
 		}
 
 		$dock_item = array(
@@ -1199,18 +1240,44 @@ function desktop_mode_build_native_windows_payload() {
 /**
  * Converts a menu item slug to a full admin URL.
  *
- * Handles both direct file references (e.g., 'edit.php') and
- * plugin page slugs (e.g., 'admin.php?page=my-plugin').
+ * Handles three slug shapes:
+ *  1. Direct file references (`edit.php`, `upload.php`) — passed
+ *     through `admin_url()` as-is.
+ *  2. Plain plugin page slugs (`my-plugin`) — routed through
+ *     `admin.php?page=<slug>` with the slug `rawurlencode()`d.
+ *  3. Plugin page slugs that embed extra query parameters
+ *     (`wc-admin&path=/customers`) — split on the first `&`, the
+ *     page portion is `rawurlencode()`d, the trailing query is
+ *     reparsed and reassembled with `add_query_arg()` so each
+ *     value is encoded once and the `&` separators are preserved.
+ *
+ * The third shape is unusual but legal — WordPress's
+ * `add_submenu_page()` accepts a slug containing query
+ * parameters and routes them through `admin.php`. WooCommerce
+ * uses this pattern for every wc-admin React route
+ * (`Customers`, `Analytics`, `Marketing`). Without the split
+ * branch the entire string gets `rawurlencode()`d into the
+ * `page` parameter, mangling `&` to `%26` and `=` to `%3D` —
+ * WC's router never sees `path` and the page renders blank.
+ *
+ * Returns an `esc_url_raw()`-sanitized URL — these URLs flow
+ * into the dock JS payload (JSON-encoded, then assigned to
+ * `iframe.src` / `window.location.href`), not into HTML
+ * attributes. Using `esc_url()` would emit `&#038;` for the `&`
+ * separators, which the browser does NOT decode in JS string
+ * contexts — the resulting iframe load would treat `&#038;path`
+ * as a literal query key and miss the `path` parameter, sending
+ * WC's router back to home instead of the requested route.
  *
  * @since 0.1.0
  *
  * @param string $slug The menu item slug or URL.
- * @return string The full admin URL.
+ * @return string The full admin URL, sanitized via `esc_url_raw()`.
  */
 function desktop_mode_menu_item_url( $slug ) {
 	// Already a full URL.
 	if ( str_starts_with( $slug, 'http://' ) || str_starts_with( $slug, 'https://' ) ) {
-		return esc_url( $slug );
+		return esc_url_raw( $slug );
 	}
 
 	// Strip path traversal sequences.
@@ -1218,9 +1285,24 @@ function desktop_mode_menu_item_url( $slug ) {
 
 	// Direct file reference (e.g., 'edit.php', 'upload.php').
 	if ( false !== strpos( $slug, '.php' ) ) {
-		return esc_url( admin_url( $slug ) );
+		return esc_url_raw( admin_url( $slug ) );
 	}
 
-	// Plugin page slug — route through admin.php.
-	return esc_url( admin_url( 'admin.php?page=' . rawurlencode( $slug ) ) );
+	// Plugin page slug with embedded query parameters
+	// (e.g., 'wc-admin&path=/customers'). Split off the extra
+	// query and let `add_query_arg()` rebuild a properly encoded
+	// URL — avoids `rawurlencode()`-ing the `&` and `=`
+	// separators into `%26` / `%3D`.
+	if ( false !== strpos( $slug, '&' ) ) {
+		list( $page_slug, $extras ) = array_pad( explode( '&', $slug, 2 ), 2, '' );
+		$extra_args                 = array();
+		if ( '' !== $extras ) {
+			parse_str( $extras, $extra_args );
+		}
+		$args = array_merge( array( 'page' => $page_slug ), $extra_args );
+		return esc_url_raw( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+	}
+
+	// Plain plugin page slug — route through admin.php.
+	return esc_url_raw( admin_url( 'admin.php?page=' . rawurlencode( $slug ) ) );
 }

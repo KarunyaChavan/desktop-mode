@@ -195,6 +195,38 @@ class Tests_DesktopMode_WpDesktopBuildDockItems extends WP_UnitTestCase {
 		$this->assertSame( 'Tags', $items[0]['submenu'][0]['title'] );
 	}
 
+	/**
+	 * Plugins register hidden submenu rows by passing `menu_title => null`
+	 * to `add_submenu_page()` — the page stays reachable but classic
+	 * admin's left-menu row has no label. WooCommerce uses this for the
+	 * `wc-addons` Extensions row (it's a duplicate of a labeled
+	 * "Extensions" entry registered separately). Without filtering, the
+	 * dock renders an empty, label-less tab.
+	 */
+	public function test_skips_submenu_items_with_empty_title() {
+		global $menu, $submenu;
+		$menu               = array( $this->make_menu_row( 'WooCommerce', 'manage_options', 'woocommerce' ) );
+		$submenu['woocommerce'] = array(
+			array( 'WooCommerce', 'manage_options', 'woocommerce' ),     // self-link, stripped
+			array( 'Home', 'manage_options', 'wc-admin' ),
+			array( null, 'manage_options', 'wc-addons' ),                 // hidden row
+			array( '', 'manage_options', 'wc-empty-string' ),             // also empty
+			array( '   ', 'manage_options', 'wc-whitespace' ),            // whitespace only
+			array( 'Extensions', 'manage_options', 'wc-addons-shop' ),
+		);
+
+		$items  = desktop_mode_build_dock_items();
+		$titles = wp_list_pluck( $items[0]['submenu'], 'title' );
+
+		$this->assertContains( 'Home', $titles );
+		$this->assertContains( 'Extensions', $titles );
+		$this->assertNotContains( '', $titles );
+		$this->assertNotContains( null, $titles );
+		// Verify only the labeled rows survive — the three empty ones
+		// are filtered out and don't ship as ghost tabs.
+		$this->assertCount( 2, $items[0]['submenu'] );
+	}
+
 	public function test_skips_hide_if_no_customize_submenu_items() {
 		global $menu, $submenu;
 		$menu                  = array( $this->make_menu_row( 'Themes', 'edit_theme_options', 'themes.php' ) );
@@ -244,6 +276,92 @@ class Tests_DesktopMode_WpDesktopBuildDockItems extends WP_UnitTestCase {
 		$with_real_child = desktop_mode_build_dock_items();
 		$this->assertCount( 1, $with_real_child[0]['submenu'] );
 		$this->assertSame( 'Recent', $with_real_child[0]['submenu'][0]['title'] );
+	}
+
+	/**
+	 * Mirrors `wp-admin/menu-header.php`: when a parent menu has
+	 * submenu entries whose URL differs from the parent's slug-derived
+	 * URL, the parent's clickable URL must point at the first such
+	 * submenu — not at `admin.php?page=<parent-slug>`.
+	 *
+	 * Reproduces the WooCommerce regression: WC registers its
+	 * top-level menu with slug `woocommerce` and a null callback, then
+	 * registers `Home` as the first submenu at slug `wc-admin`.
+	 * Hitting `admin.php?page=woocommerce` directly invokes WC's stub
+	 * callback and 500s; the working landing page is `?page=wc-admin`.
+	 *
+	 * Classic admin never navigates to `?page=woocommerce` because
+	 * `menu-header.php` rewrites the parent link. The dock builder
+	 * must do the same so plugins of this shape (Yoast SEO and
+	 * others share the pattern) load instead of erroring.
+	 */
+	public function test_parent_url_falls_through_to_first_submenu_when_different() {
+		global $menu, $submenu;
+		$menu                  = array( $this->make_menu_row( 'WooCommerce', 'read', 'woocommerce' ) );
+		$submenu['woocommerce'] = array(
+			array( 'Home',     'read', 'wc-admin' ),
+			array( 'Orders',   'read', 'wc-orders' ),
+			array( 'Products', 'read', 'edit.php?post_type=product' ),
+		);
+
+		$items = desktop_mode_build_dock_items();
+
+		$this->assertCount( 1, $items );
+		$this->assertSame(
+			admin_url( 'admin.php?page=wc-admin' ),
+			$items[0]['url'],
+			'Parent URL should be rewritten to the first visible submenu (mirrors wp-admin/menu-header.php).'
+		);
+		// All three submenu entries are real children — none of them
+		// match the original `?page=woocommerce` self-link, so none
+		// are stripped.
+		$this->assertCount( 3, $items[0]['submenu'] );
+	}
+
+	/**
+	 * Pin the no-op case: when WP auto-prepends a self-link as the
+	 * first submenu (slug == parent slug), the rewrite is a no-op —
+	 * the parent URL stays at `admin.php?page=<slug>` (or the file
+	 * path for Core menus). This is the historical behavior; a
+	 * regression here would change every Core menu's URL.
+	 */
+	public function test_parent_url_unchanged_when_first_submenu_is_self_link() {
+		global $menu, $submenu;
+		$menu               = array( $this->make_menu_row( 'Posts', 'edit_posts', 'edit.php' ) );
+		$submenu['edit.php'] = array(
+			array( 'All Posts', 'edit_posts', 'edit.php' ),       // self-link
+			array( 'Add New',   'edit_posts', 'post-new.php' ),
+		);
+
+		$items = desktop_mode_build_dock_items();
+
+		$this->assertSame( admin_url( 'edit.php' ), $items[0]['url'] );
+		// Self-link still gets stripped; only the real child remains.
+		$this->assertCount( 1, $items[0]['submenu'] );
+		$this->assertSame( 'Add New', $items[0]['submenu'][0]['title'] );
+	}
+
+	/**
+	 * Capability filtering interacts with the parent-URL rewrite:
+	 * the "first submenu" we follow is the first one the current
+	 * user can actually access. A submenu the user can't see must
+	 * not become the parent's effective URL.
+	 */
+	public function test_parent_url_falls_through_to_first_capability_passing_submenu() {
+		global $menu, $submenu;
+		$subscriber_id = self::factory()->user->create( array( 'role' => 'subscriber' ) );
+		wp_set_current_user( $subscriber_id );
+
+		$menu                = array( $this->make_menu_row( 'Tools', 'read', 'tools-root' ) );
+		$submenu['tools-root'] = array(
+			array( 'Admin Only', 'manage_options', 'admin-only' ),  // filtered out
+			array( 'Public',     'read',           'public-page' ), // visible
+		);
+
+		$items = desktop_mode_build_dock_items();
+
+		$this->assertCount( 1, $items );
+		$this->assertSame( admin_url( 'admin.php?page=public-page' ), $items[0]['url'] );
 	}
 
 	public function test_wp_desktop_dock_item_filter_can_modify_each_entry() {

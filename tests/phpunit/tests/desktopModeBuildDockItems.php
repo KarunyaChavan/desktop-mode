@@ -10,7 +10,7 @@
  *
  * @covers ::desktop_mode_build_dock_items
  */
-class Tests_DesktopMode_WpDesktopBuildDockItems extends WP_UnitTestCase {
+class Tests_DesktopMode_BuildDockItems extends WP_UnitTestCase {
 
 	protected static $admin_id;
 
@@ -364,7 +364,7 @@ class Tests_DesktopMode_WpDesktopBuildDockItems extends WP_UnitTestCase {
 		$this->assertSame( admin_url( 'admin.php?page=public-page' ), $items[0]['url'] );
 	}
 
-	public function test_wp_desktop_dock_item_filter_can_modify_each_entry() {
+	public function test_desktop_mode_dock_item_filter_can_modify_each_entry() {
 		global $menu;
 		$menu = array( $this->make_menu_row( 'Posts', 'edit_posts', 'edit.php' ) );
 
@@ -384,7 +384,7 @@ class Tests_DesktopMode_WpDesktopBuildDockItems extends WP_UnitTestCase {
 		$this->assertSame( 'edit.php', $items[0]['slug'] );
 	}
 
-	public function test_wp_desktop_dock_items_filter_can_replace_full_list() {
+	public function test_desktop_mode_dock_items_filter_can_replace_full_list() {
 		global $menu;
 		$menu = array( $this->make_menu_row( 'Posts', 'edit_posts', 'edit.php' ) );
 

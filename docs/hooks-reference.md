@@ -1349,63 +1349,63 @@ See [`docs/examples/devtools-instrumentation.md`](./examples/devtools-instrument
 
 The Recycle Bin window captures attachments into the WordPress trash (posts and pages already trash by default) and exposes browse / restore / purge over REST. Every decision the bin makes is filterable.
 
-### `wp_desktop_recycle_bin_capture_post_types` — Experimental (filter)
+### `desktop_mode_recycle_bin_capture_post_types` — Experimental (filter)
 
 Post types whose deletions the bin tracks. Defaults to `[ 'post', 'page', 'attachment' ]`. Returning a list excluding `attachment` disables the soft-delete interception entirely — vanilla `wp_delete_attachment()` resumes.
 
 ```php
-add_filter( 'wp_desktop_recycle_bin_capture_post_types', function ( $types ) {
+add_filter( 'desktop_mode_recycle_bin_capture_post_types', function ( $types ) {
     $types[] = 'product';
     return $types;
 } );
 ```
 
-### `wp_desktop_recycle_bin_should_capture` — Experimental (filter)
+### `desktop_mode_recycle_bin_should_capture` — Experimental (filter)
 
 Per-attachment opt-out. Returning `false` for a specific `WP_Post` lets that single deletion bypass the bin.
 
 ```php
-apply_filters( 'wp_desktop_recycle_bin_should_capture', bool $capture, WP_Post $post );
+apply_filters( 'desktop_mode_recycle_bin_should_capture', bool $capture, WP_Post $post );
 ```
 
-### `wp_desktop_recycle_bin_query_args` — Experimental (filter)
+### `desktop_mode_recycle_bin_query_args` — Experimental (filter)
 
 Customize the `WP_Query` args used to populate the bin — scope it to the current user, restrict by role, or interleave additional post types beyond the capture list.
 
 ```php
-apply_filters( 'wp_desktop_recycle_bin_query_args', array $query_args, array $caller_args );
+apply_filters( 'desktop_mode_recycle_bin_query_args', array $query_args, array $caller_args );
 ```
 
-### `wp_desktop_recycle_bin_items` / `wp_desktop_recycle_bin_item` — Experimental (filter)
+### `desktop_mode_recycle_bin_items` / `desktop_mode_recycle_bin_item` — Experimental (filter)
 
 `..._item` reshapes a single row before it's returned to JS; `..._items` filters the final list. The `id`, `type`, and `deleted_at` fields are load-bearing — keep them when extending.
 
 ```php
-apply_filters( 'wp_desktop_recycle_bin_item', array $item, WP_Post $post );
-apply_filters( 'wp_desktop_recycle_bin_items', array $items, WP_Query $query );
+apply_filters( 'desktop_mode_recycle_bin_item', array $item, WP_Post $post );
+apply_filters( 'desktop_mode_recycle_bin_items', array $items, WP_Query $query );
 ```
 
-### `wp_desktop_recycle_bin_user_can_view|restore|purge|use` — Experimental (filter)
+### `desktop_mode_recycle_bin_user_can_view|restore|purge|use` — Experimental (filter)
 
 Per-item capability gates. `_use` controls whether the bin window is registered at all for the current user; the others gate individual operations. Defaults: `_use` → `edit_posts`, `_view` → `edit_post`, `_restore`/`_purge` → `delete_post` (the same gate WP itself uses for trash/untrash).
 
-### `wp_desktop_recycle_bin_window_args` / `wp_desktop_recycle_bin_icon_args` — Experimental (filter)
+### `desktop_mode_recycle_bin_window_args` / `desktop_mode_recycle_bin_icon_args` — Experimental (filter)
 
 Tweak the args passed to `desktop_mode_register_window()` / `desktop_mode_register_icon()` for the bin — useful to change dimensions, swap the dashicon, or move the window from the taskbar to the dock.
 
-### `wp_desktop_recycle_bin_template_html` — Experimental (filter)
+### `desktop_mode_recycle_bin_template_html` — Experimental (filter)
 
 The full template body before it's emitted into the native-window template element. Keep the `data-wpdm-recycle-bin-*` hooks intact so the JS bundle can find its mount points.
 
 ### Lifecycle actions
 
 ```php
-do_action( 'wp_desktop_recycle_bin_item_captured', int $post_id, int $user_id, string $now_gmt );
-do_action( 'wp_desktop_recycle_bin_before_restore', int $post_id, WP_Post $post );
-do_action( 'wp_desktop_recycle_bin_after_restore',  int $post_id );
-do_action( 'wp_desktop_recycle_bin_before_purge',   int $post_id, WP_Post $post );
-do_action( 'wp_desktop_recycle_bin_after_purge',    int $post_id, string $type );
-do_action( 'wp_desktop_recycle_bin_emptied',        int $purged, int $skipped );
+do_action( 'desktop_mode_recycle_bin_item_captured', int $post_id, int $user_id, string $now_gmt );
+do_action( 'desktop_mode_recycle_bin_before_restore', int $post_id, WP_Post $post );
+do_action( 'desktop_mode_recycle_bin_after_restore',  int $post_id );
+do_action( 'desktop_mode_recycle_bin_before_purge',   int $post_id, WP_Post $post );
+do_action( 'desktop_mode_recycle_bin_after_purge',    int $post_id, string $type );
+do_action( 'desktop_mode_recycle_bin_emptied',        int $purged, int $skipped );
 ```
 
 ### REST endpoints
@@ -1501,13 +1501,13 @@ The bin window updates without polling via two channels:
 Hook this to push your own real-time channel (websocket, SSE) without re-listening on every delete action:
 
 ```php
-do_action( 'wp_desktop_recycle_bin_signal', int $ts_ms );
+do_action( 'desktop_mode_recycle_bin_signal', int $ts_ms );
 ```
 
 Suppress the chromeless footer emit per request:
 
 ```php
-apply_filters( 'wp_desktop_recycle_bin_emit_footer_signal', bool $emit );
+apply_filters( 'desktop_mode_recycle_bin_emit_footer_signal', bool $emit );
 ```
 
 See [`docs/examples/recycle-bin.md`](./examples/recycle-bin.md) for end-to-end recipes (custom post types, audit logging, custom columns).
@@ -1526,21 +1526,21 @@ for a copy-pasteable recipe.
 ### Filters — Stable
 
 ```php
-apply_filters( 'wp_desktop_presence_inactive_after', $seconds );  // default 300 (5m)
-apply_filters( 'wp_desktop_presence_offline_after',  $seconds );  // default 120 (2m)
-apply_filters( 'wp_desktop_presence_can_track',      $can, $user_id );
-apply_filters( 'wp_desktop_presence_visible_users',  $ids, $viewer_id );
+apply_filters( 'desktop_mode_presence_inactive_after', $seconds );  // default 300 (5m)
+apply_filters( 'desktop_mode_presence_offline_after',  $seconds );  // default 120 (2m)
+apply_filters( 'desktop_mode_presence_can_track',      $can, $user_id );
+apply_filters( 'desktop_mode_presence_visible_users',  $ids, $viewer_id );
 ```
 
-- **`wp_desktop_presence_inactive_after`** — seconds without
+- **`desktop_mode_presence_inactive_after`** — seconds without
   user input before `online` demotes to `inactive`. Tune up for
   long-form writing tools, down for chat-heavy environments.
-- **`wp_desktop_presence_offline_after`** — seconds without a
+- **`desktop_mode_presence_offline_after`** — seconds without a
   heartbeat before any tracked user is considered `offline`.
-- **`wp_desktop_presence_can_track`** — per-user veto. Return
+- **`desktop_mode_presence_can_track`** — per-user veto. Return
   `false` to skip the bump entirely (compliance flags,
   "appear invisible" toggles, allow-list policies).
-- **`wp_desktop_presence_visible_users`** — privacy gate.
+- **`desktop_mode_presence_visible_users`** — privacy gate.
   Receives the candidate id list + the viewer id, returns the
   list narrowed to whoever this viewer should see. Default
   passes through unchanged. Plugins building team boundaries
@@ -1549,15 +1549,15 @@ apply_filters( 'wp_desktop_presence_visible_users',  $ids, $viewer_id );
 ### Actions — Stable
 
 ```php
-do_action( 'wp_desktop_presence_recorded', $user_id, $record );
-do_action( 'wp_desktop_presence_changed',  $user_id, $new_status, $old_status );
+do_action( 'desktop_mode_presence_recorded', $user_id, $record );
+do_action( 'desktop_mode_presence_changed',  $user_id, $new_status, $old_status );
 ```
 
-- **`wp_desktop_presence_recorded`** — fires on every heartbeat
+- **`desktop_mode_presence_recorded`** — fires on every heartbeat
   bump, whether status changed or not. Be cheap inside this
   callback — it runs on every Heartbeat tick for every active
   desktop-mode user.
-- **`wp_desktop_presence_changed`** — fires only on real status
+- **`desktop_mode_presence_changed`** — fires only on real status
   transitions (`online ↔ inactive ↔ offline`). The right hook
   for "user came online → notify a slack channel" type work.
 

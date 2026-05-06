@@ -70,6 +70,10 @@ jobs:
       - name: Deploy to WordPress.org
         if: ${{ !contains(github.ref_name, '-') }}
         uses: 10up/action-wordpress-plugin-deploy@stable
+        with:
+          # TODO: revert once SVN credentials are confirmed working — this
+          # is a one-shot dry-run for end-to-end plumbing verification.
+          dry-run: true
         env:
           SVN_USERNAME: ${{ secrets.SVN_USERNAME }}
           SVN_PASSWORD: ${{ secrets.SVN_PASSWORD }}

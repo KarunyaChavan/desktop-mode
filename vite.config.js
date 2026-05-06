@@ -51,6 +51,16 @@ const TARGETS = {
 		fileBase: 'recycle-bin',
 		iifeName: 'desktopModeRecycleBin',
 	},
+	// Native Posts window — `<wpd-table>`-driven replacement for the
+	// chromeless `edit.php` iframe, opt-in per user via OS Settings →
+	// Features. Same shape as recycle-bin: registers a render
+	// callback on `window.desktopModeNativeWindows['desktop-mode-posts']`
+	// and consumes the `<wpd-*>` tags defined by the main bundle.
+	'posts-window': {
+		entry:    'src/posts-window/index.ts',
+		fileBase: 'posts-window',
+		iifeName: 'desktopModePostsWindow',
+	},
 	// Service worker — own bundle so it can be served from a stable
 	// path with the `Service-Worker-Allowed: /` header. The IIFE
 	// wrapper is harmless inside a SW context: top-level

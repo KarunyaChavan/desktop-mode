@@ -43,6 +43,13 @@ export const styles = css`
 		   --wpd-table-bg directly to opt out of the surface chain. */
 		--wpd-table-bg: var( --wpd-surface, #fff );
 		--wpd-table-border: var( --wpd-border, rgba( 0, 0, 0, 0.08 ) );
+		/* Column dividers when [bordered] is set. Defaults darker
+		 * than --wpd-table-border because row separators read fine
+		 * at low contrast (the eye scans top-to-bottom and the gap
+		 * between rows is enough), but column separators need to
+		 * actively SAY "this column ends here" to the user. Override
+		 * to match --wpd-table-border for the original ghosted look. */
+		--wpd-table-column-border: var( --wpd-border-strong, rgba( 0, 0, 0, 0.14 ) );
 		--wpd-table-header-bg: var( --wpd-surface-elevated, #f6f7f7 );
 		/* Translucent overlays — these are LAYERED, never replaced
 		   into a base background. Keep them rgba so they compose
@@ -140,7 +147,7 @@ export const styles = css`
 
 	:host( [ bordered ] ) thead th,
 	:host( [ bordered ] ) tbody td {
-		border-inline-end: 1px solid var( --wpd-table-border );
+		border-inline-end: 1px solid var( --wpd-table-column-border );
 	}
 	:host( [ bordered ] ) thead th:last-child,
 	:host( [ bordered ] ) tbody td:last-child {
@@ -192,15 +199,18 @@ export const styles = css`
 		z-index: 40;
 	}
 
-	/* The last sticky column gets a soft shadow so the scrolling
-	   content visibly slides underneath it. */
+	/* The last sticky column gets a solid divider on its right edge
+	   so the boundary between pinned and scrolling content is always
+	   visible — even when the table isn't scrolled and especially on
+	   light themes. Themed via --wpd-table-sticky-edge so consumers
+	   can override (color, width, style). Border paints as part of
+	   the cell box, so there are no stacking-context surprises. */
 	th.is-sticky-edge,
 	td.is-sticky-edge {
-		box-shadow: 4px 0 6px -4px rgba( 0, 0, 0, 0.18 );
-	}
-	[ dir='rtl' ] th.is-sticky-edge,
-	[ dir='rtl' ] td.is-sticky-edge {
-		box-shadow: -4px 0 6px -4px rgba( 0, 0, 0, 0.18 );
+		border-inline-end: var(
+			--wpd-table-sticky-edge,
+			2px solid var( --wpd-table-border )
+		);
 	}
 
 	/* Per-column alignment + width. */

@@ -72,6 +72,7 @@ export async function exitDesktopMode(): Promise< void > {
 
 	let target = fallback;
 	try {
+		// eslint-disable-next-line no-restricted-syntax -- exit flow navigates the top frame away immediately; activity bus / spinner attribution would never be observable.
 		const res = await fetch( cfg.ajaxUrl, {
 			method: 'POST',
 			headers: {

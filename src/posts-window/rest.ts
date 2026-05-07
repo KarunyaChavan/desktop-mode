@@ -1,15 +1,18 @@
 /**
  * Native Posts window — REST glue.
  *
- * Thin wrapper around `fetch()` that talks to core's `/wp/v2/posts`
- * endpoint with the WP REST nonce attached. The list endpoint is the
- * canonical paginated source — `X-WP-Total` and `X-WP-TotalPages`
- * response headers give us the total row count and last page number
- * without a separate count query.
+ * Thin wrapper around the framework `trackedFetch` that talks to
+ * core's `/wp/v2/posts` endpoint with the WP REST nonce attached.
+ * The list endpoint is the canonical paginated source —
+ * `X-WP-Total` and `X-WP-TotalPages` response headers give us the
+ * total row count and last page number without a separate count
+ * query.
  *
  * @public
  * @since 0.8.0
  */
+
+import { trackedFetch } from '../tracked-fetch';
 
 declare global {
 	interface Window {
@@ -36,6 +39,32 @@ export interface PostsWindowConfig {
 	defaultPerPage: number;
 	/** Default outbound query args (e.g. `_fields`, `_embed`, `post_type`). */
 	queryArgs: Record< string, string >;
+	/**
+	 * Boot-time snapshot of whether the user has already dismissed the
+	 * Posts intro dialog. When false, the bundle shows the dialog the
+	 * first time the window opens and POSTs to {@link introUrl} on
+	 * dismiss.
+	 */
+	introSeen: boolean;
+	/** REST URL for `POST /desktop-mode/v1/intros/seen`. */
+	introUrl: string;
+}
+
+/**
+ * Active edit-lock holder for a row, surfaced via the
+ * `desktop_mode_lock` REST field registered in
+ * `includes/my-wordpress/lock.php`. `null` when the row isn't
+ * locked, when the requester lacks edit caps, or when the
+ * requester is the lock holder.
+ *
+ * @since 0.8.0
+ */
+export interface PostListItemLock {
+	userId: number;
+	userName: string;
+	userAvatarUrl: string;
+	/** ISO-8601 timestamp of the lock heartbeat. */
+	time: string;
 }
 
 export interface PostListItem {
@@ -51,6 +80,7 @@ export interface PostListItem {
 	tags: number[];
 	comment_status: 'open' | 'closed';
 	excerpt?: { rendered: string; protected?: boolean };
+	desktop_mode_lock?: PostListItemLock | null;
 	_embedded?: {
 		author?: Array< {
 			id: number;
@@ -153,11 +183,7 @@ interface RequestResult< T > {
  * @internal
  */
 function shellFetch( input: RequestInfo, init?: RequestInit ): Promise< Response > {
-	const api = window.wp?.desktop;
-	if ( api && typeof api.fetch === 'function' ) {
-		return api.fetch( input, init, { windowId: 'desktop-mode-posts' } );
-	}
-	return fetch( input, init );
+	return trackedFetch( input, init, { windowId: 'desktop-mode-posts' } );
 }
 
 async function request< T >(

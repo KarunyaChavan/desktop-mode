@@ -18,6 +18,8 @@
  */
 
 import { __, sprintf } from '../i18n';
+import { trackedFetch } from '../tracked-fetch';
+import { showPostsIntroDialog } from './intro-dialog';
 import {
 	buildEditPostUrl,
 	createCategory,
@@ -71,6 +73,113 @@ declare global {
 	interface Window {
 		desktopModeNativeWindows?: Record< string, RenderCallback | undefined >;
 	}
+}
+
+/**
+ * Bridge to `wp.desktop.confirm` (the main bundle's
+ * `<wpd-confirm-dialog>` wrapper). The posts-window script lists
+ * `desktop-mode` as a dependency so the global is always set by
+ * the time this code runs.
+ */
+interface ConfirmOptions {
+	title?: string;
+	message: string;
+	confirmLabel?: string;
+	cancelLabel?: string;
+	danger?: boolean;
+}
+function wpdConfirmGlobal( options: ConfirmOptions ): Promise< boolean > {
+	const fn = ( window.wp as { desktop?: { confirm?: ( o: ConfirmOptions ) => Promise< boolean > } } | undefined )
+		?.desktop?.confirm;
+	if ( typeof fn !== 'function' ) {
+		return Promise.reject(
+			new Error(
+				'[desktop-mode] wp.desktop.confirm is missing — the main desktop bundle must load before the posts-window script.',
+			),
+		);
+	}
+	return fn( options );
+}
+
+/**
+ * Posts-window first-open intro. Mirrors the seen-intros surface in
+ * `includes/seen-intros.php`: gated on `config.introSeen`, marks
+ * itself seen on dismiss via `POST config.introUrl`. Runs once per
+ * user — OS Settings → Features exposes a "Reset what's-new dialogs"
+ * button that wipes the list so it appears again from scratch.
+ *
+ * Posts is the first ported native app, so the copy explicitly
+ * points at the OS Settings escape hatch. Future ported apps drop
+ * that line.
+ */
+const POSTS_INTRO_SLUG = 'posts';
+let postsIntroShown = false;
+function maybeShowPostsIntro(): void {
+	if ( postsIntroShown ) {
+		return;
+	}
+	let cfg: ReturnType< typeof getConfig >;
+	try {
+		cfg = getConfig();
+	} catch {
+		return;
+	}
+	if ( cfg.introSeen ) {
+		return;
+	}
+	postsIntroShown = true;
+
+	void showPostsIntroDialog().then( ( result ) => {
+		// Escape / backdrop click resolve `'cancel'` and explicitly
+		// MUST NOT mark the intro seen — that's the testing escape
+		// hatch so we can iterate on the dialog without resetting
+		// OS Settings between runs. Also reset the in-session guard
+		// so opening the window again re-shows the dialog.
+		if ( result === 'cancel' ) {
+			postsIntroShown = false;
+			return;
+		}
+		void markPostsIntroSeen( cfg );
+		if ( result === 'settings' ) {
+			openOsSettingsFeatures();
+		}
+	} ).catch( () => {
+		// Dialog mount failed; keep gating off so a re-open can retry.
+		postsIntroShown = false;
+	} );
+}
+
+async function markPostsIntroSeen(
+	cfg: ReturnType< typeof getConfig >,
+): Promise< void > {
+	if ( ! cfg.introUrl ) {
+		return;
+	}
+	try {
+		await trackedFetch(
+			cfg.introUrl,
+			{
+				method: 'POST',
+				credentials: 'same-origin',
+				headers: {
+					'Content-Type': 'application/json',
+					'X-WP-Nonce': cfg.restNonce,
+				},
+				body: JSON.stringify( { slug: POSTS_INTRO_SLUG } ),
+			},
+			{ windowId: 'desktop-mode-posts', source: 'posts-window/intro' },
+		);
+		// Mirror the server change locally so a re-open inside the
+		// same shell session doesn't re-fire the dialog.
+		( cfg as { introSeen: boolean } ).introSeen = true;
+	} catch {
+		// Swallow — the worst case is showing the intro one more time.
+	}
+}
+
+function openOsSettingsFeatures(): void {
+	const api = ( window.wp as { desktop?: { openOsSettings?: () => void } } | undefined )?.desktop;
+	api?.openOsSettings?.();
 }
 
 const ROOT = '[data-desktop-mode-posts-root]';
@@ -808,6 +917,60 @@ function buildTitleCell( row: PostListItem ): HTMLElement {
 	} );
 	titleRow.appendChild( link );
 
+	// Lock badge — another user is editing this row right now. Read
+	// the `desktop_mode_lock` REST field surfaced by My WordPress'
+	// `lock.php`. Same affordance the My WordPress folder window
+	// uses, scoped to the table-row context (smaller, alongside the
+	// status badge instead of overlaying the icon).
+	const lock = row.desktop_mode_lock ?? null;
+	if ( lock ) {
+		const lockBadge = document.createElement( 'span' );
+		lockBadge.style.cssText = [
+			'display:inline-flex',
+			'align-items:center',
+			'gap:4px',
+			'padding:2px 8px',
+			'border-radius:10px',
+			'font-size:11px',
+			'font-weight:600',
+			'background:rgba(179, 45, 46, 0.1)',
+			'color:#b32d2e',
+			'white-space:nowrap',
+			'flex-shrink:0',
+		].join( ';' );
+		const lockIcon = document.createElement( 'span' );
+		lockIcon.setAttribute( 'aria-hidden', 'true' );
+		// `<wpd-table>` cells live inside shadow DOM. Document-level
+		// CSS rules — `.dashicons { font-family: dashicons }` and
+		// `.dashicons-lock:before { content: "\f160" }` — DO NOT pierce
+		// that boundary, so the standard `class="dashicons dashicons-lock"`
+		// recipe paints an empty box. The dashicons `@font-face` is
+		// global (font faces are document-wide), so we sidestep by
+		// setting font-family inline AND emitting the glyph character
+		// directly as text content. Same visual, no CSS-encapsulation
+		// surprise.
+		lockIcon.style.cssText = [
+			'font-family:dashicons',
+			'font-size:14px',
+			'line-height:1',
+			'display:inline-block',
+			'speak:none',
+			'-webkit-font-smoothing:antialiased',
+		].join( ';' );
+		// Dashicons "lock" glyph (codepoint U+F160). Kept as an escape
+		// so the source file doesn't depend on a Private-Use-Area
+		// character round-tripping through editors and version control.
+		lockIcon.textContent = '';
+		lockBadge.appendChild( lockIcon );
+		const lockText = document.createElement( 'span' );
+		lockText.textContent = lock.userName;
+		lockBadge.appendChild( lockText );
+		// translators: %s is the user name currently editing the post.
+		const tipFmt = __( '%s is currently editing', 'desktop-mode' );
+		lockBadge.title = sprintf( tipFmt, lock.userName );
+		titleRow.appendChild( lockBadge );
+	}
+
 	if ( row.status && row.status !== 'publish' ) {
 		const badge = document.createElement( 'span' );
 		const colors = statusBadgeColor( row.status );
@@ -1297,20 +1460,22 @@ function buildCategoriesCell( row: PostListItem ): HTMLElement {
 		if ( ! detail || typeof detail.id !== 'number' ) {
 			return;
 		}
-		// Cheap browser confirm — the picker emits the intent, we
-		// own the destructive REST call. WP cascades posts that
-		// previously belonged to the deleted term back to
-		// Uncategorized automatically.
-		// eslint-disable-next-line no-alert
-		const ok = window.confirm(
-			sprintf(
+		// Confirm via the framework's `<wpd-confirm-dialog>`
+		// (proxied through `wp.desktop.confirm`). WP cascades
+		// posts that previously belonged to the deleted term
+		// back to Uncategorized automatically.
+		const ok = await wpdConfirmGlobal( {
+			title: __( 'Delete category?' ),
+			message: sprintf(
 				/* translators: %s: category name. */
 				__(
 					'Delete the category "%s"? Posts assigned only to it will fall back to Uncategorized.',
 				),
 				detail.name,
 			),
-		);
+			confirmLabel: __( 'Delete' ),
+			danger: true,
+		} );
 		if ( ! ok ) {
 			return;
 		}
@@ -1667,6 +1832,8 @@ export async function renderPostsWindow( body: HTMLElement ): Promise< void > {
 	if ( ! root || ! table ) {
 		return;
 	}
+
+	maybeShowPostsIntro();
 
 	// Term-management tabs (Categories + Tags) — lazy-mounted on first
 	// activation so cold-load of the Posts window never pays for them
@@ -2075,14 +2242,14 @@ export async function renderPostsWindow( body: HTMLElement ): Promise< void > {
 			return;
 		}
 		if ( action.confirm ) {
-			// eslint-disable-next-line no-alert
-			const ok = window.confirm(
-				sprintf(
+			const ok = await wpdConfirmGlobal( {
+				message: sprintf(
 					/* translators: %d: row count. */
 					action.confirm,
 					ids.length,
 				),
-			);
+				danger: true,
+			} );
 			if ( ! ok ) {
 				return;
 			}

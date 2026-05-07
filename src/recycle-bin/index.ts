@@ -43,6 +43,50 @@ declare global {
 	}
 }
 
+/**
+ * Map a recycle-bin row's `type` (post/page/CPT/attachment/comment)
+ * to the Files-on-the-Desktop file-type slug. Used by the
+ * "Pin to desktop" toolbar action.
+ */
+/**
+ * Bridge to `wp.desktop.confirm` (the main bundle's
+ * `<wpd-confirm-dialog>` wrapper). The recycle-bin script lists
+ * `desktop-mode` as a dependency, so the global is always set by
+ * the time this code runs.
+ */
+interface ConfirmOptions {
+	title?: string;
+	message: string;
+	confirmLabel?: string;
+	cancelLabel?: string;
+	danger?: boolean;
+}
+function wpdConfirmGlobal( options: ConfirmOptions ): Promise< boolean > {
+	const fn = ( window.wp as { desktop?: { confirm?: ( o: ConfirmOptions ) => Promise< boolean > } } | undefined )
+		?.desktop?.confirm;
+	if ( typeof fn !== 'function' ) {
+		return Promise.reject(
+			new Error(
+				'[desktop-mode] wp.desktop.confirm is missing — the main desktop bundle must load before the recycle-bin script.',
+			),
+		);
+	}
+	return fn( options );
+}
+
+export function mapRecycleTypeToFileType( recycleType: string ): string {
+	if ( recycleType === 'attachment' ) {
+		return 'attachment';
+	}
+	if ( recycleType === 'comment' ) {
+		return 'comment';
+	}
+	// Every public post type collapses into the 'post' file type;
+	// the desktop tile reads `postType` from the serialized shape
+	// for label / icon if it wants to differentiate.
+	return 'post';
+}
+
 const ROOT = '[data-desktop-mode-recycle-bin-root]';
 const FILTER = '[data-desktop-mode-recycle-bin-filter]';
 const SEARCH = '[data-desktop-mode-recycle-bin-search]';
@@ -51,6 +95,7 @@ const TABLE = '[data-desktop-mode-recycle-bin-table]';
 const BULK = '[data-desktop-mode-recycle-bin-bulk]';
 const COUNT = '[data-desktop-mode-recycle-bin-count]';
 const RESTORE_SEL = '[data-desktop-mode-recycle-bin-restore-selected]';
+const PIN_TO_DESKTOP = '[data-desktop-mode-recycle-bin-pin-to-desktop]';
 const PURGE_SEL = '[data-desktop-mode-recycle-bin-purge-selected]';
 const EMPTY_BTN = '[data-desktop-mode-recycle-bin-empty]';
 
@@ -110,7 +155,7 @@ function itemsFingerprint( items: RecycleBinItem[] ): string {
 
 /** Per-window state. Re-created on every render() call. */
 interface BinState {
-	filter: '' | 'post' | 'page' | 'attachment' | 'comment';
+	filter: '' | 'post' | 'page' | 'attachment' | 'comment' | 'desktop' | 'placement' | 'shortcut' | 'folder';
 	search: string;
 	searchDebounce: number | null;
 }
@@ -119,71 +164,58 @@ interface BinState {
 function buildColumns(): WpdTableColumn< RecycleBinItem >[] {
 	const cols: WpdTableColumn< RecycleBinItem >[] = [
 		{
-			key: 'preview',
-			label: '',
-			width: '52px',
-			render: ( _v, row ) => {
-				// Custom cell renders land inside `<wpd-table>`'s
-				// shadow DOM, so the global Dashicons stylesheet
-				// doesn't reach them. We show an actual thumbnail
-				// when there is one, otherwise leave the cell
-				// empty — the type column already communicates
-				// "post / page / media" in text.
-				if (
-					row.preview &&
-					row.type === 'attachment' &&
-					row.mime.startsWith( 'image/' )
-				) {
-					const img = document.createElement( 'img' );
-					img.src = row.preview;
-					img.alt = '';
-					img.loading = 'lazy';
-					img.style.cssText =
-						'width:36px;height:36px;border-radius:4px;object-fit:cover;display:block;';
-					return img;
-				}
-				const empty = document.createElement( 'span' );
-				empty.style.cssText = 'display:inline-block;width:36px;height:36px;';
-				return empty;
-			},
-		},
-		{
 			key: 'title',
 			label: __( 'Title' ),
 			sortable: true,
 			filter: 'text',
 			render: ( _v, row ) => {
-				// Two-line title cell. All visual styles inline so
-				// we don't depend on outer CSS reaching past the
-				// `<wpd-table>` shadow boundary.
-				const cell = document.createElement( 'span' );
-				cell.style.cssText =
+				// One-cell layout: optional thumbnail (image
+				// attachments only) sits inline at the start, then
+				// the two-line title/subtitle stack. Posts, pages,
+				// comments get the full title width since they have
+				// nothing to show on the left — no reserved gap.
+				const wrap = document.createElement( 'span' );
+				wrap.style.cssText =
+					'display:flex;align-items:center;gap:10px;min-width:0;';
+
+				const showsThumb =
+					row.preview &&
+					row.type === 'attachment' &&
+					row.mime.startsWith( 'image/' );
+				if ( showsThumb ) {
+					const img = document.createElement( 'img' );
+					img.src = row.preview;
+					img.alt = '';
+					img.loading = 'lazy';
+					img.style.cssText =
+						'width:36px;height:36px;border-radius:4px;object-fit:cover;display:block;flex-shrink:0;';
+					wrap.appendChild( img );
+				}
+
+				const stack = document.createElement( 'span' );
+				stack.style.cssText =
 					'display:flex;flex-direction:column;gap:2px;min-width:0;';
 				const title = document.createElement( 'span' );
 				title.style.cssText =
 					'font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:320px;';
 				title.textContent = row.title;
 				title.title = row.title;
-				cell.appendChild( title );
+				stack.appendChild( title );
 				if ( row.subtitle ) {
 					const sub = document.createElement( 'span' );
 					sub.style.cssText =
 						'font-size:12px;color:#50575e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:320px;';
 					sub.textContent = row.subtitle;
 					sub.title = row.subtitle;
-					cell.appendChild( sub );
+					stack.appendChild( sub );
 				}
-				return cell;
+				wrap.appendChild( stack );
+				return wrap;
 			},
 		},
-		{
-			key: 'type',
-			label: __( 'Type' ),
-			sortable: true,
-			filter: 'select',
-			width: '120px',
-			render: ( _v, row ) => labelForType( row.type ),
-		},
+		// No explicit Type column — the title + the toolbar's type
+		// filter tabs already convey the entity kind, and an extra
+		// column inflates the row visually for no signal gain.
 		{
 			key: 'deleted_at',
 			label: __( 'Deleted' ),
@@ -254,21 +286,6 @@ function buildColumns(): WpdTableColumn< RecycleBinItem >[] {
 		) as WpdTableColumn< RecycleBinItem >[];
 	}
 	return cols;
-}
-
-function labelForType( type: string ): string {
-	switch ( type ) {
-		case 'post':
-			return __( 'Post' );
-		case 'page':
-			return __( 'Page' );
-		case 'attachment':
-			return __( 'Media' );
-		case 'comment':
-			return __( 'Comment' );
-		default:
-			return type;
-	}
 }
 
 interface RowButtonOptions {
@@ -424,6 +441,12 @@ export function renderRecycleBin( body: HTMLElement ): void {
 
 	table.columns = buildColumns();
 	table.getRowId = ( row ) => row.id;
+	// No `fileTypeForRow` here on purpose: trashed items are
+	// for restoring, not for pinning to the desktop. The Pin to
+	// Desktop toolbar action still covers the rare "I want both
+	// at once" path. `<wpd-table>`'s drag-handle surface is
+	// reserved for tables where dragging IS the primary
+	// affordance (e.g. plugin-authored picker UIs).
 
 	// If we have a cached snapshot from a previous open, paint it
 	// synchronously — the user sees the data they expect on
@@ -576,20 +599,73 @@ export function renderRecycleBin( body: HTMLElement ): void {
 		await refresh();
 	};
 
+	const handlePinToDesktop = async (
+		refs: RecycleBinItemRef[],
+	): Promise< void > => {
+		if ( refs.length === 0 ) {
+			return;
+		}
+		// First, restore the items so they exist again at their
+		// canonical post/comment id. Then place each on the
+		// desktop at staggered coordinates near the top-left so
+		// the user sees them all without overlap.
+		const types = Array.from( new Set( refs.map( ( r ) => r.type ) ) );
+		try {
+			const restored = await restoreItems( refs );
+			const filesApi = ( window.wp as { desktop?: { files?: { rest?: { createPlacement: ( payload: unknown ) => Promise< unknown > } } } } | undefined )
+				?.desktop?.files?.rest;
+			if ( filesApi ) {
+				let i = 0;
+				for ( const ref of refs ) {
+					if ( ! restored.ok.includes( ref.id ) ) {
+						continue;
+					}
+					const desktopType = mapRecycleTypeToFileType( ref.type );
+					if ( ! desktopType ) {
+						continue;
+					}
+					try {
+						// Match the grid in src/desktop-files/grid.ts
+						// (padding 16 + col 96 + row 110, column-major
+						// fill). The math is duplicated because this
+						// bundle is a separate vite target and can't
+						// reach into the desktop bundle's internals.
+						await filesApi.createPlacement( {
+							type: desktopType,
+							ref: String( ref.id ),
+							x: 16 + ( i % 5 ) * 96,
+							y: 16 + Math.floor( i / 5 ) * 110,
+						} );
+					} catch ( err ) {
+						console.error( '[recycle-bin] pin-to-desktop placement failed', err );
+					}
+					i += 1;
+				}
+			}
+			emitDoneEvent( 'restore', restored.ok, restored.errors, types, restored.ok );
+		} catch ( err ) {
+			console.error( '[recycle-bin] pin-to-desktop failed', err );
+		}
+		table.clearSelection();
+		await refresh();
+	};
+
 	const handlePurge = async (
 		refs: RecycleBinItemRef[],
 	): Promise< void > => {
 		if ( refs.length === 0 ) {
 			return;
 		}
-		// eslint-disable-next-line no-alert
-		const ok = window.confirm(
-			sprintf(
+		const ok = await wpdConfirmGlobal( {
+			title: __( 'Delete forever?' ),
+			message: sprintf(
 				/* translators: %d: row count. */
 				__( 'Permanently delete %d item(s)? This cannot be undone.' ),
 				refs.length,
 			),
-		);
+			confirmLabel: __( 'Delete forever' ),
+			danger: true,
+		} );
 		if ( ! ok ) {
 			return;
 		}
@@ -666,12 +742,14 @@ export function renderRecycleBin( body: HTMLElement ): void {
 	};
 
 	const handleEmpty = async (): Promise< void > => {
-		// eslint-disable-next-line no-alert
-		const ok = window.confirm(
-			__(
+		const ok = await wpdConfirmGlobal( {
+			title: __( 'Empty bin?' ),
+			message: __(
 				'Empty the recycle bin? Every item visible in the current view will be permanently deleted.',
 			),
-		);
+			confirmLabel: __( 'Empty bin' ),
+			danger: true,
+		} );
 		if ( ! ok ) {
 			return;
 		}
@@ -767,6 +845,10 @@ export function renderRecycleBin( body: HTMLElement ): void {
 			void handleRestore( collectSelectedItems() );
 			return;
 		}
+		if ( target.closest( PIN_TO_DESKTOP ) ) {
+			void handlePinToDesktop( collectSelectedItems() );
+			return;
+		}
 		if ( target.closest( PURGE_SEL ) ) {
 			void handlePurge( collectSelectedItems() );
 			return;
@@ -839,6 +921,9 @@ export function renderRecycleBin( body: HTMLElement ): void {
 			api.subscribe( 'desktop-mode.page.changed', onDomainChanged ),
 			api.subscribe( 'desktop-mode.attachment.changed', onDomainChanged ),
 			api.subscribe( 'desktop-mode.comment.changed', onDomainChanged ),
+			api.subscribe( 'desktop-mode.placement.changed', onDomainChanged ),
+			api.subscribe( 'desktop-mode.shortcut.changed', onDomainChanged ),
+			api.subscribe( 'desktop-mode.folder.changed', onDomainChanged ),
 		);
 	}
 

@@ -57,7 +57,17 @@ function desktop_mode_recycle_bin_get_items( $args = array() ) {
 	$items_posts    = array();
 	$items_comments = array();
 
-	$wants_post_types = '' === $type || 'comment' !== $type;
+	// Source gates: each `$type` filter narrows down to the
+	// owning store. `''` (All) loads every source. The files-on-
+	// desktop sources (`shortcut` / `placement` / `folder`) live in
+	// `desktop_mode_files_list_trashed_for_recycle_bin` — never run
+	// the WP-core post / comment queries when one of those is the
+	// active filter, otherwise trashed posts leak into the
+	// "Shortcuts" / "Folders" tabs.
+	$files_types      = array( 'desktop', 'placement', 'shortcut', 'folder' );
+	$is_files_filter  = in_array( $type, $files_types, true );
+	$wants_post_types = '' === $type
+		|| ( 'comment' !== $type && ! $is_files_filter );
 	$wants_comments   = ( '' === $type || 'comment' === $type )
 		&& desktop_mode_recycle_bin_comments_enabled();
 
@@ -135,7 +145,50 @@ function desktop_mode_recycle_bin_get_items( $args = array() ) {
 		}
 	}
 
-	$items = array_merge( $items_posts, $items_comments );
+	// Files-on-the-Desktop trash — soft-trashed placements
+	// (shortcuts) and folders. Returned in the same item shape so
+	// the JS layer treats them uniformly. The `placement` and
+	// `folder` types route to the desktop-files trash module on
+	// restore / purge (see `desktop_mode_recycle_bin_handle_files_*`).
+	$items_files = array();
+	// Map UI filter → set of `type` values to keep from the
+	// files-on-desktop helper. The "Shortcuts" segment in the bin
+	// UI now covers both registered icons (`shortcut`) AND user
+	// folders (`folder`) — restore + purge dispatch still routes
+	// each row by its individual type, so the merge is purely
+	// visual.
+	// "Desktop" is the unified bucket — every files-on-the-desktop
+	// trash row regardless of internal type (shortcut / folder /
+	// placement). Per-row dispatch on restore + purge still uses
+	// the row's distinct `type` so the merge is purely visual.
+	$wanted_files_types = array();
+	switch ( $type ) {
+		case '':
+		case 'desktop':
+			$wanted_files_types = array( 'shortcut', 'folder', 'placement' );
+			break;
+		case 'shortcut':
+		case 'placement':
+		case 'folder':
+			$wanted_files_types = array( $type );
+			break;
+	}
+	if (
+		! empty( $wanted_files_types )
+		&& function_exists( 'desktop_mode_files_list_trashed_for_recycle_bin' )
+	) {
+		$file_items = desktop_mode_files_list_trashed_for_recycle_bin(
+			get_current_user_id()
+		);
+		foreach ( (array) $file_items as $item ) {
+			if ( ! in_array( (string) $item['type'], $wanted_files_types, true ) ) {
+				continue;
+			}
+			$items_files[] = $item;
+		}
+	}
+
+	$items = array_merge( $items_posts, $items_comments, $items_files );
 
 	// Sort the merged list chronologically by deleted_at desc. The
 	// shape always carries a sortable string in `deleted_at`, so a
@@ -211,18 +264,24 @@ function desktop_mode_recycle_bin_count() {
 		);
 	}
 
-	$total = $post_count + $comment_count;
+	$files_count = 0;
+	if ( function_exists( 'desktop_mode_files_count_trashed_for_recycle_bin' ) ) {
+		$files_count = (int) desktop_mode_files_count_trashed_for_recycle_bin( get_current_user_id() );
+	}
+
+	$total = $post_count + $comment_count + $files_count;
 
 	/**
 	 * Filter the total count surfaced to the badge.
 	 *
 	 * @since 0.21.0
 	 *
-	 * @param int $total         Default sum (posts + comments visible to the user).
+	 * @param int $total         Default sum (posts + comments + files visible to the user).
 	 * @param int $post_count    Items in trash from the post-type query.
 	 * @param int $comment_count Items in trash from the comment query.
+	 * @param int $files_count   Items in trash from the desktop-files trash (since 0.8.0).
 	 */
-	return (int) apply_filters( 'desktop_mode_recycle_bin_count', $total, $post_count, $comment_count );
+	return (int) apply_filters( 'desktop_mode_recycle_bin_count', $total, $post_count, $comment_count, $files_count );
 }
 
 /**
@@ -584,6 +643,12 @@ function desktop_mode_recycle_bin_restore( $id, $type = '' ) {
 	if ( 'comment' === $type ) {
 		return desktop_mode_recycle_bin_restore_comment( $id );
 	}
+	if ( ( 'placement' === $type || 'shortcut' === $type ) && function_exists( 'desktop_mode_files_restore_placement' ) ) {
+		return desktop_mode_files_restore_placement( get_current_user_id(), $id );
+	}
+	if ( 'folder' === $type && function_exists( 'desktop_mode_files_restore_folder' ) ) {
+		return desktop_mode_files_restore_folder( get_current_user_id(), $id );
+	}
 
 	$post = get_post( $id );
 	if ( ! $post ) {
@@ -692,6 +757,12 @@ function desktop_mode_recycle_bin_purge( $id, $type = '' ) {
 	$id = (int) $id;
 	if ( 'comment' === $type ) {
 		return desktop_mode_recycle_bin_purge_comment( $id );
+	}
+	if ( ( 'placement' === $type || 'shortcut' === $type ) && function_exists( 'desktop_mode_files_purge_placement' ) ) {
+		return desktop_mode_files_purge_placement( get_current_user_id(), $id );
+	}
+	if ( 'folder' === $type && function_exists( 'desktop_mode_files_purge_folder' ) ) {
+		return desktop_mode_files_purge_folder( get_current_user_id(), $id );
 	}
 
 	$post = get_post( $id );

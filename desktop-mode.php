@@ -22,7 +22,22 @@ define( 'DESKTOP_MODE_FILE', __FILE__ );
 define( 'DESKTOP_MODE_DIR', plugin_dir_path( __FILE__ ) );
 define( 'DESKTOP_MODE_URL', plugin_dir_url( __FILE__ ) );
 
+// Foundation primitives — must load before anything that consumes them.
+require_once DESKTOP_MODE_DIR . 'includes/core/registry-factory.php';
+
+// Routing helpers register filters at file-load time but call
+// chromeless / classic detection helpers (still in helpers.php)
+// at hook-fire time — both files load before any hook fires, so
+// the order is strict-but-flexible. Routing first because it is
+// the smaller, more isolated piece.
+require_once DESKTOP_MODE_DIR . 'includes/core/routing.php';
+
 require_once DESKTOP_MODE_DIR . 'includes/helpers.php';
+
+// Dock + payload assembly. Loaded right after helpers.php so the
+// foundational `desktop_mode_is_enabled()` etc. exist by the time
+// any payload function is invoked at hook-fire time.
+require_once DESKTOP_MODE_DIR . 'includes/core/payload.php';
 require_once DESKTOP_MODE_DIR . 'includes/ajax.php';
 require_once DESKTOP_MODE_DIR . 'includes/assets.php';
 require_once DESKTOP_MODE_DIR . 'includes/admin-bar.php';
@@ -35,6 +50,11 @@ require_once DESKTOP_MODE_DIR . 'includes/default-window.php';
 require_once DESKTOP_MODE_DIR . 'includes/media-query.php';
 require_once DESKTOP_MODE_DIR . 'includes/accents.php';
 require_once DESKTOP_MODE_DIR . 'includes/toast-types.php';
+require_once DESKTOP_MODE_DIR . 'includes/registries/native-windows.php';
+require_once DESKTOP_MODE_DIR . 'includes/registries/window-tabs.php';
+require_once DESKTOP_MODE_DIR . 'includes/registries/icons.php';
+require_once DESKTOP_MODE_DIR . 'includes/registries/wallpapers.php';
+require_once DESKTOP_MODE_DIR . 'includes/registries/widgets.php';
 require_once DESKTOP_MODE_DIR . 'includes/components.php';
 require_once DESKTOP_MODE_DIR . 'includes/commands.php';
 require_once DESKTOP_MODE_DIR . 'includes/settings-tabs.php';

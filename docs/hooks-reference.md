@@ -621,6 +621,25 @@ A `false` return has two effects:
 
 ---
 
+### `desktop_mode_show_welcome_dialog` — Stable *(since 0.18.5)*
+
+Decides whether the first-run welcome dialog (rendered in classic `/wp-admin` on `admin_footer`, never inside the desktop shell or a chromeless iframe) should display for the current user on the current request.
+
+```php
+apply_filters( 'desktop_mode_show_welcome_dialog', bool $show, int $user_id );
+```
+
+The filter only fires after Desktop Mode has already verified that:
+
+1. The request is an admin page (`is_admin()`).
+2. The user is logged in and can `read`.
+3. The request is NOT chromeless.
+4. The user has not yet dismissed the `activation-welcome` intro (stored in the `desktop_mode_seen_intros` user meta — the same storage every other native-app intro uses, and the same surface the "Reset what's-new dialogs" button in OS Settings → Features wipes).
+
+Return `false` to suppress the dialog — useful for managed-host onboarding flows that ship their own welcome UX.
+
+---
+
 ### `desktop_mode_shell_config` — Stable
 
 The JS configuration blob injected as `window.desktopModeConfig`. Powers the window manager, dock, and session restore. Filter this to inject custom payloads the shell can read at boot.

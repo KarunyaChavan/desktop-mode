@@ -399,6 +399,20 @@ export function buildPublicApi( deps: BuildPublicApiDeps ): WpDesktopPublicApi {
 					.slice( 0, 256 );
 			}
 			osSettings.save( opts );
+			// Belt-and-suspenders live repaint for visibility / order
+			// changes. The `subscribeOsSettings` listener installed in
+			// `desktop.ts` already calls `layoutDispatcher.refresh()`,
+			// but that wiring sits behind a few defensive guards (TDZ
+			// on `desktopApi`, conditional layout compare, third-party
+			// subscribers that may throw and short-circuit downstream
+			// listeners since `save()` iterates a single Set). Re-
+			// invoking refresh() directly here makes the dock + icon
+			// grid pick up the new placement synchronously with the
+			// write — no F5 required for "Hide from dock" / "Also show
+			// on desktop" picks from the right-click menu.
+			if ( patch.itemVisibility || patch.dockOrder ) {
+				layoutDispatcher?.refresh();
+			}
 		},
 		deriveWindowId: ( url: string, overrideAdminUrl?: string ) =>
 			deriveWindowId( url, overrideAdminUrl ?? config.adminUrl ),

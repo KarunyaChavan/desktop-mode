@@ -61,11 +61,12 @@ function writeVisibility(
 	}
 	const snap = api.getOsSettings();
 	const next = { ...snap.itemVisibility };
-	if ( placement === 'both' ) {
-		delete next[ canonicalId ];
-	} else {
-		next[ canonicalId ] = placement;
-	}
+	// Store every placement explicitly — including 'both'. We used
+	// to `delete next[ canonicalId ]` here on 'both', but the absence
+	// of an override falls back to the item's NATIVE rail
+	// (`resolvePlacement`), so deleting collapsed "Also show on
+	// desktop" / "Also show on dock" back into single-rail behavior.
+	next[ canonicalId ] = placement;
 	api.updateOsSettings( { itemVisibility: next } );
 }
 
@@ -158,10 +159,16 @@ export function openItemVisibilityMenu(
 	menu.style.visibility = 'hidden';
 	menu.style.zIndex = '10000';
 
-	const byId = new Map< string, MenuOption >();
+	const byKey = new Map< string, MenuOption >();
 	for ( const opt of options ) {
-		byId.set( opt.id, opt );
+		byKey.set( opt.id, opt );
 		const node = document.createElement( 'wpd-context-menu-option' );
+		// `<wpd-context-menu-option>` emits `detail.id` from
+		// `dataset.menuItemId` (falling back to the element's `id`
+		// attribute). Set it so the pick listener can route by our
+		// opt.id; the `value` attr stays for compatibility with code
+		// that switches on `detail.value`.
+		( node as HTMLElement ).dataset.menuItemId = opt.id;
 		node.setAttribute( 'value', opt.id );
 		if ( opt.icon ) {
 			node.setAttribute( 'icon', opt.icon );
@@ -175,7 +182,13 @@ export function openItemVisibilityMenu(
 
 	menu.addEventListener( 'wpd-context-menu-pick', ( e: Event ) => {
 		const detail = ( e as CustomEvent< { id: string; value: string } > ).detail;
-		const opt = byId.get( detail?.id );
+		// Prefer `detail.id` (the option's `dataset.menuItemId`) but
+		// fall back to `detail.value` for robustness — both carry our
+		// opt.id, set above. Reading only `detail.id` was the bug: when
+		// it was unset on the option, the lookup silently returned
+		// undefined and every pick no-op'd.
+		const key = detail?.id || detail?.value || '';
+		const opt = byKey.get( key );
 		closeMenu();
 		try {
 			opt?.onPick();
@@ -187,33 +200,43 @@ export function openItemVisibilityMenu(
 	document.body.appendChild( menu );
 	activeMenu = menu;
 
-	// Measure now that the menu is in the DOM, then position it.
-	//
-	// Dock right-clicks ALWAYS anchor the menu's bottom edge at the
-	// cursor (i.e., the menu opens upward). The dock hugs a viewport
-	// edge — bottom for the taskbar, left/right for side docks — so
-	// anchoring below the cursor reliably pushes the menu off-
-	// screen. Desktop-icon right-clicks default to opening below
-	// the cursor (natural OS-style menu) and only flip up when
-	// they would overflow the viewport.
-	const rect = menu.getBoundingClientRect();
-	const margin = 8;
-	let left = opts.x;
-	let top: number;
-	if ( opts.surface === 'dock' ) {
-		top = Math.max( margin, opts.y - rect.height - margin );
-	} else {
-		top = opts.y;
-		if ( top + rect.height + margin > window.innerHeight ) {
-			top = Math.max( margin, opts.y - rect.height );
+	// Measure on the next animation frame, AFTER the component has
+	// completed its microtask render. Calling getBoundingClientRect()
+	// synchronously here returns a near-zero height (shadow DOM not
+	// populated yet) — which made dock right-clicks land the
+	// "anchor-above-cursor" math at `opts.y - 0 - 8 ≈ opts.y`,
+	// pushing the bottom dock's menu off-screen below the viewport.
+	const positionMenu = (): void => {
+		if ( menu !== activeMenu ) {
+			return; // Was closed before we got here.
 		}
-	}
-	if ( left + rect.width + margin > window.innerWidth ) {
-		left = Math.max( margin, opts.x - rect.width );
-	}
-	menu.style.left = `${ left }px`;
-	menu.style.top = `${ top }px`;
-	menu.style.visibility = '';
+		const rect = menu.getBoundingClientRect();
+		const margin = 8;
+		let left = opts.x;
+		let top: number;
+		// Dock right-clicks ALWAYS anchor the menu's bottom edge at the
+		// cursor (i.e., the menu opens upward). The dock hugs a
+		// viewport edge — bottom for the taskbar, left/right for side
+		// docks — so anchoring below the cursor reliably pushes the
+		// menu off-screen. Desktop-icon right-clicks default to opening
+		// below the cursor (natural OS-style menu) and only flip up
+		// when they would overflow the viewport.
+		if ( opts.surface === 'dock' ) {
+			top = Math.max( margin, opts.y - rect.height - margin );
+		} else {
+			top = opts.y;
+			if ( top + rect.height + margin > window.innerHeight ) {
+				top = Math.max( margin, opts.y - rect.height );
+			}
+		}
+		if ( left + rect.width + margin > window.innerWidth ) {
+			left = Math.max( margin, opts.x - rect.width );
+		}
+		menu.style.left = `${ left }px`;
+		menu.style.top = `${ top }px`;
+		menu.style.visibility = '';
+	};
+	requestAnimationFrame( positionMenu );
 
 	// Outside-click + Escape dismisser.
 	const onOutside = ( ev: MouseEvent ): void => {

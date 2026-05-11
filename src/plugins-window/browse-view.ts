@@ -290,8 +290,12 @@ export function mountBrowseView(
 		},
 		onInstall: async ( plugin, card ) => {
 			const cta = card.querySelector< HTMLElement >( '[data-plugin-card-cta]' );
+			const ctaOriginalText = cta?.textContent ?? '';
 			cta?.setAttribute( 'busy', '' );
 			cta?.setAttribute( 'disabled', '' );
+			if ( cta ) {
+				cta.textContent = __( 'Installing…', 'desktop-mode' );
+			}
 			try {
 				await installPluginBySlug( plugin.slug );
 				// Refresh the installed list first — this REST GET is
@@ -316,6 +320,9 @@ export function mountBrowseView(
 			} catch ( err ) {
 				cta?.removeAttribute( 'busy' );
 				cta?.removeAttribute( 'disabled' );
+				if ( cta ) {
+					cta.textContent = ctaOriginalText;
+				}
 				toast(
 					sprintf(
 						/* translators: %s: error message */
@@ -328,8 +335,12 @@ export function mountBrowseView(
 		},
 		onActivate: async ( installed, card ) => {
 			const cta = card.querySelector< HTMLElement >( '[data-plugin-card-cta]' );
+			const ctaOriginalText = cta?.textContent ?? '';
 			cta?.setAttribute( 'busy', '' );
 			cta?.setAttribute( 'disabled', '' );
+			if ( cta ) {
+				cta.textContent = __( 'Activating…', 'desktop-mode' );
+			}
 			try {
 				const updated = await activateInstalledPlugin( installed );
 				state.installed.set( indexKeyFor( updated ), updated );
@@ -352,6 +363,9 @@ export function mountBrowseView(
 			} catch ( err ) {
 				cta?.removeAttribute( 'busy' );
 				cta?.removeAttribute( 'disabled' );
+				if ( cta ) {
+					cta.textContent = ctaOriginalText;
+				}
 				toast(
 					sprintf(
 						/* translators: %s: error message */

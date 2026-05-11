@@ -610,8 +610,10 @@ function paintFooter(
 	footer.append( left, right );
 
 	async function doInstall( btn: HTMLElement ): Promise< void > {
+		const originalText = btn.textContent ?? '';
 		btn.setAttribute( 'busy', '' );
 		btn.setAttribute( 'disabled', '' );
+		btn.textContent = __( 'Installing…', 'desktop-mode' );
 		try {
 			const result = await installPluginBySlug( slug );
 			toast(
@@ -633,6 +635,7 @@ function paintFooter(
 		} catch ( err ) {
 			btn.removeAttribute( 'busy' );
 			btn.removeAttribute( 'disabled' );
+			btn.textContent = originalText;
 			toast(
 				sprintf(
 					/* translators: %s: error message */

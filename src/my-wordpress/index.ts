@@ -3587,7 +3587,16 @@ function buildUserTile(
 	tile.addEventListener( 'dblclick', ( e ) => {
 		e.preventDefault();
 		hideTooltip();
-		openUserEditWindow( item.id );
+		// Double-click on a user opens the activity footprint — the
+		// at-a-glance surface we want users to land on first. The
+		// classic profile editor is one click away from the preview
+		// pane / context menu / shortcut.
+		navigate( state, {
+			kind: 'user-footprint',
+			entityId: entity.id,
+			userId: item.id,
+			userName: displayName,
+		} );
 	} );
 
 	tile.addEventListener( 'contextmenu', ( e ) => {
@@ -3714,8 +3723,11 @@ async function renderUserPreviewPane(
 	const footer = document.createElement( 'footer' );
 	footer.className = 'desktop-mode-my-wordpress__article-footer';
 
+	// Primary action matches the double-click affordance — activity
+	// footprint first, the classic profile editor demoted to a
+	// secondary button.
 	const footprintBtn = document.createElement( 'wpd-button' );
-	footprintBtn.setAttribute( 'variant', 'secondary' );
+	footprintBtn.setAttribute( 'variant', 'primary' );
 	footprintBtn.textContent = __( 'View activity footprint', 'desktop-mode' );
 	footprintBtn.title = __(
 		'Open the full activity footprint surface for this user.',
@@ -3732,8 +3744,8 @@ async function renderUserPreviewPane(
 	footer.appendChild( footprintBtn );
 
 	const editBtn = document.createElement( 'wpd-button' );
-	editBtn.setAttribute( 'variant', 'primary' );
-	editBtn.textContent = __( 'Open profile', 'desktop-mode' );
+	editBtn.setAttribute( 'variant', 'secondary' );
+	editBtn.textContent = __( 'Show profile', 'desktop-mode' );
 	editBtn.title = __(
 		'Open this user’s profile editor in a new window.',
 		'desktop-mode',
@@ -3776,6 +3788,9 @@ function openUserTileMenu(
 		menu.appendChild( opt );
 	};
 
+	// Footprint is the primary (double-click) action; profile is the
+	// classic editor, demoted to "Show profile" to mirror the preview
+	// pane's button labels.
 	addOption(
 		'footprint',
 		__( 'View activity footprint', 'desktop-mode' ),
@@ -3783,7 +3798,7 @@ function openUserTileMenu(
 	);
 	addOption(
 		'open-profile',
-		__( 'Open profile', 'desktop-mode' ),
+		__( 'Show profile', 'desktop-mode' ),
 		'dashicons-id-alt',
 	);
 	if ( item.link ) {
@@ -4274,12 +4289,83 @@ function buildFootprintCalendar(
 	const firstDow = dates[ 0 ].getUTCDay(); // 0..6 (Sun..Sat)
 	const grid = document.createElement( 'div' );
 	grid.className = 'desktop-mode-my-wordpress__footprint-grid';
+
+	// The grid has two non-cell tracks reserved at the start:
+	//   - row 1 holds month labels above the data,
+	//   - col 1 holds weekday labels (Mon / Wed / Fri) to the left.
+	// Data cells start at (row 2, col 2). Compute (row, col) from a
+	// linear day offset so the math stays the same as the legacy
+	// auto-flow rendering. `dataCol` advances by 1 every 7 days.
+	const placeCell = (
+		el: HTMLElement,
+		linearDayOffset: number,
+	): void => {
+		const dow = linearDayOffset % 7; // 0..6 (Sun..Sat)
+		const week = Math.floor( linearDayOffset / 7 );
+		el.style.gridRow = String( dow + 2 );
+		el.style.gridColumn = String( week + 2 );
+	};
+
+	// Weekday labels — Mon / Wed / Fri only, matching the GitHub
+	// pattern. Derived from a known-Monday date so the locale
+	// formatter does the translation. The Sun/Tue/Thu/Sat rows are
+	// intentionally blank so the label column reads as a column of
+	// every-other-row text.
+	const weekdaySource = [
+		// 2024-12-02 was a Monday (UTC).
+		new Date( Date.UTC( 2024, 11, 2 ) ), // Mon
+		new Date( Date.UTC( 2024, 11, 4 ) ), // Wed
+		new Date( Date.UTC( 2024, 11, 6 ) ), // Fri
+	];
+	const weekdayRows = [ 2, 4, 6 ]; // Mon=row 3, Wed=row 5, Fri=row 7 (1-indexed + header)
+	for ( let i = 0; i < weekdaySource.length; i += 1 ) {
+		const lbl = document.createElement( 'span' );
+		lbl.className = 'desktop-mode-my-wordpress__footprint-weekday';
+		lbl.textContent = weekdaySource[ i ].toLocaleDateString( undefined, {
+			weekday: 'short',
+		} );
+		lbl.style.gridColumn = '1';
+		lbl.style.gridRow = String( weekdayRows[ i ] + 1 ); // +1 → row 3 / 5 / 7
+		grid.appendChild( lbl );
+	}
+
+	// Padding cells for the leading week so the first real day lands
+	// on its actual weekday row. Positioned explicitly so the grid's
+	// 2D placement stays deterministic regardless of source order.
 	for ( let i = 0; i < firstDow; i += 1 ) {
 		const blank = document.createElement( 'span' );
 		blank.className =
 			'desktop-mode-my-wordpress__footprint-cell desktop-mode-my-wordpress__footprint-cell--pad';
 		blank.setAttribute( 'aria-hidden', 'true' );
+		placeCell( blank, i );
 		grid.appendChild( blank );
+	}
+	// Month labels — one per month transition, positioned above the
+	// first week that contains a day in that month. Append before the
+	// data cells so painters don't have to fight overlapping z-order.
+	let lastMonth = -1;
+	for ( let i = 0; i < payload.daily.length; i += 1 ) {
+		const d = dates[ i ];
+		const m = d.getUTCMonth();
+		if ( m === lastMonth ) {
+			continue;
+		}
+		lastMonth = m;
+		const linear = firstDow + i;
+		const week = Math.floor( linear / 7 );
+		// Skip a month label that would land in the very first column
+		// when its first visible day is mid-week — the label would
+		// half-overhang the weekday-label gutter. The next month over
+		// already carries the visual anchor for the year boundary.
+		if ( week === 0 && linear % 7 !== 0 ) {
+			continue;
+		}
+		const lbl = document.createElement( 'span' );
+		lbl.className = 'desktop-mode-my-wordpress__footprint-month';
+		lbl.textContent = d.toLocaleDateString( undefined, { month: 'short' } );
+		lbl.style.gridRow = '1';
+		lbl.style.gridColumn = String( week + 2 );
+		grid.appendChild( lbl );
 	}
 	for ( let i = 0; i < payload.daily.length; i += 1 ) {
 		const d = payload.daily[ i ];
@@ -4297,6 +4383,7 @@ function buildFootprintCalendar(
 			d.comments,
 		);
 		cell.dataset.date = d.date;
+		placeCell( cell, firstDow + i );
 		grid.appendChild( cell );
 	}
 	calendar.appendChild( grid );
@@ -4591,7 +4678,7 @@ function buildFootprintFooter(
 
 	const editBtn = document.createElement( 'wpd-button' );
 	editBtn.setAttribute( 'variant', 'primary' );
-	editBtn.textContent = __( 'Open profile', 'desktop-mode' );
+	editBtn.textContent = __( 'Show profile', 'desktop-mode' );
 	editBtn.addEventListener( 'click', () => {
 		openUserEditWindow( userId );
 	} );

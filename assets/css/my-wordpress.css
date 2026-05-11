@@ -1016,11 +1016,19 @@
 	flex-direction: column;
 	gap: 20px;
 	padding: 24px 28px 32px;
-	max-width: 1080px;
-	margin: 0 auto;
 	box-sizing: border-box;
 	overflow-y: auto;
 	height: 100%;
+	/* Scroll container spans the full window width so wheel + touch
+	 * scroll work no matter where the pointer is — including in the
+	 * empty margins to the left / right of the content. The 1080px
+	 * cap is applied to each immediate child instead (below). */
+	align-items: center;
+}
+
+.desktop-mode-my-wordpress__footprint > * {
+	width: 100%;
+	max-width: 1080px;
 }
 
 .desktop-mode-my-wordpress__footprint-section {
@@ -1032,6 +1040,15 @@
 		var( --desktop-mode-surface, rgba( 255, 255, 255, 0.6 ) )
 	);
 	box-shadow: 0 1px 2px rgba( 0, 0, 0, 0.04 );
+	/* The parent `.__footprint` is a flex column with `overflow-y:
+	 * auto`. Flex items default to `flex-shrink: 1`, so each section
+	 * would compress along the column axis when the combined natural
+	 * height exceeds the container — clipping the calendar heatmap
+	 * (the calendar section also sets `overflow-x: auto`, which
+	 * doesn't surface a vertical scrollbar). Lock the intrinsic
+	 * height so the parent scroller, not the children, handles the
+	 * overflow. */
+	flex: 0 0 auto;
 }
 
 .desktop-mode-my-wordpress__footprint-section h3 {
@@ -1144,17 +1161,48 @@
 	display: flex;
 	flex-direction: column;
 	gap: 8px;
-	min-width: 760px;
+	/* Size to the grid itself so the legend (justify-content: flex-end
+	 * inside this same column) anchors to the grid's right edge instead
+	 * of the section's. Centered within the wider section by
+	 * `margin-inline: auto`. */
+	width: max-content;
+	max-width: 100%;
+	margin-inline: auto;
 }
 
 .desktop-mode-my-wordpress__footprint-grid {
 	display: grid;
-	/* 7 rows (Sun..Sat), columns flow horizontally as we append. */
-	grid-template-rows: repeat( 7, 11px );
-	grid-auto-flow: column;
+	/* Row 1 holds month labels (auto height); rows 2–8 are the 7
+	 * weekdays at fixed 11px. Col 1 holds weekday labels (auto width);
+	 * subsequent cols are 11px-wide week tracks, set per-cell via
+	 * `grid-column` so the JS can place items explicitly. */
+	grid-template-rows: auto repeat( 7, 11px );
+	grid-template-columns: auto;
 	grid-auto-columns: 11px;
-	gap: 3px;
+	column-gap: 3px;
+	row-gap: 3px;
 	width: max-content;
+}
+
+.desktop-mode-my-wordpress__footprint-month,
+.desktop-mode-my-wordpress__footprint-weekday {
+	font-size: 10px;
+	line-height: 11px;
+	color: var( --desktop-mode-muted, #50575e );
+	white-space: nowrap;
+}
+
+.desktop-mode-my-wordpress__footprint-weekday {
+	/* Sit flush to the right of the label gutter so each label reads
+	 * adjacent to its row. The 6px breathing room is in addition to
+	 * the grid's column-gap. */
+	padding-inline-end: 6px;
+	align-self: center;
+	justify-self: end;
+}
+
+.desktop-mode-my-wordpress__footprint-month {
+	padding-bottom: 2px;
 }
 
 .desktop-mode-my-wordpress__footprint-cell {

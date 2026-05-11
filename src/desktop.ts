@@ -19,6 +19,7 @@ import { Dock, type DockItem, type SystemDockItem } from './dock';
 import {
 	bindNativeUrlRemap,
 	registerNativeUrlRemap,
+	tryNativeUrlRemap,
 } from './native-url-remap';
 import { bindAdminLinkDispatch } from './window/iframe-bridge';
 // Tile-decoration helpers and the dock-selector registry live in
@@ -27,6 +28,16 @@ import { bindAdminLinkDispatch } from './window/iframe-bridge';
 import { OsSettings } from './settings';
 import { getExitDesktopModeTileDef } from './exit-desktop-mode';
 import { deriveWindowId, urlMatchKey } from './utils';
+// Static import — `setUserEditTarget` MUST run before the user-edit
+// window's render callback reads the target, and the render callback
+// fires synchronously inside `openById` (`manager.open` → `hydrateNative`
+// → render). Going through `void import().then( setUserEditTarget )` added
+// a 2-microtask delay that consistently lost the race in real-world
+// network conditions: the render callback's own `.then` chain queued
+// before the setUserEditTarget chain resolved, `readUserEditTarget`
+// returned `null`, the fallback to `cfg.currentUserId` kicked in, and
+// the form mounted for the viewer instead of the clicked user.
+import { setUserEditTarget as setUserEditTargetSync } from './posts-window/user-edit-target';
 import {
 	HOOKS,
 	addAction,
@@ -1815,9 +1826,11 @@ function init(): void {
 				10,
 			);
 			if ( userId > 0 ) {
-				void import( './posts-window/user-edit-target' ).then( ( m ) => {
-					m.setUserEditTarget( userId );
-				} );
+				// Set synchronously — see import comment above. The
+				// render callback that reads this target fires before
+				// the next microtask flush, so any async path here
+				// races and loses.
+				setUserEditTargetSync( userId );
 			}
 			// `profile.php` with no user_id falls through to the
 			// render callback's `currentUserId` fallback — no need
@@ -2611,8 +2624,23 @@ function init(): void {
 	// shell config. Done here so the manager is fully wired and
 	// the public API is already on `window.wp.desktop`.
 	installFilesOpenDeps( {
-		openUrl: ( { id, url, title, icon } ) =>
-			!! manager.open( { id, baseId: id, url, title, icon } ),
+		openUrl: ( { id, url, title, icon } ) => {
+			// Same path the in-shell link interceptor takes:
+			// consult the native-URL remap registry FIRST so a
+			// desktop shortcut whose target is an admin URL that
+			// a native window has claimed (`user-edit.php?user_id=N`
+			// → User Edit window, `users.php` → Users window,
+			// `edit.php` → Posts window, …) opens the native
+			// experience instead of an iframe of classic chrome.
+			// Without this, double-clicking a user shortcut on the
+			// desktop dropped users into the old `wp-admin` profile
+			// page even though everything else (admin-bar links,
+			// dock clicks, in-window anchors) routed natively.
+			if ( tryNativeUrlRemap( url ) ) {
+				return true;
+			}
+			return !! manager.open( { id, baseId: id, url, title, icon } );
+		},
 		openNativeWindow: ( id ) => nativeWindows.openById( id ),
 		deriveWindowId: ( url: string ) => deriveWindowId( url, config.adminUrl ),
 	} );

@@ -19,6 +19,7 @@
 
 import { __, sprintf } from '../i18n';
 import { trackedFetch } from '../tracked-fetch';
+import { applyAvatarSrc } from '../ui/util/avatar-resolve';
 import { showPostsIntroDialog } from './intro-dialog';
 // Side-effect import — registers `<wpd-user-profile>` so any
 // template in this bundle can drop the tag and get the full
@@ -124,6 +125,15 @@ function wpdConfirmGlobal( options: ConfirmOptions ): Promise< boolean > {
  * first-open dialog.
  */
 const _introShown: Record< string, boolean > = Object.create( null );
+
+// "Reset what's-new dialogs" in OS Settings dispatches this event
+// after the DELETE round-trip completes — clear the per-mode cache
+// so the next window-open re-fires the dialog without a page reload.
+document.addEventListener( 'desktop-mode-intros-reset', () => {
+	for ( const slug of Object.keys( _introShown ) ) {
+		_introShown[ slug ] = false;
+	}
+} );
 
 function maybeShowIntro(): void {
 	let cfg: ReturnType< typeof getConfig >;
@@ -1397,21 +1407,26 @@ function buildAuthorCell( row: PostListItem ): HTMLElement {
 	const wrap = document.createElement( 'span' );
 	wrap.style.cssText =
 		'display:inline-flex;align-items:center;gap:8px;min-width:0;';
-	if ( a.avatar ) {
-		const img = document.createElement( 'img' );
-		img.src = a.avatar;
-		img.alt = '';
-		// `eager` (not `lazy`) — the avatars are tiny (24px) and live
-		// above the fold for any visible row. Lazy adds a brief
-		// placeholder frame as the browser evaluates visibility,
-		// which read as the original "blink" the user reported on
-		// every selection-change repaint.
-		img.loading = 'eager';
-		img.decoding = 'sync';
-		img.style.cssText =
-			'width:24px;height:24px;border-radius:50%;flex-shrink:0;';
-		wrap.appendChild( img );
+
+	// `<wpd-avatar>` — the framework component: initials fallback,
+	// hue-by-name, the cursor-tracking 3D hover effect. We probe the
+	// Gravatar URL via the shared helper so emails with no registered
+	// avatar drop straight to initials instead of the mystery-person
+	// silhouette — and the console stays clean (the helper uses a
+	// canvas-alpha trick instead of provoking 404s).
+	const avatar = document.createElement( 'wpd-avatar' );
+	avatar.setAttribute( 'size', '24' );
+	if ( a.name ) {
+		avatar.setAttribute( 'name', a.name );
 	}
+	if ( a.id > 0 ) {
+		avatar.setAttribute( 'user-id', String( a.id ) );
+	}
+	if ( a.avatar ) {
+		applyAvatarSrc( avatar, a.avatar );
+	}
+	wrap.appendChild( avatar );
+
 	const name = document.createElement( 'span' );
 	name.textContent = a.name;
 	name.style.cssText =

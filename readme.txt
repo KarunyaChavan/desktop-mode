@@ -107,6 +107,25 @@ The plugin bundles the following third-party JavaScript library, loaded on deman
 
 == Changelog ==
 
+= 0.8.2 =
+* Many fixes and new features
+* Add unit test to ensure bridge script skips core AJAX update buttons
+* Native Plugins window + `<wpd-card>`
+* Appearance window polish + dock-peek fixes
+* Fix upload theme
+* Implement favicon resolver and associated tests for desktop mode
+* Auto-inject X-WP-Nonce for REST API requests
+* Enhance user management functionality in WordPress REST API
+* Fix user role updates
+* Fix plugin native issues
+* Enhance color scheme preview functionality by adding shell scheme flipping
+* Fix rearrange icons out of desktop
+* Open each post in its own window
+* Add item visibility and dock order settings
+* Add first-run welcome dialog for Desktop Mode
+* Fix dock management
+* Refetch desktop placements on Recycle Bin restore
+
 = 0.8.1 =
 * Framework rework and stability improvements — significant internals refactor, smoother window lifecycle, and more reliable bridging between iframe and native windows.
 * Drag and drop reworked end-to-end: calmer pointer behavior, more accurate hit-testing, and reliable handoff across windows.

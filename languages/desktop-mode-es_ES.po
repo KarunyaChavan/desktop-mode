@@ -4,7 +4,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Desktop Mode 0.4.0\n"
 "Report-Msgid-Bugs-To: https://wordpress.org/support/plugin/alcazaba-plugin\n"
-"POT-Creation-Date: 2026-05-11T17:48:31+00:00\n"
+"POT-Creation-Date: 2026-05-12T17:00:44+00:00\n"
 "PO-Revision-Date: 2026-04-19 20:42+0200\n"
 "Last-Translator: Desktop Mode team\n"
 "Language-Team: Español\n"
@@ -21,7 +21,7 @@ msgid ""
 "filled GitHub issue for you to review and submit."
 msgstr ""
 
-#: src/bug-report/index.ts:67 src/posts-window/index.ts:491
+#: src/bug-report/index.ts:67 src/posts-window/index.ts:494
 #: src/recycle-bin/index.ts:168
 msgid "Title"
 msgstr ""
@@ -79,6 +79,432 @@ msgstr ""
 msgid "Environment included with the report"
 msgstr ""
 
+#: src/comments-window/index.ts:195
+msgid "Akismet flagged this comment as spam."
+msgstr ""
+
+#: src/comments-window/index.ts:197
+msgid "Akismet cleared this comment."
+msgstr ""
+
+#: src/comments-window/index.ts:202
+msgid "AI: looks like promotional spam."
+msgstr ""
+
+#: src/comments-window/index.ts:205
+msgid "AI: hostile / abusive tone."
+msgstr ""
+
+#: src/comments-window/index.ts:208
+msgid "AI: looks safe."
+msgstr ""
+
+#. 1: spam score 0–100, 2: extra moderation notes.
+#: src/comments-window/index.ts:217
+msgid "Spam score: %1$d / 100. %2$s"
+msgstr ""
+
+#. %d: spam score 0–100.
+#: src/comments-window/index.ts:223
+msgid "Spam score: %d / 100."
+msgstr ""
+
+#: src/comments-window/index.ts:247
+msgid "Bold"
+msgstr ""
+
+#: src/comments-window/index.ts:248
+msgid "Italic"
+msgstr ""
+
+#: src/comments-window/index.ts:249
+msgid "Bulleted list"
+msgstr ""
+
+#: src/comments-window/index.ts:250
+msgid "Numbered list"
+msgstr ""
+
+#: src/comments-window/index.ts:269 src/comments-window/index.ts:270
+msgid "Wrap selection in a link"
+msgstr ""
+
+#: src/comments-window/index.ts:284
+msgid ""
+"Select a full URL (https://…) in your reply, then click the link button."
+msgstr ""
+
+#. %d: number of comments.
+#: src/comments-window/index.ts:578
+msgid "Approved %d."
+msgstr ""
+
+#. %d: number of comments.
+#: src/comments-window/index.ts:581
+msgid "Unapproved %d."
+msgstr ""
+
+#. %d: number of comments.
+#: src/comments-window/index.ts:584
+msgid "Marked %d as spam."
+msgstr ""
+
+#. %d: number of comments.
+#: src/comments-window/index.ts:587
+msgid "Un-spammed %d."
+msgstr ""
+
+#. %d: number of comments.
+#: src/comments-window/index.ts:590
+msgid "Trashed %d."
+msgstr ""
+
+#. %d: number of comments.
+#: src/comments-window/index.ts:593
+msgid "Restored %d."
+msgstr ""
+
+#: src/comments-window/index.ts:909
+#, fuzzy
+msgid "Search comments…"
+msgstr "Buscar medios"
+
+#: src/comments-window/index.ts:917 src/plugins-window/browse-view.ts:170
+#: src/plugins-window/installed-view.ts:192 includes/pages-window/window.php:46
+#: includes/posts-window/window.php:67 includes/recycle-bin/window.php:67
+#: includes/users-window/window.php:62
+msgid "Refresh"
+msgstr ""
+
+#: src/comments-window/index.ts:936
+msgid "No comments to moderate here."
+msgstr ""
+
+#: src/comments-window/index.ts:945 includes/pages-window/window.php:82
+#: includes/posts-window/window.php:103 includes/users-window/window.php:98
+msgid "Previous"
+msgstr ""
+
+#: src/comments-window/index.ts:948 includes/pages-window/window.php:85
+#: includes/posts-window/window.php:106 includes/users-window/window.php:101
+msgid "Next"
+msgstr ""
+
+#: src/comments-window/index.ts:952 includes/pages-window/window.php:89
+#: includes/posts-window/window.php:110 includes/users-window/window.php:105
+msgid "Per page"
+msgstr ""
+
+#: src/comments-window/index.ts:987 src/content-graph/panel.ts:427
+#: src/content-graph/panel.ts:568 src/content-graph/satellites.ts:313
+#: src/my-wordpress/index.ts:394 src/my-wordpress/index.ts:1297
+#: src/plugins-window/installed-view.ts:268 src/posts-window/index.ts:502
+msgid "Author"
+msgstr ""
+
+#: src/comments-window/index.ts:998
+msgid "Show author insights"
+msgstr ""
+
+#: src/comments-window/index.ts:1030 src/comments-window/index.ts:1354
+#: src/my-wordpress/index.ts:1814 src/my-wordpress/index.ts:1849
+#: src/my-wordpress/index.ts:1874 src/my-wordpress/index.ts:1974
+#: src/plugins-window/flyout-detail.ts:515
+#: includes/desktop-files/types/class-desktop-mode-comment-file.php:29
+#: includes/recycle-bin/store.php:459
+msgid "Anonymous"
+msgstr ""
+
+#: src/comments-window/index.ts:1044 src/content-graph/panel.ts:832
+#: src/content-graph/panel.ts:841 src/content-graph/panel.ts:870
+#: includes/desktop-files/built-in-types.php:51
+msgid "Comment"
+msgstr ""
+
+#. %d: number of direct replies.
+#: src/comments-window/index.ts:1060
+#, fuzzy
+msgid "+ %d replies"
+msgstr "Subpáginas de %s"
+
+#: src/comments-window/index.ts:1076
+msgid "In response to"
+msgstr ""
+
+#: src/comments-window/index.ts:1093 src/comments-window/index.ts:1183
+#: src/comments-window/index.ts:501 includes/comments-window/window.php:29
+msgid "Spam"
+msgstr ""
+
+#: src/comments-window/index.ts:1102
+msgid "Submitted on"
+msgstr ""
+
+#: src/comments-window/index.ts:1177
+msgid "Approve"
+msgstr ""
+
+#: src/comments-window/index.ts:1178
+msgid "Unapprove"
+msgstr ""
+
+#: src/comments-window/index.ts:1181
+msgid "Not spam"
+msgstr ""
+
+#: src/comments-window/index.ts:1186 src/recycle-bin/index.ts:258
+#: includes/recycle-bin/window.php:55
+msgid "Restore"
+msgstr ""
+
+#: src/comments-window/index.ts:1188 src/comments-window/index.ts:502
+#: src/posts-window/index.ts:239 src/posts-window/index.ts:1060
+#: includes/comments-window/window.php:30
+msgid "Trash"
+msgstr ""
+
+#. %d: count of selected rows.
+#. %d: number of selected plugins
+#. %d: selected row count.
+#. %d is a count of selected users.
+#: src/comments-window/index.ts:1212 src/plugins-window/installed-view.ts:512
+#: src/posts-window/index.ts:2394 src/posts-window/users-render.ts:960
+#: src/recycle-bin/index.ts:562
+msgid "%d selected"
+msgstr ""
+
+#. 1: current page, 2: total pages, 3: total rows.
+#: src/comments-window/index.ts:1297
+msgid "Page %1$d of %2$d (%3$d total)"
+msgstr ""
+
+#: src/comments-window/index.ts:1393
+msgid "Write a reply…"
+msgstr ""
+
+#: src/comments-window/index.ts:1400 src/comments-window/index.ts:1472
+#: src/my-wordpress/index.ts:3173 src/plugins-window/upload-dialog.ts:103
+#: src/posts-window/categories-mindmap.ts:2344
+#: src/posts-window/tags-cloud.ts:1522
+msgid "Cancel"
+msgstr ""
+
+#: src/comments-window/index.ts:1407
+msgid "Send reply"
+msgstr ""
+
+#: src/comments-window/index.ts:1411
+msgid "Reply is empty."
+msgstr ""
+
+#: src/comments-window/index.ts:1416
+msgid "Reply posted."
+msgstr ""
+
+#: src/comments-window/index.ts:1425
+#, fuzzy
+msgid "Reply failed."
+msgstr "Error al subir."
+
+#: src/comments-window/index.ts:1442
+#, fuzzy
+msgid "You can't edit this comment."
+msgstr ""
+"Lo sentimos, no tienes permiso para acceder al escritorio de WordPress."
+
+#: src/comments-window/index.ts:1454
+msgid "Edit comment…"
+msgstr ""
+
+#: src/comments-window/index.ts:1479
+#: src/posts-window/categories-mindmap.ts:2569
+#: src/posts-window/tags-cloud.ts:1718
+msgid "Save"
+msgstr ""
+
+#: src/comments-window/index.ts:1483
+msgid "Comment updated."
+msgstr ""
+
+#: src/comments-window/index.ts:1490
+#, fuzzy
+msgid "Edit failed."
+msgstr "Error al subir."
+
+#: src/comments-window/index.ts:410
+#, fuzzy
+msgid "Loading author insights…"
+msgstr "Subiendo…"
+
+#: src/comments-window/index.ts:450
+#, fuzzy
+msgid "Could not load insights."
+msgstr "No se pudieron cargar tus medios."
+
+#. %d: 0–100 reliability score.
+#: src/comments-window/index.ts:486
+msgid "Reliability: %d / 100"
+msgstr ""
+
+#: src/comments-window/index.ts:498
+msgid "Total comments"
+msgstr ""
+
+#: src/comments-window/index.ts:499
+msgid "Approved"
+msgstr ""
+
+#: src/comments-window/index.ts:500 src/posts-window/index.ts:237
+#: src/posts-window/index.ts:1058 includes/comments-window/window.php:27
+msgid "Pending"
+msgstr ""
+
+#: src/comments-window/index.ts:504
+msgid "First seen"
+msgstr ""
+
+#: src/comments-window/index.ts:508
+msgid "Last seen"
+msgstr ""
+
+#: src/comments-window/index.ts:524 src/window-chrome/controls/built-ins.ts:78
+#: includes/comments-window/window.php:74 includes/welcome-dialog.php:108
+msgid "Close"
+msgstr "Cerrar"
+
+#: src/comments-window/index.ts:604
+msgid "Comments window configuration missing."
+msgstr ""
+
+#: src/comments-window/index.ts:675 src/comments-window/index.ts:1277
+#, fuzzy
+msgid "Could not load comments."
+msgstr "No se pudieron cargar tus medios."
+
+#. %d: number of new pending comments.
+#: src/comments-window/index.ts:724
+msgid "%d new pending — reload"
+msgstr ""
+
+#: src/comments-window/index.ts:729 src/window/dom.ts:409
+msgid "Reload"
+msgstr ""
+
+#: src/comments-window/index.ts:1342
+#, fuzzy
+msgid "Could not load replies."
+msgstr "No se pudieron cargar tus medios."
+
+#: src/comments-window/index.ts:1525
+msgid "Undo"
+msgstr ""
+
+#. %s: bulk action name (e.g. "approve", "spam").
+#: src/comments-window/index.ts:1543
+#, fuzzy
+msgid "Bulk %s failed."
+msgstr "Error al subir."
+
+#: src/comments-window/index.ts:1559
+msgid "Undone."
+msgstr ""
+
+#: src/comments-window/index.ts:1563
+#, fuzzy
+msgid "Undo failed."
+msgstr "Error al subir."
+
+#: src/comments-window/intro-dialog.ts:26
+msgid "Triage in one place"
+msgstr ""
+
+#: src/comments-window/intro-dialog.ts:27
+msgid ""
+"Pending / All / Spam / Trash / Mine tabs — every status surface in a single "
+"window with live counts."
+msgstr ""
+
+#: src/comments-window/intro-dialog.ts:33
+msgid "Bulk moderation with undo"
+msgstr ""
+
+#: src/comments-window/intro-dialog.ts:34
+msgid ""
+"Multi-select and approve, spam, or trash dozens at once. Every action shows "
+"an 8-second undo toast."
+msgstr ""
+
+#: src/comments-window/intro-dialog.ts:40
+msgid "Inline reply"
+msgstr ""
+
+#: src/comments-window/intro-dialog.ts:41
+msgid ""
+"Reply right inside the row — no modal, no full-page navigation. Press R on "
+"any row to jump straight to the editor."
+msgstr ""
+
+#: src/comments-window/intro-dialog.ts:47
+msgid "Spam confidence score"
+msgstr ""
+
+#: src/comments-window/intro-dialog.ts:48
+msgid ""
+"Every comment gets a 0–100 score from Akismet + heuristics. Optionally turn "
+"on AI scoring in OS Settings → Features so each new comment is also scored "
+"by your configured AI provider on arrival."
+msgstr ""
+
+#: src/comments-window/intro-dialog.ts:54
+msgid "Author insights drawer"
+msgstr ""
+
+#: src/comments-window/intro-dialog.ts:55
+msgid ""
+"Click an avatar to see the author's full history — total comments, spam "
+"rate, first seen, and one-click block."
+msgstr ""
+
+#: src/comments-window/intro-dialog.ts:61
+#: includes/comments-window/window.php:61
+msgid "Keyboard moderation"
+msgstr ""
+
+#: src/comments-window/intro-dialog.ts:62
+msgid ""
+"J/K to navigate, A approve, S spam, D trash, R reply, E edit, U undo. "
+"Press ? any time for the cheat sheet."
+msgstr ""
+
+#: src/comments-window/intro-dialog.ts:83
+#, fuzzy
+msgid "Welcome to the new Comments"
+msgstr "Cambiar a modo escritorio"
+
+#: src/comments-window/intro-dialog.ts:88
+msgid ""
+"A moderation surface built around how you actually triage: bulk actions with "
+"undo, an inline reply editor, keyboard shortcuts, and a spam score that "
+"surfaces the obvious junk first."
+msgstr ""
+
+#: src/comments-window/intro-dialog.ts:114
+msgid ""
+"Prefer the classic Comments screen? You can switch back any time from OS "
+"Settings → Features."
+msgstr ""
+
+#: src/comments-window/intro-dialog.ts:124
+#: src/plugins-window/intro-dialog.ts:232 src/posts-window/intro-dialog.ts:536
+#: src/posts-window/pages-intro-dialog.ts:204
+#: src/posts-window/users-intro-dialog.ts:191
+msgid "Take me to settings"
+msgstr ""
+
+#: src/comments-window/intro-dialog.ts:128
+msgid "Let me moderate"
+msgstr ""
+
 #: src/content-graph/index.ts:53
 msgid "Content Graph container missing."
 msgstr ""
@@ -121,10 +547,11 @@ msgid "Contributors"
 msgstr ""
 
 #: src/content-graph/panel.ts:410 src/content-graph/panel.ts:711
-#: src/desktop-files/preview.ts:440 src/my-wordpress/index.ts:398
-#: src/my-wordpress/index.ts:2652 src/posts-window/index.ts:544
-#: src/posts-window/user-edit-render.ts:973
-#: src/posts-window/users-render.ts:480 includes/recycle-bin/window.php:43
+#: src/desktop-files/preview.ts:437 src/my-wordpress/index.ts:398
+#: src/my-wordpress/index.ts:2652 src/posts-window/index.ts:547
+#: src/posts-window/user-edit-render.ts:1029
+#: src/posts-window/users-render.ts:468 includes/comments-window/window.php:111
+#: includes/recycle-bin/window.php:43
 msgid "Comments"
 msgstr ""
 
@@ -143,15 +570,8 @@ msgstr ""
 msgid "Revisions"
 msgstr ""
 
-#: src/content-graph/panel.ts:427 src/content-graph/panel.ts:568
-#: src/content-graph/satellites.ts:313 src/my-wordpress/index.ts:394
-#: src/my-wordpress/index.ts:1297 src/plugins-window/installed-view.ts:217
-#: src/posts-window/index.ts:499
-msgid "Author"
-msgstr ""
-
 #: src/content-graph/panel.ts:451 src/posts-window/index.ts:234
-#: src/posts-window/index.ts:1052
+#: src/posts-window/index.ts:1056
 msgid "Published"
 msgstr ""
 
@@ -167,7 +587,7 @@ msgstr ""
 msgid "Edit"
 msgstr ""
 
-#: src/content-graph/panel.ts:545 src/posts-window/index.ts:1335
+#: src/content-graph/panel.ts:545 src/posts-window/index.ts:1339
 msgid "View"
 msgstr ""
 
@@ -179,27 +599,27 @@ msgstr ""
 msgid "Roles"
 msgstr ""
 
-#: src/content-graph/panel.ts:603 src/settings/index.ts:438
+#: src/content-graph/panel.ts:603 src/settings/index.ts:439
 msgid "About"
 msgstr ""
 
 #: src/content-graph/panel.ts:609 src/my-wordpress/index.ts:2095
-#: src/my-wordpress/index.ts:2398 src/posts-window/user-edit-render.ts:276
+#: src/my-wordpress/index.ts:2398 src/posts-window/user-edit-render.ts:301
 #: includes/users-window/window.php:159
 msgid "Website"
 msgstr ""
 
 #: src/content-graph/panel.ts:621 src/content-graph/panel.ts:709
-#: src/content-graph/panel.ts:723 src/desktop-files/preview.ts:359
-#: src/desktop-files/preview.ts:434 src/my-wordpress/index.ts:2233
-#: src/my-wordpress/index.ts:2639 src/posts-window/user-edit-render.ts:958
-#: src/posts-window/users-render.ts:477 includes/my-wordpress/window.php:73
+#: src/content-graph/panel.ts:723 src/desktop-files/preview.ts:356
+#: src/desktop-files/preview.ts:431 src/my-wordpress/index.ts:2233
+#: src/my-wordpress/index.ts:2639 src/posts-window/user-edit-render.ts:1014
+#: src/posts-window/users-render.ts:465 includes/my-wordpress/window.php:73
 #: includes/posts-window/window.php:177 includes/recycle-bin/window.php:40
 msgid "Posts"
 msgstr ""
 
-#: src/content-graph/panel.ts:622 src/desktop-files/preview.ts:365
-#: src/my-wordpress/index.ts:2246 src/posts-window/users-render.ts:478
+#: src/content-graph/panel.ts:622 src/desktop-files/preview.ts:362
+#: src/my-wordpress/index.ts:2246 src/posts-window/users-render.ts:466
 #: includes/my-wordpress/window.php:80 includes/pages-window/window.php:134
 #: includes/recycle-bin/window.php:41
 msgid "Pages"
@@ -209,7 +629,7 @@ msgstr ""
 msgid "CPT"
 msgstr ""
 
-#: src/content-graph/panel.ts:625 src/desktop-files/preview.ts:371
+#: src/content-graph/panel.ts:625 src/desktop-files/preview.ts:368
 #: src/my-wordpress/index.ts:2259
 msgid "Comments received"
 msgstr ""
@@ -236,18 +656,18 @@ msgstr ""
 msgid "Open in WordPress"
 msgstr ""
 
-#: src/content-graph/panel.ts:691 src/posts-window/index.ts:523
+#: src/content-graph/panel.ts:691 src/posts-window/index.ts:526
 msgid "Parent"
 msgstr ""
 
-#: src/content-graph/panel.ts:701 src/posts-window/categories-mindmap.ts:2327
-#: src/posts-window/categories-mindmap.ts:2513
-#: src/posts-window/tags-cloud.ts:1508 src/posts-window/tags-cloud.ts:1699
+#: src/content-graph/panel.ts:701 src/posts-window/categories-mindmap.ts:2322
+#: src/posts-window/categories-mindmap.ts:2508
+#: src/posts-window/tags-cloud.ts:1503 src/posts-window/tags-cloud.ts:1694
 #: src/settings/sections/help.ts:175
 msgid "Description"
 msgstr ""
 
-#: src/content-graph/panel.ts:715 src/desktop-files/preview.ts:446
+#: src/content-graph/panel.ts:715 src/desktop-files/preview.ts:443
 #: src/my-wordpress/index.ts:2659
 msgid "Authors"
 msgstr ""
@@ -276,13 +696,8 @@ msgstr ""
 msgid "—"
 msgstr ""
 
-#: src/content-graph/panel.ts:817 src/plugins-window/installed-view.ts:205
+#: src/content-graph/panel.ts:817 src/plugins-window/installed-view.ts:256
 msgid "Status"
-msgstr ""
-
-#: src/content-graph/panel.ts:832 src/content-graph/panel.ts:841
-#: src/content-graph/panel.ts:870 includes/desktop-files/built-in-types.php:51
-msgid "Comment"
 msgstr ""
 
 #: src/content-graph/panel.ts:912 src/content-graph/panel.ts:945
@@ -348,58 +763,58 @@ msgstr ""
 msgid "Breadcrumb"
 msgstr ""
 
-#: src/desktop-files/preview.ts:589
+#: src/desktop-files/preview.ts:586
 msgid "(folder)"
 msgstr ""
 
-#: src/desktop-files/preview.ts:593
+#: src/desktop-files/preview.ts:590
 msgid "Double-click to open."
 msgstr ""
 
-#: src/desktop-files/preview.ts:604
+#: src/desktop-files/preview.ts:601
 msgid "Shortcut"
 msgstr ""
 
-#: src/desktop-files/preview.ts:608
+#: src/desktop-files/preview.ts:605
 msgid "Plugin shortcut. Double-click to open."
 msgstr ""
 
-#: src/desktop-files/preview.ts:619
+#: src/desktop-files/preview.ts:616
 #: includes/desktop-files/built-in-types.php:57
 msgid "Bookmark"
 msgstr ""
 
 #. %s is a file-type slug.
-#: src/desktop-files/preview.ts:645
+#: src/desktop-files/preview.ts:642
 msgid "Type: %s"
 msgstr ""
 
-#: src/desktop-files/preview.ts:652
+#: src/desktop-files/preview.ts:649
 msgid "The underlying entity is no longer available."
 msgstr ""
 
-#: src/desktop-files/preview.ts:700 src/my-wordpress/index.ts:717
+#: src/desktop-files/preview.ts:697 src/my-wordpress/index.ts:717
 #: src/my-wordpress/index.ts:1083 src/my-wordpress/index.ts:1258
 #: src/my-wordpress/index.ts:1574 src/my-wordpress/index.ts:3404
 #: src/my-wordpress/index.ts:3183
 msgid "Unknown error."
 msgstr ""
 
-#: src/desktop-files/preview.ts:729 src/my-wordpress/index.ts:1525
+#: src/desktop-files/preview.ts:726 src/my-wordpress/index.ts:1525
 msgid "Select an item to preview it here."
 msgstr ""
 
-#: src/desktop-files/preview.ts:231 src/my-wordpress/index.ts:1140
+#: src/desktop-files/preview.ts:228 src/my-wordpress/index.ts:1140
 msgid "Explore details"
 msgstr ""
 
-#: src/desktop-files/preview.ts:232 src/my-wordpress/index.ts:1141
+#: src/desktop-files/preview.ts:229 src/my-wordpress/index.ts:1141
 msgid ""
 "See author, comments, categories, tags, attached media, and revisions for "
 "this entry."
 msgstr ""
 
-#: src/desktop-files/preview.ts:252 src/my-wordpress/index.ts:1153
+#: src/desktop-files/preview.ts:249 src/my-wordpress/index.ts:1153
 #: src/my-wordpress/index.ts:3066
 #, fuzzy
 msgid "Open in editor"
@@ -412,7 +827,7 @@ msgstr "Escritorio 1"
 
 #. %d is the number of pending items in a desktop-icon badge.
 #. %d is the number of pending items in a dock badge.
-#: src/desktop-icons.ts:392 src/dock.ts:1953 src/dock.ts:1966
+#: src/desktop-icons.ts:392 src/dock.ts:1971 src/dock.ts:1984
 msgid "%d notification"
 msgid_plural "%d notifications"
 msgstr[0] ""
@@ -537,12 +952,12 @@ msgstr "Azul WordPress"
 msgid "%s — activity footprint"
 msgstr ""
 
-#: src/my-wordpress/index.ts:400 src/posts-window/index.ts:571
+#: src/my-wordpress/index.ts:400 src/posts-window/index.ts:574
 #: includes/posts-window/window.php:34
 msgid "Categories"
 msgstr ""
 
-#: src/my-wordpress/index.ts:402 src/posts-window/index.ts:584
+#: src/my-wordpress/index.ts:402 src/posts-window/index.ts:587
 #: includes/posts-window/window.php:35
 msgid "Tags"
 msgstr ""
@@ -573,7 +988,7 @@ msgid "No %s yet."
 msgstr ""
 
 #: src/my-wordpress/index.ts:804 src/my-wordpress/index.ts:4620
-#: src/posts-window/index.ts:1187
+#: src/posts-window/index.ts:1191
 #: includes/desktop-files/types/class-desktop-mode-post-file.php:38
 #: includes/user-edit-window/rest.php:512
 #: includes/user-edit-window/rest.php:539
@@ -586,7 +1001,7 @@ msgid "%1$s — currently being edited by %2$s"
 msgstr ""
 
 #. %s is the user name currently editing the post.
-#: src/my-wordpress/index.ts:965 src/posts-window/index.ts:1257
+#: src/my-wordpress/index.ts:965 src/posts-window/index.ts:1261
 msgid "%s is currently editing"
 msgstr ""
 
@@ -653,14 +1068,6 @@ msgstr ""
 
 #: src/my-wordpress/index.ts:1694
 msgid "Nothing to show."
-msgstr ""
-
-#: src/my-wordpress/index.ts:1814 src/my-wordpress/index.ts:1849
-#: src/my-wordpress/index.ts:1874 src/my-wordpress/index.ts:1974
-#: src/plugins-window/flyout-detail.ts:515
-#: includes/desktop-files/types/class-desktop-mode-comment-file.php:29
-#: includes/recycle-bin/store.php:459
-msgid "Anonymous"
 msgstr ""
 
 #. %d is a comment count for a particular author.
@@ -933,7 +1340,7 @@ msgid_plural "%d posts published — their personal record."
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/my-wordpress/index.ts:4587 src/posts-window/user-edit-render.ts:810
+#: src/my-wordpress/index.ts:4587 src/posts-window/user-edit-render.ts:866
 msgid "Recent activity"
 msgstr ""
 
@@ -978,7 +1385,7 @@ msgid "%d published"
 msgstr ""
 
 #: src/my-wordpress/index.ts:2289 src/my-wordpress/index.ts:2725
-#: src/posts-window/user-edit-render.ts:1107
+#: src/posts-window/user-edit-render.ts:1163
 msgid "Recent posts"
 msgstr ""
 
@@ -1008,12 +1415,6 @@ msgstr "No se pudieron cargar tus medios."
 msgid "Move \"%s\" to Trash?"
 msgstr ""
 
-#: src/my-wordpress/index.ts:3173 src/plugins-window/upload-dialog.ts:103
-#: src/posts-window/categories-mindmap.ts:2349
-#: src/posts-window/tags-cloud.ts:1527
-msgid "Cancel"
-msgstr ""
-
 #: src/my-wordpress/index.ts:3732
 msgid "Open the full activity footprint surface for this user."
 msgstr ""
@@ -1022,88 +1423,88 @@ msgstr ""
 msgid "Open this user’s profile editor in a new window."
 msgstr ""
 
-#: src/plugins-window/browse-view.ts:98
+#: src/plugins-window/browse-view.ts:113
 msgid "Featured"
 msgstr ""
 
-#: src/plugins-window/browse-view.ts:99
+#: src/plugins-window/browse-view.ts:114
 msgid "Popular"
 msgstr ""
 
-#: src/plugins-window/browse-view.ts:100
+#: src/plugins-window/browse-view.ts:115
 msgid "Recommended"
 msgstr ""
 
-#: src/plugins-window/browse-view.ts:101
+#: src/plugins-window/browse-view.ts:116
 msgid "Favorites"
 msgstr ""
 
-#: src/plugins-window/browse-view.ts:102
+#: src/plugins-window/browse-view.ts:117
 #, fuzzy
 msgid "New"
 msgstr "Añadir %s"
 
-#: src/plugins-window/browse-view.ts:103
+#: src/plugins-window/browse-view.ts:118
 msgid "Beta"
 msgstr ""
 
-#: src/plugins-window/browse-view.ts:118
+#: src/plugins-window/browse-view.ts:133
 msgid "Search WordPress.org…"
 msgstr ""
 
-#: src/plugins-window/browse-view.ts:139
+#: src/plugins-window/browse-view.ts:154
 #, fuzzy
 msgid "Upload Plugin"
 msgstr "Subir nueva"
 
-#: src/plugins-window/browse-view.ts:178
+#: src/plugins-window/browse-view.ts:209
 msgid "Drop the .zip to install."
 msgstr ""
 
-#: src/plugins-window/browse-view.ts:297
+#: src/plugins-window/browse-view.ts:348
 #: src/plugins-window/flyout-detail.ts:616
 #, fuzzy
 msgid "Installing…"
 msgstr "Subiendo…"
 
 #. %s: plugin name
-#: src/plugins-window/browse-view.ts:314
+#: src/plugins-window/browse-view.ts:365
 #: src/plugins-window/flyout-detail.ts:622
 msgid "Installed %s."
 msgstr ""
 
 #. %s: error message
-#: src/plugins-window/browse-view.ts:329
+#: src/plugins-window/browse-view.ts:385
 #: src/plugins-window/flyout-detail.ts:642
 msgid "Install failed: %s"
 msgstr ""
 
-#: src/plugins-window/browse-view.ts:342
+#: src/plugins-window/browse-view.ts:398
 #, fuzzy
 msgid "Activating…"
 msgstr "Subiendo…"
 
 #. %s: plugin name
-#: src/plugins-window/browse-view.ts:350
+#: src/plugins-window/browse-view.ts:406
 #: src/plugins-window/flyout-detail.ts:660
-#: src/plugins-window/installed-view.ts:528
+#: src/plugins-window/installed-view.ts:663
 msgid "%s activated."
 msgstr ""
 
 #. %s: error message
-#: src/plugins-window/browse-view.ts:372
+#: src/plugins-window/browse-view.ts:433
 #: src/plugins-window/flyout-detail.ts:672
-#: src/plugins-window/installed-view.ts:541
+#: src/plugins-window/installed-view.ts:681
 msgid "Activation failed: %s"
 msgstr ""
 
-#: src/plugins-window/browse-view.ts:500
+#: src/plugins-window/browse-view.ts:561
 msgid "No plugins matched."
 msgstr ""
 
 #. %s: error message
-#: src/plugins-window/browse-view.ts:532
-#: src/plugins-window/installed-view.ts:472
+#: src/plugins-window/browse-view.ts:593
+#: src/plugins-window/installed-view.ts:584
 #, fuzzy
 msgid "Could not load plugins: %s"
 msgstr "No se pudieron cargar tus medios."
@@ -1125,14 +1526,14 @@ msgstr ""
 msgid "by %s"
 msgstr ""
 
-#: src/plugins-window/card.ts:175 src/plugins-window/installed-view.ts:97
-#: src/plugins-window/installed-view.ts:321
+#: src/plugins-window/card.ts:175 src/plugins-window/installed-view.ts:127
+#: src/plugins-window/installed-view.ts:372
 msgid "Active"
 msgstr ""
 
 #: src/plugins-window/card.ts:178 src/plugins-window/flyout-detail.ts:588
-#: src/plugins-window/installed-view.ts:375
-#: src/plugins-window/installed-view.ts:433
+#: src/plugins-window/installed-view.ts:465
+#: src/plugins-window/installed-view.ts:545
 msgid "Activate"
 msgstr ""
 
@@ -1246,69 +1647,69 @@ msgid "View on WordPress.org ↗"
 msgstr ""
 
 #: src/plugins-window/flyout-detail.ts:582
-#: src/plugins-window/installed-view.ts:382
-#: src/plugins-window/installed-view.ts:443
+#: src/plugins-window/installed-view.ts:472
+#: src/plugins-window/installed-view.ts:555
 msgid "Deactivate"
 msgstr ""
 
 #: src/plugins-window/flyout-detail.ts:596
 #: src/plugins-window/flyout-detail.ts:733
-#: src/plugins-window/installed-view.ts:391
-#: src/plugins-window/installed-view.ts:454
-#: src/plugins-window/installed-view.ts:603
-#: src/plugins-window/installed-view.ts:664
-#: src/posts-window/categories-mindmap.ts:2629
-#: src/posts-window/categories-mindmap.ts:2638 src/posts-window/index.ts:1872
-#: src/posts-window/tags-cloud.ts:1776 src/posts-window/tags-cloud.ts:1785
+#: src/plugins-window/installed-view.ts:481
+#: src/plugins-window/installed-view.ts:566
+#: src/plugins-window/installed-view.ts:748
+#: src/plugins-window/installed-view.ts:871
+#: src/posts-window/categories-mindmap.ts:2624
+#: src/posts-window/categories-mindmap.ts:2633 src/posts-window/index.ts:1881
+#: src/posts-window/tags-cloud.ts:1771 src/posts-window/tags-cloud.ts:1780
 msgid "Delete"
 msgstr ""
 
 #: src/plugins-window/flyout-detail.ts:689
-#: src/plugins-window/installed-view.ts:562
-#: src/plugins-window/installed-view.ts:703
+#: src/plugins-window/installed-view.ts:702
+#: src/plugins-window/installed-view.ts:934
 msgid "Desktop Mode deactivated. Reloading…"
 msgstr ""
 
 #. %s: plugin name
 #: src/plugins-window/flyout-detail.ts:701
-#: src/plugins-window/installed-view.ts:574
+#: src/plugins-window/installed-view.ts:714
 msgid "%s deactivated."
 msgstr ""
 
 #. %s: error message
 #: src/plugins-window/flyout-detail.ts:711
-#: src/plugins-window/installed-view.ts:584
+#: src/plugins-window/installed-view.ts:729
 msgid "Deactivation failed: %s"
 msgstr ""
 
 #: src/plugins-window/flyout-detail.ts:724
-#: src/plugins-window/installed-view.ts:594
+#: src/plugins-window/installed-view.ts:739
 msgid "Delete plugin?"
 msgstr ""
 
 #. %s: plugin name
 #: src/plugins-window/flyout-detail.ts:727
-#: src/plugins-window/installed-view.ts:597
+#: src/plugins-window/installed-view.ts:742
 msgid ""
 "Permanently delete %s? Its files will be removed from disk. This cannot be "
 "undone."
 msgstr ""
 
 #: src/plugins-window/flyout-detail.ts:744
-#: src/plugins-window/installed-view.ts:617
-#: src/plugins-window/installed-view.ts:702
+#: src/plugins-window/installed-view.ts:762
+#: src/plugins-window/installed-view.ts:933
 msgid "Desktop Mode deleted. Reloading…"
 msgstr ""
 
 #. %s: plugin name
 #: src/plugins-window/flyout-detail.ts:756
-#: src/plugins-window/installed-view.ts:629
+#: src/plugins-window/installed-view.ts:774
 msgid "%s deleted."
 msgstr ""
 
 #. %s: error message
 #: src/plugins-window/flyout-detail.ts:766
-#: src/plugins-window/installed-view.ts:638
+#: src/plugins-window/installed-view.ts:788
 #, fuzzy
 msgid "Delete failed: %s"
 msgstr "Error al subir."
@@ -1321,103 +1722,133 @@ msgstr ""
 msgid "You do not have permission to manage plugins."
 msgstr ""
 
-#: src/plugins-window/installed-view.ts:96 src/posts-window/index.ts:1051
-#: src/posts-window/users-render.ts:776 includes/recycle-bin/window.php:39
+#: src/plugins-window/installed-view.ts:126 src/posts-window/index.ts:1055
+#: src/posts-window/users-render.ts:767 includes/comments-window/window.php:28
+#: includes/recycle-bin/window.php:39
 msgid "All"
 msgstr ""
 
-#: src/plugins-window/installed-view.ts:98
-#: src/plugins-window/installed-view.ts:322
+#: src/plugins-window/installed-view.ts:128
+#: src/plugins-window/installed-view.ts:373
 msgid "Inactive"
 msgstr ""
 
-#: src/plugins-window/installed-view.ts:99
+#: src/plugins-window/installed-view.ts:129
 msgid "Update available"
 msgstr ""
 
-#: src/plugins-window/installed-view.ts:116
+#: src/plugins-window/installed-view.ts:167
 msgid "Search installed plugins…"
 msgstr ""
 
-#: src/plugins-window/installed-view.ts:141 includes/pages-window/window.php:46
-#: includes/posts-window/window.php:67 includes/recycle-bin/window.php:67
-#: includes/users-window/window.php:62
-msgid "Refresh"
-msgstr ""
-
-#: src/plugins-window/installed-view.ts:169
+#: src/plugins-window/installed-view.ts:220
 msgid "No plugins match your filters."
 msgstr ""
 
-#: src/plugins-window/installed-view.ts:198
+#: src/plugins-window/installed-view.ts:249
 msgid "Plugin"
 msgstr ""
 
-#: src/plugins-window/installed-view.ts:211 src/settings/sections/about.ts:109
+#: src/plugins-window/installed-view.ts:262 src/settings/sections/about.ts:109
 msgid "Version"
 msgstr ""
 
-#: src/plugins-window/installed-view.ts:222
+#: src/plugins-window/installed-view.ts:273
 msgid "Size"
 msgstr ""
 
 #. %s: new plugin version
-#: src/plugins-window/installed-view.ts:342
+#: src/plugins-window/installed-view.ts:393
 msgid "→ %s"
 msgstr ""
 
-#: src/plugins-window/installed-view.ts:355 src/posts-window/index.ts:298
+#: src/plugins-window/installed-view.ts:406 src/posts-window/index.ts:298
 msgid "Unknown"
 msgstr ""
 
-#. %d: number of selected plugins
-#. %d: selected row count.
-#. %d is a count of selected users.
-#: src/plugins-window/installed-view.ts:422 src/posts-window/index.ts:2382
-#: src/posts-window/users-render.ts:966 src/recycle-bin/index.ts:562
-msgid "%d selected"
+#: src/plugins-window/installed-view.ts:435
+#, fuzzy
+msgid "Updating…"
+msgstr "Subiendo…"
+
+#. %s: new plugin version (e.g. "1.4.2")
+#: src/plugins-window/installed-view.ts:438
+#, fuzzy
+msgid "Update to %s"
+msgstr "Añadir %s"
+
+#: src/plugins-window/installed-view.ts:455
+msgid "Auto-update unavailable"
 msgstr ""
 
-#: src/plugins-window/installed-view.ts:655
+#: src/plugins-window/installed-view.ts:456
+msgid ""
+"This plugin does not ship a wp.org download package. Update it manually from "
+"its source."
+msgstr ""
+
+#. %d: number of plugins with pending updates
+#: src/plugins-window/installed-view.ts:530
+#, fuzzy
+msgid "Update %d"
+msgstr "Añadir %s"
+
+#. 1: plugin name, 2: new version
+#: src/plugins-window/installed-view.ts:826
+msgid "%1$s updated to %2$s."
+msgstr ""
+
+#. 1: plugin name, 2: error message
+#: src/plugins-window/installed-view.ts:841
+#, fuzzy
+msgid "Update of %1$s failed: %2$s"
+msgstr "Error al subir."
+
+#: src/plugins-window/installed-view.ts:862
 msgid "Delete selected plugins?"
 msgstr ""
 
 #. %d: number of plugins
-#: src/plugins-window/installed-view.ts:658
+#: src/plugins-window/installed-view.ts:865
 msgid ""
 "Permanently delete %d plugin(s)? Their files will be removed from disk. This "
 "cannot be undone."
 msgstr ""
 
-#: src/plugins-window/installed-view.ts:712
+#: src/plugins-window/installed-view.ts:949
 msgid "deleted"
 msgstr ""
 
-#: src/plugins-window/installed-view.ts:714
+#: src/plugins-window/installed-view.ts:951
 msgid "activated"
 msgstr ""
 
-#: src/plugins-window/installed-view.ts:716
+#: src/plugins-window/installed-view.ts:953
+#, fuzzy
+msgid "updated"
+msgstr "%d actualización"
+
+#: src/plugins-window/installed-view.ts:955
 msgid "deactivated"
 msgstr ""
 
 #. 1: count, 2: action verb (activated, deactivated, deleted)
-#: src/plugins-window/installed-view.ts:722
+#: src/plugins-window/installed-view.ts:961
 msgid "%1$d plugin(s) %2$s."
 msgstr ""
 
 #. 1: success count, 2: failure count, 3: action verb
-#: src/plugins-window/installed-view.ts:728
+#: src/plugins-window/installed-view.ts:967
 msgid "%1$d %3$s, %2$d failed."
 msgstr ""
 
 #. %d: size in kilobytes
-#: src/plugins-window/installed-view.ts:767
+#: src/plugins-window/installed-view.ts:1022
 msgid "%d KB"
 msgstr ""
 
 #. %s: size in megabytes (one decimal)
-#: src/plugins-window/installed-view.ts:774
+#: src/plugins-window/installed-view.ts:1029
 msgid "%s MB"
 msgstr ""
 
@@ -1469,12 +1900,6 @@ msgid ""
 "Per-row capability flags so the UI hides actions you can't perform — and the "
 "server re-validates every mutation, so flags can't be tampered into more "
 "permissions."
-msgstr ""
-
-#: src/plugins-window/intro-dialog.ts:232 src/posts-window/intro-dialog.ts:536
-#: src/posts-window/pages-intro-dialog.ts:204
-#: src/posts-window/users-intro-dialog.ts:191
-msgid "Take me to settings"
 msgstr ""
 
 #: src/plugins-window/intro-dialog.ts:235 src/posts-window/intro-dialog.ts:540
@@ -1531,154 +1956,149 @@ msgstr ""
 msgid "Upload failed: %s"
 msgstr "Error al subir."
 
-#: src/posts-window/categories-mindmap.ts:198
+#: src/posts-window/categories-mindmap.ts:193
 msgid "Mindmap unavailable: shell modules API missing."
 msgstr ""
 
+#: src/posts-window/categories-mindmap.ts:199
 #: src/posts-window/categories-mindmap.ts:204
-#: src/posts-window/categories-mindmap.ts:209
 msgid "Mindmap unavailable."
 msgstr ""
 
-#: src/posts-window/categories-mindmap.ts:229
+#: src/posts-window/categories-mindmap.ts:224
 msgid "Add root category"
 msgstr ""
 
-#: src/posts-window/categories-mindmap.ts:235
-#: src/posts-window/tags-cloud.ts:256
+#: src/posts-window/categories-mindmap.ts:230
+#: src/posts-window/tags-cloud.ts:251
 msgid "Recenter"
 msgstr ""
 
-#: src/posts-window/categories-mindmap.ts:238
+#: src/posts-window/categories-mindmap.ts:233
 msgid ""
 "Click a node to focus + edit · drag onto another to reparent · wheel to zoom"
 msgstr ""
 
-#: src/posts-window/categories-mindmap.ts:489
+#: src/posts-window/categories-mindmap.ts:484
 #, fuzzy
 msgid "Couldn’t load categories:"
 msgstr "No se pudieron cargar tus medios."
 
-#: src/posts-window/categories-mindmap.ts:524
+#: src/posts-window/categories-mindmap.ts:519
 msgid ""
 "No custom categories yet. Click \"Add root category\" to start branching."
 msgstr ""
 
 #. %s: parent category name.
-#: src/posts-window/categories-mindmap.ts:2283
+#: src/posts-window/categories-mindmap.ts:2278
 msgid "New child of %s"
 msgstr ""
 
-#: src/posts-window/categories-mindmap.ts:2286
+#: src/posts-window/categories-mindmap.ts:2281
 msgid "New root category"
 msgstr ""
 
-#: src/posts-window/categories-mindmap.ts:2293
-#: src/posts-window/categories-mindmap.ts:2474
-#: src/posts-window/categories-mindmap.ts:2480
-#: src/posts-window/tags-cloud.ts:1497 src/posts-window/tags-cloud.ts:1666
-#: src/posts-window/tags-cloud.ts:1672 src/posts-window/users-render.ts:685
+#: src/posts-window/categories-mindmap.ts:2288
+#: src/posts-window/categories-mindmap.ts:2469
+#: src/posts-window/categories-mindmap.ts:2475
+#: src/posts-window/tags-cloud.ts:1492 src/posts-window/tags-cloud.ts:1661
+#: src/posts-window/tags-cloud.ts:1667 src/posts-window/users-render.ts:680
 #: src/settings/sections/help.ts:172
 msgid "Name"
 msgstr ""
 
-#: src/posts-window/categories-mindmap.ts:2298
+#: src/posts-window/categories-mindmap.ts:2293
 msgid "e.g. Recipes"
 msgstr ""
 
-#: src/posts-window/categories-mindmap.ts:2306
-#: src/posts-window/categories-mindmap.ts:2485 src/posts-window/index.ts:537
-#: src/posts-window/tags-cloud.ts:1677
+#: src/posts-window/categories-mindmap.ts:2301
+#: src/posts-window/categories-mindmap.ts:2480 src/posts-window/index.ts:540
+#: src/posts-window/tags-cloud.ts:1672
 msgid "Slug"
 msgstr ""
 
-#: src/posts-window/categories-mindmap.ts:2311
-#: src/posts-window/categories-mindmap.ts:2491
-#: src/posts-window/tags-cloud.ts:1683
+#: src/posts-window/categories-mindmap.ts:2306
+#: src/posts-window/categories-mindmap.ts:2486
+#: src/posts-window/tags-cloud.ts:1678
 msgid "auto-from-name"
 msgstr ""
 
-#: src/posts-window/categories-mindmap.ts:2331
-#: src/posts-window/categories-mindmap.ts:2518
-#: src/posts-window/tags-cloud.ts:1512 src/posts-window/tags-cloud.ts:1704
+#: src/posts-window/categories-mindmap.ts:2326
+#: src/posts-window/categories-mindmap.ts:2513
+#: src/posts-window/tags-cloud.ts:1507 src/posts-window/tags-cloud.ts:1699
 msgid "Description (optional)"
 msgstr ""
 
-#: src/posts-window/categories-mindmap.ts:2341
-#: src/posts-window/tags-cloud.ts:1522
-#: src/posts-window/user-edit-render.ts:1833
+#: src/posts-window/categories-mindmap.ts:2336
+#: src/posts-window/tags-cloud.ts:1517
+#: src/posts-window/user-edit-render.ts:1884
 msgid "Create"
 msgstr ""
 
-#: src/posts-window/categories-mindmap.ts:2390
-#: src/posts-window/tags-cloud.ts:1591
+#: src/posts-window/categories-mindmap.ts:2385
+#: src/posts-window/tags-cloud.ts:1586
 #, fuzzy
 msgid "Couldn’t create:"
 msgstr "No se pudieron cargar tus medios: %s"
 
-#: src/posts-window/categories-mindmap.ts:2439
+#: src/posts-window/categories-mindmap.ts:2434
 msgid "No category selected"
 msgstr ""
 
-#: src/posts-window/categories-mindmap.ts:2442
+#: src/posts-window/categories-mindmap.ts:2437
 msgid "Click a node on the mindmap to edit its name, description, and posts."
 msgstr ""
 
 #. %d: post count.
-#: src/posts-window/categories-mindmap.ts:2526
+#: src/posts-window/categories-mindmap.ts:2521
 msgid "%d posts in this category."
 msgstr ""
 
-#: src/posts-window/categories-mindmap.ts:2537
+#: src/posts-window/categories-mindmap.ts:2532
 msgid "+ Child"
 msgstr ""
 
-#: src/posts-window/categories-mindmap.ts:2552
+#: src/posts-window/categories-mindmap.ts:2547
 msgid "Make root"
 msgstr ""
 
-#: src/posts-window/categories-mindmap.ts:2553
+#: src/posts-window/categories-mindmap.ts:2548
 msgid "Promote this category to a top-level root (no parent)."
 msgstr ""
 
-#: src/posts-window/categories-mindmap.ts:2566
+#: src/posts-window/categories-mindmap.ts:2561
 #, fuzzy
 msgid "Couldn’t reparent:"
 msgstr "No se pudieron cargar tus medios: %s"
 
-#: src/posts-window/categories-mindmap.ts:2574
-#: src/posts-window/tags-cloud.ts:1723
-msgid "Save"
-msgstr ""
-
-#: src/posts-window/categories-mindmap.ts:2622
-#: src/posts-window/tags-cloud.ts:1769
+#: src/posts-window/categories-mindmap.ts:2617
+#: src/posts-window/tags-cloud.ts:1764
 #, fuzzy
 msgid "Couldn’t save:"
 msgstr "No se pudieron cargar tus medios: %s"
 
-#: src/posts-window/categories-mindmap.ts:2632
-#: src/posts-window/tags-cloud.ts:1779
+#: src/posts-window/categories-mindmap.ts:2627
+#: src/posts-window/tags-cloud.ts:1774
 msgid "Click again to delete"
 msgstr ""
 
-#: src/posts-window/categories-mindmap.ts:2660
-#: src/posts-window/tags-cloud.ts:1809
+#: src/posts-window/categories-mindmap.ts:2655
+#: src/posts-window/tags-cloud.ts:1804
 msgid "Couldn’t delete:"
 msgstr ""
 
-#: src/posts-window/categories-mindmap.ts:1558
+#: src/posts-window/categories-mindmap.ts:1553
 #, fuzzy
 msgid "Reparent failed:"
 msgstr "Error al subir."
 
-#: src/posts-window/categories-mindmap.ts:2098
-#: src/posts-window/tags-cloud.ts:1329
+#: src/posts-window/categories-mindmap.ts:2093
+#: src/posts-window/tags-cloud.ts:1324
 #, fuzzy
 msgid "Couldn’t load posts:"
 msgstr "No se pudieron cargar tus medios."
 
-#: src/posts-window/index.ts:235 src/posts-window/index.ts:1055
+#: src/posts-window/index.ts:235 src/posts-window/index.ts:1059
 msgid "Scheduled"
 msgstr ""
 
@@ -1686,181 +2106,173 @@ msgstr ""
 msgid "Draft"
 msgstr ""
 
-#: src/posts-window/index.ts:237 src/posts-window/index.ts:1054
-msgid "Pending"
-msgstr ""
-
 #: src/posts-window/index.ts:238
 msgid "Private"
 msgstr ""
 
-#: src/posts-window/index.ts:239 src/posts-window/index.ts:1056
-msgid "Trash"
-msgstr ""
-
-#: src/posts-window/index.ts:504
+#: src/posts-window/index.ts:507
 msgid "All authors"
 msgstr ""
 
-#: src/posts-window/index.ts:505
+#: src/posts-window/index.ts:508
 msgid "Filter by author"
 msgstr ""
 
-#: src/posts-window/index.ts:512
+#: src/posts-window/index.ts:515
 msgid "Date"
 msgstr ""
 
-#: src/posts-window/index.ts:530
+#: src/posts-window/index.ts:533
 msgid "Template"
 msgstr ""
 
-#: src/posts-window/index.ts:592
+#: src/posts-window/index.ts:595
 msgid "All tags"
 msgstr ""
 
-#: src/posts-window/index.ts:593
+#: src/posts-window/index.ts:596
 msgid "Filter by tag"
 msgstr ""
 
-#: src/posts-window/index.ts:632
+#: src/posts-window/index.ts:635
 msgid "Top-level page"
 msgstr ""
 
 #. %d is the numeric id of a parent page whose title isn't on the current page roster.
-#: src/posts-window/index.ts:641
+#: src/posts-window/index.ts:644
 msgid "↳ #%d"
 msgstr ""
 
-#: src/posts-window/index.ts:679 src/posts-window/index.ts:681
+#: src/posts-window/index.ts:682 src/posts-window/index.ts:684
 #: includes/pages-window/window.php:249
 #, fuzzy
 msgid "Default template"
 msgstr "Predeterminada"
 
-#: src/posts-window/index.ts:705
+#: src/posts-window/index.ts:708
 msgid "Click to copy slug"
 msgstr ""
 
-#: src/posts-window/index.ts:732 src/posts-window/users-render.ts:389
+#: src/posts-window/index.ts:735 src/posts-window/users-render.ts:379
 msgid "Copied!"
 msgstr ""
 
-#: src/posts-window/index.ts:799
+#: src/posts-window/index.ts:802
 msgid "%d comments"
 msgstr ""
 
-#: src/posts-window/index.ts:971
+#: src/posts-window/index.ts:975
 msgid "Show columns"
 msgstr ""
 
-#: src/posts-window/index.ts:1053
+#: src/posts-window/index.ts:1057
 msgid "Drafts"
 msgstr ""
 
-#: src/posts-window/index.ts:1071
+#: src/posts-window/index.ts:1075 includes/comments-window/window.php:67
 msgid "Move to trash"
 msgstr ""
 
 #. %d: row count.
-#: src/posts-window/index.ts:1075
+#: src/posts-window/index.ts:1079
 msgid "Move %d post(s) to the trash?"
 msgstr ""
 
-#: src/posts-window/index.ts:1279
+#: src/posts-window/index.ts:1283
 msgid "Front page"
 msgstr ""
 
-#: src/posts-window/index.ts:1292
+#: src/posts-window/index.ts:1296
 msgid "Posts page"
 msgstr ""
 
-#: src/posts-window/index.ts:1453
+#: src/posts-window/index.ts:1462
 msgid "Add tag…"
 msgstr ""
 
-#: src/posts-window/index.ts:1454
+#: src/posts-window/index.ts:1463
 msgid "Tag"
 msgstr ""
 
 #. %s: tag label
-#: src/posts-window/index.ts:1601
+#: src/posts-window/index.ts:1610
 #, fuzzy
 msgid "Couldn’t add tag \"%s\"."
 msgstr "No se pudieron cargar tus medios: %s"
 
 #. %s: tag label
-#: src/posts-window/index.ts:1646
+#: src/posts-window/index.ts:1655
 #, fuzzy
 msgid "Couldn’t remove tag \"%s\"."
 msgstr "No se pudieron cargar tus medios: %s"
 
-#: src/posts-window/index.ts:1700
+#: src/posts-window/index.ts:1709
 msgid "Search categories…"
 msgstr ""
 
-#: src/posts-window/index.ts:1701
+#: src/posts-window/index.ts:1710
 msgid "Categorize"
 msgstr ""
 
-#: src/posts-window/index.ts:1807
+#: src/posts-window/index.ts:1816
 msgid "Couldn’t assign new category."
 msgstr ""
 
-#: src/posts-window/index.ts:1814
+#: src/posts-window/index.ts:1823
 msgid "Couldn’t create category."
 msgstr ""
 
-#: src/posts-window/index.ts:1842
+#: src/posts-window/index.ts:1851
 #, fuzzy
 msgid "Couldn’t update categories."
 msgstr "No se pudieron cargar tus medios."
 
-#: src/posts-window/index.ts:1864
+#: src/posts-window/index.ts:1873
 msgid "Delete category?"
 msgstr ""
 
 #. %s: category name.
-#: src/posts-window/index.ts:1867
+#: src/posts-window/index.ts:1876
 msgid ""
 "Delete the category \"%s\"? Posts assigned only to it will fall back to "
 "Uncategorized."
 msgstr ""
 
-#: src/posts-window/index.ts:1896
+#: src/posts-window/index.ts:1905
 msgid "Couldn’t update post categories after delete."
 msgstr ""
 
-#: src/posts-window/index.ts:1902
+#: src/posts-window/index.ts:1911
 msgid "Couldn’t delete category."
 msgstr ""
 
-#: src/posts-window/index.ts:2055
+#: src/posts-window/index.ts:2064
 #, fuzzy
 msgid "Couldn’t add category."
 msgstr "No se pudieron cargar tus medios."
 
-#: src/posts-window/index.ts:2157
+#: src/posts-window/index.ts:2166
 msgid "modified"
 msgstr ""
 
-#: src/posts-window/index.ts:2187
+#: src/posts-window/index.ts:2196
 msgid "Excerpt"
 msgstr ""
 
-#: src/posts-window/index.ts:2198 src/posts-window/index.ts:2200
+#: src/posts-window/index.ts:2207 src/posts-window/index.ts:2209
 msgid "(no excerpt)"
 msgstr ""
 
-#: src/posts-window/index.ts:2351
+#: src/posts-window/index.ts:2363
 msgid "No posts"
 msgstr ""
 
 #. 1: current page, 2: total pages, 3: total posts.
-#: src/posts-window/index.ts:2355
+#: src/posts-window/index.ts:2367
 msgid "Page %1$d of %2$d · %3$d posts"
 msgstr ""
 
-#: src/posts-window/index.ts:2533
+#: src/posts-window/index.ts:2545
 #, fuzzy
 msgid "Add New Post"
 msgstr "Añadir nuevo escritorio"
@@ -2192,450 +2604,450 @@ msgid ""
 "actions, inline search, status segments. All in one screen, no reloads."
 msgstr ""
 
-#: src/posts-window/tags-cloud.ts:223
+#: src/posts-window/tags-cloud.ts:218
 msgid "Tag cloud unavailable: shell modules API missing."
 msgstr ""
 
-#: src/posts-window/tags-cloud.ts:229 src/posts-window/tags-cloud.ts:234
+#: src/posts-window/tags-cloud.ts:224 src/posts-window/tags-cloud.ts:229
 msgid "Tag cloud unavailable."
 msgstr ""
 
-#: src/posts-window/tags-cloud.ts:250
+#: src/posts-window/tags-cloud.ts:245
 #, fuzzy
 msgid "Add tag"
 msgstr "Añadir %s"
 
-#: src/posts-window/tags-cloud.ts:262
+#: src/posts-window/tags-cloud.ts:257
 msgid "Reflow"
 msgstr ""
 
-#: src/posts-window/tags-cloud.ts:263
+#: src/posts-window/tags-cloud.ts:258
 msgid "Recompute the chip layout from scratch — discards manual repositioning."
 msgstr ""
 
-#: src/posts-window/tags-cloud.ts:268
+#: src/posts-window/tags-cloud.ts:263
 msgid "Click a tag to focus + edit · drag to reposition · wheel to zoom"
 msgstr ""
 
-#: src/posts-window/tags-cloud.ts:436
+#: src/posts-window/tags-cloud.ts:431
 #, fuzzy
 msgid "Couldn’t load tags:"
 msgstr "No se pudieron cargar tus medios."
 
-#: src/posts-window/tags-cloud.ts:1490
+#: src/posts-window/tags-cloud.ts:1485
 msgid "New tag"
 msgstr ""
 
-#: src/posts-window/tags-cloud.ts:1502
+#: src/posts-window/tags-cloud.ts:1497
 msgid "e.g. featured"
 msgstr ""
 
-#: src/posts-window/tags-cloud.ts:1579
+#: src/posts-window/tags-cloud.ts:1574
 msgid "Tag created but description failed:"
 msgstr ""
 
-#: src/posts-window/tags-cloud.ts:1632
+#: src/posts-window/tags-cloud.ts:1627
 msgid "No tag selected"
 msgstr ""
 
-#: src/posts-window/tags-cloud.ts:1636
+#: src/posts-window/tags-cloud.ts:1631
 msgid ""
 "Click a tag on the cloud to edit it, or click + Add tag to create a new one."
 msgstr ""
 
 #. %d: post count.
-#: src/posts-window/tags-cloud.ts:1712
+#: src/posts-window/tags-cloud.ts:1707
 msgid "%d posts tagged with this."
 msgstr ""
 
-#: src/posts-window/tags-cloud.ts:2055
+#: src/posts-window/tags-cloud.ts:2050
 msgid "No tags yet. Click \"Add tag\" to start building the cloud."
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:234
+#: src/posts-window/user-edit-render.ts:259
 msgid "Save changes"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:235
+#: src/posts-window/user-edit-render.ts:260
 msgid "Revert"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:249
+#: src/posts-window/user-edit-render.ts:274
 msgid "Username"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:252
+#: src/posts-window/user-edit-render.ts:277
 #: includes/users-window/window.php:148
 msgid "First name"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:253
+#: src/posts-window/user-edit-render.ts:278
 #: includes/users-window/window.php:153
 msgid "Last name"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:255
+#: src/posts-window/user-edit-render.ts:280
 msgid "Nickname"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:264
+#: src/posts-window/user-edit-render.ts:289
 msgid "Display name publicly as"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:271
+#: src/posts-window/user-edit-render.ts:296
 #: includes/users-window/window.php:141
 msgid "Email (required)"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:300
+#: src/posts-window/user-edit-render.ts:325
 msgid "Biographical info"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:303
+#: src/posts-window/user-edit-render.ts:328
 msgid "Share a little about yourself — visible on author archives."
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:314
-#: src/posts-window/users-render.ts:1261 includes/users-window/window.php:176
+#: src/posts-window/user-edit-render.ts:339
+#: src/posts-window/users-render.ts:1350 includes/users-window/window.php:176
 msgid "Language"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:317
-#: src/posts-window/users-render.ts:1262
+#: src/posts-window/user-edit-render.ts:342
+#: src/posts-window/users-render.ts:1351
 #: includes/user-edit-window/window.php:177
 #, fuzzy
 msgid "Site default"
 msgstr "Predeterminada"
 
-#: src/posts-window/user-edit-render.ts:361
-#: src/posts-window/users-render.ts:703 src/posts-window/users-render.ts:1257
+#: src/posts-window/user-edit-render.ts:386
+#: src/posts-window/users-render.ts:698 src/posts-window/users-render.ts:1346
 #: includes/users-window/window.php:172
 msgid "Role"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:384
+#: src/posts-window/user-edit-render.ts:409
 msgid "Personal options"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:398
+#: src/posts-window/user-edit-render.ts:423
 msgid "Disable the visual editor when writing"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:406
+#: src/posts-window/user-edit-render.ts:431
 msgid "Disable syntax highlighting when editing code"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:414
+#: src/posts-window/user-edit-render.ts:439
 msgid "Enable keyboard shortcuts for comment moderation"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:422
+#: src/posts-window/user-edit-render.ts:447
 msgid "Show toolbar when viewing site"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:460
+#: src/posts-window/user-edit-render.ts:485
 msgid "Account management"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:475
+#: src/posts-window/user-edit-render.ts:500
 msgid "New password"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:478
+#: src/posts-window/user-edit-render.ts:503
 msgid "Leave blank to keep the current password."
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:491
+#: src/posts-window/user-edit-render.ts:516
 msgid "Generate strong"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:505
+#: src/posts-window/user-edit-render.ts:530
 msgid "Password generated and copied to clipboard."
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:519
+#: src/posts-window/user-edit-render.ts:544
 msgid "Confirm new password"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:522
+#: src/posts-window/user-edit-render.ts:547
 msgid "Type the new password again."
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:547
+#: src/posts-window/user-edit-render.ts:572
 msgid "Grant super admin privileges for the network"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:589
+#: src/posts-window/user-edit-render.ts:614
 msgid "The two password fields do not match."
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:642
+#: src/posts-window/user-edit-render.ts:667
 #, fuzzy
 msgid "Save failed."
 msgstr "Error al subir."
 
-#: src/posts-window/user-edit-render.ts:658
+#: src/posts-window/user-edit-render.ts:683
 msgid "Profile saved."
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:732
-#: src/posts-window/user-edit-render.ts:865
-#: src/posts-window/users-render.ts:416
+#: src/posts-window/user-edit-render.ts:788
+#: src/posts-window/user-edit-render.ts:921
+#: src/posts-window/users-render.ts:404
 msgid "No role"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:882
+#: src/posts-window/user-edit-render.ts:938
 msgid "Profile completeness"
 msgstr ""
 
 #. %d is a count of pages.
-#: src/posts-window/user-edit-render.ts:961
+#: src/posts-window/user-edit-render.ts:1017
 #, fuzzy
 msgid "+ %d pages"
 msgstr "Subpáginas de %s"
 
 #. %d is a count of received comments.
-#: src/posts-window/user-edit-render.ts:968
+#: src/posts-window/user-edit-render.ts:1024
 msgid "%d received"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:977
-#: src/posts-window/users-render.ts:721
+#: src/posts-window/user-edit-render.ts:1033
+#: src/posts-window/users-render.ts:718
 msgid "Last login"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:978
-#: src/posts-window/users-render.ts:521
+#: src/posts-window/user-edit-render.ts:1034
+#: src/posts-window/users-render.ts:509
 msgid "Never"
 msgstr ""
 
 #. %d is a number of days.
-#: src/posts-window/user-edit-render.ts:988
+#: src/posts-window/user-edit-render.ts:1044
 msgid "%d days"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:994
+#: src/posts-window/user-edit-render.ts:1050
 #, fuzzy
 msgid "Member"
 msgstr "Ámbar"
 
-#: src/posts-window/user-edit-render.ts:1018
+#: src/posts-window/user-edit-render.ts:1074
 msgid "Posts published — last 12 months"
 msgstr ""
 
 #. %d is a count of posts.
-#: src/posts-window/user-edit-render.ts:1027
+#: src/posts-window/user-edit-render.ts:1083
 msgid "%d total"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:1037
+#: src/posts-window/user-edit-render.ts:1093
 msgid "No activity in the last 12 months."
 msgstr ""
 
 #. %1$s is a YYYY-MM month, %2$d is post count.
-#: src/posts-window/user-edit-render.ts:1068
+#: src/posts-window/user-edit-render.ts:1124
 msgid "%1$s — %2$d posts"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:1108
+#: src/posts-window/user-edit-render.ts:1164
 msgid "No recent posts."
 msgstr ""
 
 #. %d is a count of comments.
-#: src/posts-window/user-edit-render.ts:1117
+#: src/posts-window/user-edit-render.ts:1173
 msgid "%d 💬"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:1127
+#: src/posts-window/user-edit-render.ts:1183
 msgid "Recent comments"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:1128
+#: src/posts-window/user-edit-render.ts:1184
 msgid "No recent comments."
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:1132
+#: src/posts-window/user-edit-render.ts:1188
 msgid "(empty comment)"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:1134
+#: src/posts-window/user-edit-render.ts:1190
 #, fuzzy
 msgid "on"
 msgstr "Monocromo"
 
-#: src/posts-window/user-edit-render.ts:1136
+#: src/posts-window/user-edit-render.ts:1192
 msgid "pending"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:1231
+#: src/posts-window/user-edit-render.ts:1287
 msgid "Active sessions & app access"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:1244
-#: src/posts-window/user-edit-render.ts:1729
+#: src/posts-window/user-edit-render.ts:1300
+#: src/posts-window/user-edit-render.ts:1780
 msgid "Active sessions"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:1253
+#: src/posts-window/user-edit-render.ts:1309
 msgid "Includes the current device."
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:1254
+#: src/posts-window/user-edit-render.ts:1310
 msgid "Logged in across multiple devices."
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:1266
-#: src/posts-window/user-edit-render.ts:1803
+#: src/posts-window/user-edit-render.ts:1322
+#: src/posts-window/user-edit-render.ts:1854
 msgid "Application passwords"
 msgstr ""
 
 #. %1$s is the app password name, %2$s is a relative time.
-#: src/posts-window/user-edit-render.ts:1278
+#: src/posts-window/user-edit-render.ts:1334
 msgid "\"%1$s\" last used %2$s"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:1284
+#: src/posts-window/user-edit-render.ts:1340
 msgid "No recent use."
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:1285
+#: src/posts-window/user-edit-render.ts:1341
 msgid "No app passwords issued yet."
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:1389
-#: src/posts-window/users-render.ts:489
+#: src/posts-window/user-edit-render.ts:1445
+#: src/posts-window/users-render.ts:477
 msgid "just now"
 msgstr ""
 
 #. %d minutes ago.
 #. %d is a number of minutes.
-#: src/posts-window/user-edit-render.ts:1393
-#: src/posts-window/users-render.ts:494
+#: src/posts-window/user-edit-render.ts:1449
+#: src/posts-window/users-render.ts:482
 #, fuzzy
 msgid "%d min ago"
 msgstr "Navegación del administrador"
 
 #. %d hours ago.
 #. %d is a number of hours.
-#: src/posts-window/user-edit-render.ts:1397
-#: src/posts-window/users-render.ts:499
+#: src/posts-window/user-edit-render.ts:1453
+#: src/posts-window/users-render.ts:487
 msgid "%d h ago"
 msgstr ""
 
 #. %d days ago.
 #. %d is a number of days.
-#: src/posts-window/user-edit-render.ts:1401
-#: src/posts-window/users-render.ts:504
+#: src/posts-window/user-edit-render.ts:1457
+#: src/posts-window/users-render.ts:492
 msgid "%d d ago"
 msgstr ""
 
 #. %d months ago.
 #. %d is a number of months.
-#: src/posts-window/user-edit-render.ts:1405
-#: src/posts-window/users-render.ts:509
+#: src/posts-window/user-edit-render.ts:1461
+#: src/posts-window/users-render.ts:497
 msgid "%d mo ago"
 msgstr ""
 
 #. %d years ago.
 #. %d is a number of years.
-#: src/posts-window/user-edit-render.ts:1408
-#: src/posts-window/users-render.ts:513
+#: src/posts-window/user-edit-render.ts:1464
+#: src/posts-window/users-render.ts:501
 msgid "%d y ago"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:1464
+#: src/posts-window/user-edit-render.ts:1520
 msgid "Email address is not valid."
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:1467
-#: src/posts-window/users-render.ts:1404 includes/users-window/rest.php:545
+#: src/posts-window/user-edit-render.ts:1523
+#: src/posts-window/users-render.ts:1493 includes/users-window/rest.php:545
 msgid "That email is already in use."
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:1469
-#: src/posts-window/users-render.ts:1413 includes/users-window/rest.php:568
+#: src/posts-window/user-edit-render.ts:1525
+#: src/posts-window/users-render.ts:1502 includes/users-window/rest.php:568
 #, fuzzy
 msgid "You are not allowed to assign that role."
 msgstr ""
 "Lo sentimos, no tienes permiso para acceder al escritorio de WordPress."
 
-#: src/posts-window/user-edit-render.ts:1574
+#: src/posts-window/user-edit-render.ts:1625
 msgid "Admin colour scheme"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:1736
+#: src/posts-window/user-edit-render.ts:1787
 msgid "Log out everywhere else"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:1737
+#: src/posts-window/user-edit-render.ts:1788
 msgid "Log this user out everywhere"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:1764
+#: src/posts-window/user-edit-render.ts:1815
 msgid "Sessions destroyed."
 msgstr ""
 
 #. %s is an error message.
-#: src/posts-window/user-edit-render.ts:1769
+#: src/posts-window/user-edit-render.ts:1820
 msgid "Could not destroy sessions (%s)."
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:1823
+#: src/posts-window/user-edit-render.ts:1874
 msgid "New application password name"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:1826
+#: src/posts-window/user-edit-render.ts:1877
 msgid "e.g. iPhone, WP-CLI, Backup tool"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:1843
+#: src/posts-window/user-edit-render.ts:1894
 msgid "No application passwords issued yet."
 msgstr ""
 
 #. %s is a relative time.
-#: src/posts-window/user-edit-render.ts:1861
+#: src/posts-window/user-edit-render.ts:1912
 msgid "last used %s"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:1864
+#: src/posts-window/user-edit-render.ts:1915
 msgid "never used"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:1869
+#: src/posts-window/user-edit-render.ts:1920
 msgid "Revoke"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:1886
+#: src/posts-window/user-edit-render.ts:1937
 msgid "Application password revoked."
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:1924
+#: src/posts-window/user-edit-render.ts:1975
 #: includes/user-edit-window/rest.php:244
 msgid "Application password name is required."
 msgstr ""
 
 #. %s is an application password.
-#: src/posts-window/user-edit-render.ts:1951
+#: src/posts-window/user-edit-render.ts:2002
 msgid "Created. Copy the password now: %s"
 msgstr ""
 
-#: src/posts-window/user-edit-render.ts:163
+#: src/posts-window/user-edit-render.ts:195
 #, fuzzy
 msgid "Loading profile…"
 msgstr "Subiendo…"
 
 #. %s is an error message.
-#: src/posts-window/user-edit-render.ts:176
+#: src/posts-window/user-edit-render.ts:208
 #, fuzzy
 msgid "Could not load profile (%s)."
 msgstr "No se pudieron cargar tus medios."
 
-#: src/posts-window/user-edit-render.ts:751
+#: src/posts-window/user-edit-render.ts:807
 msgid "Loading insights…"
 msgstr ""
 
 #. %s is an error message.
-#: src/posts-window/user-edit-render.ts:762
+#: src/posts-window/user-edit-render.ts:818
 #, fuzzy
 msgid "Could not load insights (%s)."
 msgstr "No se pudieron cargar tus medios."
@@ -2680,174 +3092,162 @@ msgstr ""
 msgid "Per-user content stats: posts, pages, comments at a glance."
 msgstr ""
 
-#: src/posts-window/users-render.ts:143
+#: src/posts-window/users-render.ts:140
 msgid "Could not open profile window — desktop shell unavailable."
 msgstr ""
 
-#: src/posts-window/users-render.ts:157
+#: src/posts-window/users-render.ts:154
 msgid "Profile window not registered — see console."
 msgstr ""
 
-#: src/posts-window/users-render.ts:296
-msgid "Offline"
-msgstr ""
-
-#: src/posts-window/users-render.ts:299
-msgid "Online now"
-msgstr ""
-
-#: src/posts-window/users-render.ts:302
-msgid "Idle"
-msgstr ""
-
-#: src/posts-window/users-render.ts:363
+#: src/posts-window/users-render.ts:353
 msgid "Click to copy email"
 msgstr ""
 
-#: src/posts-window/users-render.ts:596
+#: src/posts-window/users-render.ts:589
 msgid "Send password reset"
 msgstr ""
 
-#: src/posts-window/users-render.ts:600
+#: src/posts-window/users-render.ts:593
 msgid "Send password reset email?"
 msgstr ""
 
 #. %s is a user name.
-#: src/posts-window/users-render.ts:603
+#: src/posts-window/users-render.ts:596
 msgid "WordPress will email %s a password-reset link."
 msgstr ""
 
-#: src/posts-window/users-render.ts:606
+#: src/posts-window/users-render.ts:599
 msgid "Send reset email"
 msgstr ""
 
 #. %s is the user's email address.
-#: src/posts-window/users-render.ts:616
+#: src/posts-window/users-render.ts:609
 msgid "Reset email sent to %s."
 msgstr ""
 
 #. %s is an error code.
-#: src/posts-window/users-render.ts:625
+#: src/posts-window/users-render.ts:618
 msgid "Could not send reset email (%s)."
 msgstr ""
 
-#: src/posts-window/users-render.ts:636
+#: src/posts-window/users-render.ts:629
 msgid "Resend welcome email"
 msgstr ""
 
-#: src/posts-window/users-render.ts:640
+#: src/posts-window/users-render.ts:633
 msgid "Resend welcome email?"
 msgstr ""
 
 #. %s is a user name.
-#: src/posts-window/users-render.ts:643
+#: src/posts-window/users-render.ts:636
 msgid "WordPress will resend the original welcome email to %s."
 msgstr ""
 
-#: src/posts-window/users-render.ts:648
+#: src/posts-window/users-render.ts:641
 msgid "Resend"
 msgstr ""
 
 #. %s is the user's email address.
-#: src/posts-window/users-render.ts:658
+#: src/posts-window/users-render.ts:651
 msgid "Welcome email resent to %s."
 msgstr ""
 
 #. %s is an error code.
-#: src/posts-window/users-render.ts:667
+#: src/posts-window/users-render.ts:660
 msgid "Could not resend welcome (%s)."
 msgstr ""
 
-#: src/posts-window/users-render.ts:696
+#: src/posts-window/users-render.ts:691
 msgid "Email"
 msgstr ""
 
-#: src/posts-window/users-render.ts:710
+#: src/posts-window/users-render.ts:707
 msgid "Content"
 msgstr ""
 
-#: src/posts-window/users-render.ts:735
+#: src/posts-window/users-render.ts:732
 msgid "Registered"
 msgstr ""
 
-#: src/posts-window/users-render.ts:758
+#: src/posts-window/users-render.ts:749
 msgid "Actions"
 msgstr ""
 
-#: src/posts-window/users-render.ts:777
+#: src/posts-window/users-render.ts:768
 msgid "Online"
 msgstr ""
 
-#: src/posts-window/users-render.ts:778
+#: src/posts-window/users-render.ts:769
 msgid "Active 30d"
 msgstr ""
 
-#: src/posts-window/users-render.ts:779
+#: src/posts-window/users-render.ts:770
 msgid "Never logged in"
 msgstr ""
 
-#: src/posts-window/users-render.ts:1283
+#: src/posts-window/users-render.ts:1372
 msgid "Generated password copied to clipboard."
 msgstr ""
 
 #. %s is the user's email address.
-#: src/posts-window/users-render.ts:1330
+#: src/posts-window/users-render.ts:1419
 msgid "User created — welcome email sent to %s."
 msgstr ""
 
-#: src/posts-window/users-render.ts:1400 includes/users-window/rest.php:538
+#: src/posts-window/users-render.ts:1489 includes/users-window/rest.php:538
 msgid "That username is already in use."
 msgstr ""
 
-#: src/posts-window/users-render.ts:1407 includes/users-window/rest.php:524
+#: src/posts-window/users-render.ts:1496 includes/users-window/rest.php:524
 msgid "Username is not valid."
 msgstr ""
 
-#: src/posts-window/users-render.ts:1410 includes/users-window/rest.php:531
+#: src/posts-window/users-render.ts:1499 includes/users-window/rest.php:531
 msgid "A valid email address is required."
 msgstr ""
 
-#: src/posts-window/users-render.ts:1416
+#: src/posts-window/users-render.ts:1505
 #, fuzzy
 msgid "Could not create the user."
 msgstr "No se pudieron cargar tus medios: %s"
 
-#: src/posts-window/users-render.ts:992
+#: src/posts-window/users-render.ts:986
 msgid "Set role to…"
 msgstr ""
 
-#: src/posts-window/users-render.ts:1003
+#: src/posts-window/users-render.ts:997
 msgid "Apply"
 msgstr ""
 
-#: src/posts-window/users-render.ts:1011
+#: src/posts-window/users-render.ts:1005
 msgid "Change role for selected users?"
 msgstr ""
 
 #. %1$d is a user count, %2$s is a role label.
-#: src/posts-window/users-render.ts:1014
+#: src/posts-window/users-render.ts:1008
 msgid "Set %1$d user(s)' role to %2$s?"
 msgstr ""
 
-#: src/posts-window/users-render.ts:1018
+#: src/posts-window/users-render.ts:1012
 msgid "Set role"
 msgstr ""
 
 #. %1$d users updated, %2$d failed.
-#: src/posts-window/users-render.ts:1041
+#: src/posts-window/users-render.ts:1035
 msgid "Role updated for %1$d user(s) (%2$d skipped)."
 msgstr ""
 
-#: src/posts-window/users-render.ts:1048
+#: src/posts-window/users-render.ts:1042
 msgid "No users updated."
 msgstr ""
 
 #. %1$d current page, %2$d total pages, %3$d total rows.
-#: src/posts-window/users-render.ts:1078
+#: src/posts-window/users-render.ts:1072
 msgid "Page %1$d of %2$d · %3$d users"
 msgstr ""
 
-#: src/posts-window/users-render.ts:1134
+#: src/posts-window/users-render.ts:1128
 msgid "Could not load users. Try Refresh."
 msgstr ""
 
@@ -2882,10 +3282,6 @@ msgstr ""
 
 #: src/recycle-bin/index.ts:236
 msgid "By"
-msgstr ""
-
-#: src/recycle-bin/index.ts:258 includes/recycle-bin/window.php:55
-msgid "Restore"
 msgstr ""
 
 #: src/recycle-bin/index.ts:266 src/recycle-bin/index.ts:666
@@ -2931,11 +3327,11 @@ msgstr ""
 msgid "%d item(s) skipped (insufficient permissions)."
 msgstr ""
 
-#: src/settings/index.ts:358
+#: src/settings/index.ts:359
 msgid "Appearance"
 msgstr ""
 
-#: src/settings/index.ts:363
+#: src/settings/index.ts:364
 msgid ""
 "Personalize your desktop. Changes apply instantly and are saved to this "
 "browser."
@@ -2943,31 +3339,31 @@ msgstr ""
 "Personaliza tu escritorio. Los cambios se aplican al instante y se guardan "
 "en este navegador."
 
-#: src/settings/index.ts:378
+#: src/settings/index.ts:379
 msgid "AI Settings"
 msgstr ""
 
-#: src/settings/index.ts:387 src/settings/sections/features.ts:98
+#: src/settings/index.ts:388 src/settings/sections/features.ts:187
 msgid "Features"
 msgstr ""
 
-#: src/settings/index.ts:397 src/settings/sections/apps-icons.ts:111
+#: src/settings/index.ts:398 src/settings/sections/apps-icons.ts:111
 msgid "Apps & Icons"
 msgstr ""
 
-#: src/settings/index.ts:410
+#: src/settings/index.ts:411
 msgid "Extended Options"
 msgstr ""
 
-#: src/settings/index.ts:419 src/settings/sections/help.ts:60
+#: src/settings/index.ts:420 src/settings/sections/help.ts:60
 msgid "Components"
 msgstr ""
 
-#: src/settings/index.ts:507
+#: src/settings/index.ts:508
 msgid "Settings sections"
 msgstr ""
 
-#: src/settings/index.ts:513
+#: src/settings/index.ts:514
 msgid "Reset to defaults"
 msgstr "Restablecer valores predeterminados"
 
@@ -3331,29 +3727,29 @@ msgid ""
 "drop layer on top of the one you already know."
 msgstr ""
 
-#: src/settings/sections/features.ts:99
+#: src/settings/sections/features.ts:188
 msgid ""
 "Tune individual Desktop Mode behaviors. Each toggle affects only your "
 "account and takes effect immediately — no reload required. Watch the dot in "
 "the OS Settings title bar to see when a change has been saved."
 msgstr ""
 
-#: src/settings/sections/features.ts:104
+#: src/settings/sections/features.ts:193
 msgid "Use the native Posts window"
 msgstr ""
 
-#: src/settings/sections/features.ts:109
+#: src/settings/sections/features.ts:198
 msgid ""
 "Replaces the classic Posts list iframe with a native, table-driven window: "
 "sticky header, server-paginated rows, multi-select bulk actions, and a sub-"
 "row preview. On by default. Toggle off to return to the classic experience."
 msgstr ""
 
-#: src/settings/sections/features.ts:114
+#: src/settings/sections/features.ts:203
 msgid "Use the native Pages window"
 msgstr ""
 
-#: src/settings/sections/features.ts:119
+#: src/settings/sections/features.ts:208
 msgid ""
 "Same table-driven experience as the Posts window, tailored for Pages: a "
 "Parent column, hierarchical sort, and the same lock indicator when another "
@@ -3361,11 +3757,11 @@ msgid ""
 "experience."
 msgstr ""
 
-#: src/settings/sections/features.ts:124
+#: src/settings/sections/features.ts:213
 msgid "Use the native Users window"
 msgstr ""
 
-#: src/settings/sections/features.ts:129
+#: src/settings/sections/features.ts:218
 msgid ""
 "A native Users list with bulk role change, last-login tracking, live online "
 "indicators, click-to-copy email, and one-click password resets. Capability-"
@@ -3373,11 +3769,11 @@ msgid ""
 "role permissions. On by default."
 msgstr ""
 
-#: src/settings/sections/features.ts:134
+#: src/settings/sections/features.ts:223
 msgid "Use the native Plugins window"
 msgstr ""
 
-#: src/settings/sections/features.ts:139
+#: src/settings/sections/features.ts:228
 msgid ""
 "A native two-tab Plugins window: an Installed list with bulk activate / "
 "deactivate / delete, and a Browse gallery powered by the WordPress.org "
@@ -3386,15 +3782,45 @@ msgid ""
 "Browse to the dock to pin it. On by default."
 msgstr ""
 
-#: src/settings/sections/features.ts:150
+#: src/settings/sections/features.ts:233
+msgid "Use the native Comments window"
+msgstr ""
+
+#: src/settings/sections/features.ts:238
+msgid ""
+"A redesigned moderation queue with Pending / All / Spam / Trash / Mine tabs, "
+"bulk approve/spam/trash plus an 8-second undo, inline reply right in the "
+"row, an author insights drawer, a per-row spam confidence score (Akismet + "
+"heuristics), and full keyboard moderation (j/k navigate, a approve, s spam, "
+"d trash, r reply, e edit, u undo). On by default."
+msgstr ""
+
+#: src/settings/sections/features.ts:245
+msgid "Score new comments with AI"
+msgstr ""
+
+#: src/settings/sections/features.ts:252
+msgid ""
+"When a new comment lands, your configured AI provider scores it for spam and "
+"hostility. The verdict appears in the per-row chip and is folded into the "
+"spam confidence score. Token usage applies — admin-only site setting."
+msgstr ""
+
+#: src/settings/sections/features.ts:255
+msgid ""
+"Configure an AI provider in OS Settings → AI first. Once a provider is set "
+"up, this toggle becomes available and every new comment is scored on arrival."
+msgstr ""
+
+#: src/settings/sections/features.ts:268
 msgid "Resetting…"
 msgstr ""
 
-#: src/settings/sections/features.ts:151
+#: src/settings/sections/features.ts:269
 msgid "Reset what’s-new dialogs"
 msgstr ""
 
-#: src/settings/sections/features.ts:154
+#: src/settings/sections/features.ts:272
 msgid ""
 "Re-shows the one-time introduction dialog the next time you open each "
 "redesigned native window."
@@ -3564,10 +3990,6 @@ msgstr "Maximizar"
 msgid "Enter fullscreen"
 msgstr "Entrar en pantalla completa"
 
-#: src/window-chrome/controls/built-ins.ts:78 includes/welcome-dialog.php:108
-msgid "Close"
-msgstr "Cerrar"
-
 #: src/window/dom.ts:138
 msgid "Loading window content"
 msgstr ""
@@ -3589,10 +4011,6 @@ msgstr "Abrir otra ventana de %s"
 #, fuzzy
 msgid "Open in new window"
 msgstr "Abrir en una nueva pestaña del navegador"
-
-#: src/window/dom.ts:409
-msgid "Reload"
-msgstr ""
 
 #: src/window/dom.ts:422
 #, fuzzy
@@ -3782,6 +4200,103 @@ msgstr ""
 
 #: includes/commands.php:143
 msgid "Command registration requires a non-empty `label`."
+msgstr ""
+
+#: includes/comments-window/rest.php:160
+msgid "Unknown bulk action."
+msgstr ""
+
+#: includes/comments-window/rest.php:225
+msgid "Parent comment not found."
+msgstr ""
+
+#: includes/comments-window/rest.php:233
+msgid "Reply cannot be empty."
+msgstr ""
+
+#: includes/comments-window/rest.php:242
+msgid "You must be logged in to reply."
+msgstr ""
+
+#: includes/comments-window/rest.php:295
+msgid "Invalid author email."
+msgstr ""
+
+#: includes/comments-window/window.php:31
+msgid "Mine"
+msgstr ""
+
+#: includes/comments-window/window.php:54
+msgid "Author insights"
+msgstr ""
+
+#: includes/comments-window/window.php:63
+msgid "Next comment"
+msgstr ""
+
+#: includes/comments-window/window.php:64
+msgid "Previous comment"
+msgstr ""
+
+#: includes/comments-window/window.php:65
+msgid "Approve / unapprove"
+msgstr ""
+
+#: includes/comments-window/window.php:66
+msgid "Mark as spam"
+msgstr ""
+
+#: includes/comments-window/window.php:68
+msgid "Reply inline"
+msgstr ""
+
+#: includes/comments-window/window.php:69
+msgid "Edit comment"
+msgstr ""
+
+#: includes/comments-window/window.php:70
+#, fuzzy
+msgid "Undo last action"
+msgstr "Acciones de ventana"
+
+#: includes/comments-window/window.php:71
+msgid "Toggle this help"
+msgstr ""
+
+#: includes/comments-window/window.php:254
+msgid "Title of the post the comment is attached to."
+msgstr ""
+
+#: includes/comments-window/window.php:274
+msgid "Permalink of the post the comment is attached to."
+msgstr ""
+
+#: includes/comments-window/window.php:295
+msgid "Spam confidence score, 0–100."
+msgstr ""
+
+#: includes/comments-window/window.php:316
+msgid "Number of links in the comment."
+msgstr ""
+
+#: includes/comments-window/window.php:334
+msgid "Whether the requester can edit this comment."
+msgstr ""
+
+#: includes/comments-window/window.php:350
+msgid "Whether the requester can moderate comments globally."
+msgstr ""
+
+#: includes/comments-window/window.php:376
+msgid "Direct-reply count for this comment."
+msgstr ""
+
+#: includes/comments-window/window.php:407
+msgid "AI moderation verdict for this comment, when analyzed (null otherwise)."
+msgstr ""
+
+#: includes/comments-window/window.php:431
+msgid "Akismet verdict if the plugin is installed (null otherwise)."
 msgstr ""
 
 #. translators: %s: the attempted tag name.
@@ -4014,36 +4529,36 @@ msgid "You are not allowed to place this file."
 msgstr ""
 "Lo sentimos, no tienes permiso para acceder al escritorio de WordPress."
 
-#: includes/desktop-files/store.php:100
+#: includes/desktop-files/store.php:137
 msgid "Failed to write placement."
 msgstr ""
 
-#: includes/desktop-files/store.php:136
+#: includes/desktop-files/store.php:200
 msgid "Invalid arguments."
 msgstr ""
 
-#: includes/desktop-files/store.php:141 includes/desktop-files/store.php:211
+#: includes/desktop-files/store.php:205 includes/desktop-files/store.php:275
 #: includes/desktop-files/trash.php:392 includes/desktop-files/trash.php:486
 msgid "Placement not found."
 msgstr ""
 
-#: includes/desktop-files/store.php:146
+#: includes/desktop-files/store.php:210
 #, fuzzy
 msgid "You cannot edit this placement."
 msgstr ""
 "Lo sentimos, no tienes permiso para acceder al escritorio de WordPress."
 
-#: includes/desktop-files/store.php:176
+#: includes/desktop-files/store.php:240
 msgid "Failed to update placement."
 msgstr ""
 
-#: includes/desktop-files/store.php:214
+#: includes/desktop-files/store.php:278
 #, fuzzy
 msgid "You cannot remove this placement."
 msgstr ""
 "Lo sentimos, no tienes permiso para acceder al escritorio de WordPress."
 
-#: includes/desktop-files/store.php:220
+#: includes/desktop-files/store.php:284
 msgid "Failed to remove placement."
 msgstr ""
 
@@ -4285,21 +4800,6 @@ msgstr ""
 msgid "Try a different search or change the status filter."
 msgstr ""
 
-#: includes/pages-window/window.php:82 includes/posts-window/window.php:103
-#: includes/users-window/window.php:98
-msgid "Previous"
-msgstr ""
-
-#: includes/pages-window/window.php:85 includes/posts-window/window.php:106
-#: includes/users-window/window.php:101
-msgid "Next"
-msgstr ""
-
-#: includes/pages-window/window.php:89 includes/posts-window/window.php:110
-#: includes/users-window/window.php:105
-msgid "Per page"
-msgstr ""
-
 #: includes/pages-window/window.php:299
 msgid "Total non-trashed comments on this page."
 msgstr ""
@@ -4423,7 +4923,7 @@ msgid "Desktop mode is not enabled for your account."
 msgstr ""
 
 #. translators: %s: site name
-#: includes/pwa.php:215
+#: includes/pwa.php:241
 #, php-format
 msgid "%s — installed as a desktop app."
 msgstr ""
@@ -4821,30 +5321,30 @@ msgstr ""
 msgid "Send the new user an email about their account"
 msgstr ""
 
-#: includes/users-window/window.php:488
+#: includes/users-window/window.php:493
 msgid "Per-user content stats: published post / page / comment counts."
 msgstr ""
 
-#: includes/users-window/window.php:509
+#: includes/users-window/window.php:514
 msgid ""
 "UTC unix timestamp of this user’s last successful login, or null when never "
 "recorded."
 msgstr ""
 
-#: includes/users-window/window.php:529
+#: includes/users-window/window.php:534
 msgid "Live presence status: online / inactive / offline."
 msgstr ""
 
-#: includes/users-window/window.php:551
+#: includes/users-window/window.php:556
 msgid "Whether the requester can edit this user."
 msgstr ""
 
-#: includes/users-window/window.php:572
+#: includes/users-window/window.php:577
 msgid "Role slugs the requester can assign to this user."
 msgstr ""
 
 #. translators: %s is the site's current locale (e.g. "en_US").
-#: includes/users-window/window.php:598
+#: includes/users-window/window.php:603
 #, php-format
 msgid "Site default — %s"
 msgstr ""

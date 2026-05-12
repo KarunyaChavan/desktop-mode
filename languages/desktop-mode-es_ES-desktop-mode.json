@@ -30,6 +30,9 @@
             "%1$d posts · %2$d pages": [
                 ""
             ],
+            "%1$s updated to %2$s.": [
+                ""
+            ],
             "%1$s · %2$d": [
                 ""
             ],
@@ -59,6 +62,9 @@
             ],
             "%d hidden by HD filter": [
                 "%d ocultas por el filtro HD"
+            ],
+            "%d new pending — reload": [
+                ""
             ],
             "%d notification": [
                 ""
@@ -127,7 +133,13 @@
             "(no title)": [
                 ""
             ],
+            "+ %d replies": [
+                "Subpáginas de %s"
+            ],
             "1 item": [
+                ""
+            ],
+            "A moderation surface built around how you actually triage: bulk actions with undo, an inline reply editor, keyboard shortcuts, and a spam score that surfaces the obvious junk first.": [
                 ""
             ],
             "A native Users list with bulk role change, last-login tracking, live online indicators, click-to-copy email, and one-click password resets. Capability-gated — readers see a read-only view, role assignment respects WordPress role permissions. On by default.": [
@@ -142,6 +154,9 @@
             "A real gallery on Browse — clean cards with rating, install count, last updated, and a click-anywhere detail flyout. Subtle hover lift, lazy-loaded icons, infinite scroll.": [
                 ""
             ],
+            "A redesigned moderation queue with Pending / All / Spam / Trash / Mine tabs, bulk approve/spam/trash plus an 8-second undo, inline reply right in the row, an author insights drawer, a per-row spam confidence score (Akismet + heuristics), and full keyboard moderation (j/k navigate, a approve, s spam, d trash, r reply, e edit, u undo). On by default.": [
+                ""
+            ],
             "A short summary": [
                 ""
             ],
@@ -153,6 +168,15 @@
             ],
             "AI integration": [
                 "Navegación del administrador"
+            ],
+            "AI: hostile / abusive tone.": [
+                ""
+            ],
+            "AI: looks like promotional spam.": [
+                ""
+            ],
+            "AI: looks safe.": [
+                ""
             ],
             "API key": [
                 ""
@@ -190,6 +214,12 @@
             "Added": [
                 "Añadido"
             ],
+            "Akismet cleared this comment.": [
+                ""
+            ],
+            "Akismet flagged this comment as spam.": [
+                ""
+            ],
             "All": [
                 ""
             ],
@@ -211,6 +241,15 @@
             "Appearance": [
                 ""
             ],
+            "Approve": [
+                ""
+            ],
+            "Approved": [
+                ""
+            ],
+            "Approved %d.": [
+                ""
+            ],
             "Apps & Icons": [
                 ""
             ],
@@ -226,10 +265,16 @@
             "Author archive": [
                 ""
             ],
+            "Author insights drawer": [
+                ""
+            ],
             "Author · %s": [
                 ""
             ],
             "Authors": [
+                ""
+            ],
+            "Auto-update unavailable": [
                 ""
             ],
             "Back": [
@@ -239,6 +284,9 @@
                 ""
             ],
             "Beta": [
+                ""
+            ],
+            "Bold": [
                 ""
             ],
             "Bookmark": [
@@ -254,6 +302,15 @@
                 ""
             ],
             "Bug": [
+                ""
+            ],
+            "Bulk %s failed.": [
+                "Error al subir."
+            ],
+            "Bulk moderation with undo": [
+                ""
+            ],
+            "Bulleted list": [
                 ""
             ],
             "By hour of day (site time)": [
@@ -289,6 +346,9 @@
             "Classic": [
                 ""
             ],
+            "Click an avatar to see the author's full history — total comments, spam rate, first seen, and one-click block.": [
+                ""
+            ],
             "Clock": [
                 "Reloj"
             ],
@@ -313,6 +373,9 @@
             "Comment": [
                 ""
             ],
+            "Comment updated.": [
+                ""
+            ],
             "Commented on “%s”": [
                 ""
             ],
@@ -325,6 +388,9 @@
             "Comments received": [
                 ""
             ],
+            "Comments window configuration missing.": [
+                ""
+            ],
             "Comments · %d": [
                 ""
             ],
@@ -335,6 +401,9 @@
                 ""
             ],
             "Components": [
+                ""
+            ],
+            "Configure an AI provider in OS Settings → AI first. Once a provider is set up, this toggle becomes available and every new comment is scored on arrival.": [
                 ""
             ],
             "Connect an AI provider to power assistive features across the desktop.": [
@@ -355,7 +424,13 @@
             "Could not initialise the graph renderer.": [
                 ""
             ],
+            "Could not load comments.": [
+                "No se pudieron cargar tus medios."
+            ],
             "Could not load footprint.": [
+                "No se pudieron cargar tus medios."
+            ],
+            "Could not load insights.": [
                 "No se pudieron cargar tus medios."
             ],
             "Could not load plugin details.": [
@@ -365,6 +440,9 @@
                 "No se pudieron cargar tus medios."
             ],
             "Could not load post #%d.": [
+                "No se pudieron cargar tus medios."
+            ],
+            "Could not load replies.": [
                 "No se pudieron cargar tus medios."
             ],
             "Could not load reviews.": [
@@ -481,6 +559,12 @@
             "Edit": [
                 ""
             ],
+            "Edit comment…": [
+                ""
+            ],
+            "Edit failed.": [
+                "Error al subir."
+            ],
             "Edit user": [
                 ""
             ],
@@ -506,6 +590,9 @@
                 ""
             ],
             "Every <wpd-*> web component shipped by this plugin, with its props, slots, and a live example. Descriptors live next to each component class — the list stays in sync with the code.": [
+                ""
+            ],
+            "Every comment gets a 0–100 score from Akismet + heuristics. Optionally turn on AI scoring in OS Settings → Features so each new comment is also scored by your configured AI provider on arrival.": [
                 ""
             ],
             "Example": [
@@ -559,6 +646,9 @@
             "First published": [
                 ""
             ],
+            "First seen": [
+                ""
+            ],
             "Fit": [
                 ""
             ],
@@ -607,6 +697,9 @@
             "In reply to %s": [
                 ""
             ],
+            "In response to": [
+                ""
+            ],
             "Inactive": [
                 ""
             ],
@@ -615,6 +708,9 @@
             ],
             "Indigo": [
                 "Índigo"
+            ],
+            "Inline reply": [
+                ""
             ],
             "Install": [
                 ""
@@ -643,8 +739,17 @@
             "Installing…": [
                 "Subiendo…"
             ],
+            "Italic": [
+                ""
+            ],
+            "J/K to navigate, A approve, S spam, D trash, R reply, E edit, U undo. Press ? any time for the cheat sheet.": [
+                ""
+            ],
             "JPEG, PNG, or WebP · goes straight to your Media Library": [
                 "JPEG, PNG o WebP · va directo a tu biblioteca de medios"
+            ],
+            "Keyboard moderation": [
+                ""
             ],
             "Large": [
                 "Grande"
@@ -658,6 +763,9 @@
             "Last published %s": [
                 ""
             ],
+            "Last seen": [
+                ""
+            ],
             "Latest post": [
                 ""
             ],
@@ -667,11 +775,17 @@
             "Less": [
                 ""
             ],
+            "Let me moderate": [
+                ""
+            ],
             "Live progress updates": [
                 ""
             ],
             "Load more": [
                 "Cargar más"
+            ],
+            "Loading author insights…": [
+                "Subiendo…"
             ],
             "Loading details…": [
                 "Subiendo…"
@@ -701,6 +815,9 @@
                 ""
             ],
             "Makes every item in the WordPress Media Library draggable. Drop a media item into text fields, rich-text editors, Gutenberg blocks, or any target that accepts images or files. No replacement of the library — just a drag-and-drop layer on top of the one you already know.": [
+                ""
+            ],
+            "Marked %d as spam.": [
                 ""
             ],
             "Maximize": [
@@ -748,6 +865,9 @@
             "Move your cursor through the swarm · click for a spark": [
                 ""
             ],
+            "Multi-select and approve, spam, or trash dozens at once. Every action shows an 8-second undo toast.": [
+                ""
+            ],
             "My WordPress": [
                 "Azul WordPress"
             ],
@@ -775,6 +895,9 @@
             "Newest first": [
                 ""
             ],
+            "Next": [
+                ""
+            ],
             "No %s yet.": [
                 ""
             ],
@@ -800,6 +923,9 @@
                 ""
             ],
             "No comments on this post yet.": [
+                ""
+            ],
+            "No comments to moderate here.": [
                 ""
             ],
             "No components registered.": [
@@ -835,10 +961,16 @@
             "No widgets available. Activate a plugin that registers one, or see the docs for the registerWidget API.": [
                 "No hay widgets disponibles. Activa un plugin que registre alguno, o consulta la documentación de la API registerWidget."
             ],
+            "Not spam": [
+                ""
+            ],
             "Nothing to show yet.": [
                 ""
             ],
             "Nothing to show.": [
+                ""
+            ],
+            "Numbered list": [
                 ""
             ],
             "Often paired categories": [
@@ -922,10 +1054,22 @@
             "Page %1$d of %2$d": [
                 ""
             ],
+            "Page %1$d of %2$d (%3$d total)": [
+                ""
+            ],
             "Pages": [
                 ""
             ],
             "Parent": [
+                ""
+            ],
+            "Pending": [
+                ""
+            ],
+            "Pending / All / Spam / Trash / Mine tabs — every status surface in a single window with live counts.": [
+                ""
+            ],
+            "Per page": [
                 ""
             ],
             "Per-row capability flags so the UI hides actions you can't perform — and the server re-validates every mutation, so flags can't be tampered into more permissions.": [
@@ -973,6 +1117,12 @@
             "Posts": [
                 ""
             ],
+            "Prefer the classic Comments screen? You can switch back any time from OS Settings → Features.": [
+                ""
+            ],
+            "Previous": [
+                ""
+            ],
             "Props": [
                 ""
             ],
@@ -1018,6 +1168,9 @@
             "Refresh": [
                 ""
             ],
+            "Reliability: %d / 100": [
+                ""
+            ],
             "Reload": [
                 ""
             ],
@@ -1039,6 +1192,18 @@
             "Reply (%d)": [
                 ""
             ],
+            "Reply failed.": [
+                "Error al subir."
+            ],
+            "Reply is empty.": [
+                ""
+            ],
+            "Reply posted.": [
+                ""
+            ],
+            "Reply right inside the row — no modal, no full-page navigation. Press R on any row to jump straight to the editor.": [
+                ""
+            ],
             "Reset to defaults": [
                 "Restablecer valores predeterminados"
             ],
@@ -1046,6 +1211,12 @@
                 ""
             ],
             "Resetting…": [
+                ""
+            ],
+            "Restore": [
+                ""
+            ],
+            "Restored %d.": [
                 ""
             ],
             "Reviews": [
@@ -1075,6 +1246,9 @@
             "Saturday": [
                 ""
             ],
+            "Save": [
+                ""
+            ],
             "Saved": [
                 ""
             ],
@@ -1084,11 +1258,17 @@
             "Saving…": [
                 "Subiendo…"
             ],
+            "Score new comments with AI": [
+                ""
+            ],
             "Screenshots": [
                 ""
             ],
             "Search WordPress.org…": [
                 ""
+            ],
+            "Search comments…": [
+                "Buscar medios"
             ],
             "Search installed plugins…": [
                 ""
@@ -1108,6 +1288,9 @@
             "See author, comments, categories, tags, attached media, and revisions for this entry.": [
                 ""
             ],
+            "Select a full URL (https://…) in your reply, then click the link button.": [
+                ""
+            ],
             "Select a user to see their profile here.": [
                 ""
             ],
@@ -1117,6 +1300,9 @@
             "Select an item to preview it here.": [
                 ""
             ],
+            "Send reply": [
+                ""
+            ],
             "Settings sections": [
                 ""
             ],
@@ -1124,6 +1310,9 @@
                 ""
             ],
             "Shortcut": [
+                ""
+            ],
+            "Show author insights": [
                 ""
             ],
             "Show in": [
@@ -1156,6 +1345,18 @@
             "Sort by": [
                 ""
             ],
+            "Spam": [
+                ""
+            ],
+            "Spam confidence score": [
+                ""
+            ],
+            "Spam score: %1$d / 100. %2$s": [
+                ""
+            ],
+            "Spam score: %d / 100.": [
+                ""
+            ],
             "Spatial": [
                 ""
             ],
@@ -1166,6 +1367,9 @@
                 ""
             ],
             "Steps to reproduce (bug only)": [
+                ""
+            ],
+            "Submitted on": [
                 ""
             ],
             "Sunday": [
@@ -1216,6 +1420,9 @@
             "This component has no help descriptor yet. Add `static help` to its class for a fuller reference.": [
                 ""
             ],
+            "This plugin does not ship a wp.org download package. Update it manually from its source.": [
+                ""
+            ],
             "This plugin doesn’t ship screenshots.": [
                 ""
             ],
@@ -1246,7 +1453,19 @@
             "Top topics": [
                 ""
             ],
+            "Total comments": [
+                ""
+            ],
             "Total content": [
+                ""
+            ],
+            "Trash": [
+                ""
+            ],
+            "Trashed %d.": [
+                ""
+            ],
+            "Triage in one place": [
                 ""
             ],
             "Tuesday": [
@@ -1264,7 +1483,25 @@
             "Type: %s": [
                 ""
             ],
+            "Un-spammed %d.": [
+                ""
+            ],
+            "Unapprove": [
+                ""
+            ],
+            "Unapproved %d.": [
+                ""
+            ],
+            "Undo": [
+                ""
+            ],
+            "Undo failed.": [
+                "Error al subir."
+            ],
             "Undocumented — declared via static props.": [
+                ""
+            ],
+            "Undone.": [
                 ""
             ],
             "Unified": [
@@ -1279,11 +1516,23 @@
             "Unknown error.": [
                 ""
             ],
+            "Update %d": [
+                "Añadir %s"
+            ],
             "Update available": [
                 ""
             ],
+            "Update of %1$s failed: %2$s": [
+                "Error al subir."
+            ],
+            "Update to %s": [
+                "Añadir %s"
+            ],
             "Updated %s": [
                 "Añadir %s"
+            ],
+            "Updating…": [
+                "Subiendo…"
             ],
             "Upload Plugin": [
                 "Subir nueva"
@@ -1311,6 +1560,9 @@
             ],
             "Uploading…": [
                 "Subiendo…"
+            ],
+            "Use the native Comments window": [
+                ""
             ],
             "Use the native Pages window": [
                 ""
@@ -1366,10 +1618,16 @@
             "Wednesday": [
                 ""
             ],
+            "Welcome to the new Comments": [
+                "Cambiar a modo escritorio"
+            ],
             "Welcome to the new Plugins window": [
                 ""
             ],
             "What happened? What did you expect?": [
+                ""
+            ],
+            "When a new comment lands, your configured AI provider scores it for spam and hostility. The verdict appears in the per-row chip and is folded into the spam confidence score. Token usage applies — admin-only site setting.": [
                 ""
             ],
             "Width of the dock and size of its icons.": [
@@ -1386,6 +1644,15 @@
             ],
             "WordPress Desktop Mode": [
                 "Escritorio %d"
+            ],
+            "Wrap selection in a link": [
+                ""
+            ],
+            "Write a reply…": [
+                ""
+            ],
+            "You can't edit this comment.": [
+                "Lo sentimos, no tienes permiso para acceder al escritorio de WordPress."
             ],
             "You do not have permission to manage plugins.": [
                 ""
@@ -1428,6 +1695,9 @@
             ],
             "sk-…": [
                 ""
+            ],
+            "updated": [
+                "%d actualización"
             ],
             "· %d open tab": [
                 "· %d pestaña abierta",

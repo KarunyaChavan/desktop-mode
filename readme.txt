@@ -8,7 +8,7 @@ Stable tag: 0.8.3
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Reimagines the WordPress admin as a desktop OS — draggable, resizable, minimizable windows on a desktop, with a dock. Purely opt-in per user. Made by Automattic.
+Reimagines the WordPress admin as a desktop OS with draggable windows and a dock. Per-user opt-in. By Automattic.
 
 == Description ==
 

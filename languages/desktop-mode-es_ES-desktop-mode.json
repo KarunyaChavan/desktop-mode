@@ -30,6 +30,9 @@
             "%1$d posts · %2$d pages": [
                 ""
             ],
+            "%1$s %2$s": [
+                ""
+            ],
             "%1$s updated to %2$s.": [
                 ""
             ],
@@ -151,6 +154,12 @@
             "A platform-wide AI key is configured. You can optionally set a personal key below to override it.": [
                 ""
             ],
+            "A plugin with the same folder name is already installed.": [
+                ""
+            ],
+            "A plugin with the same folder name is already installed. Replacing it overwrites the installed files. Any local edits to the plugin will be lost. The plugin will keep its activation state.": [
+                ""
+            ],
             "A real gallery on Browse — clean cards with rating, install count, last updated, and a click-anywhere detail flyout. Subtle hover lift, lazy-loaded icons, infinite scroll.": [
                 ""
             ],
@@ -189,6 +198,12 @@
             ],
             "Activate": [
                 ""
+            ],
+            "Activate Plugin": [
+                "Subiendo…"
+            ],
+            "Activate failed: %s": [
+                "Error al subir."
             ],
             "Activating…": [
                 "Subiendo…"
@@ -523,6 +538,9 @@
             "Dock style": [
                 "Tamaño del dock"
             ],
+            "Done": [
+                ""
+            ],
             "Double-click to open.": [
                 ""
             ],
@@ -733,9 +751,6 @@
             "Installed %s.": [
                 ""
             ],
-            "Installed %s. Activate it from the Installed tab.": [
-                ""
-            ],
             "Installing…": [
                 "Subiendo…"
             ],
@@ -840,6 +855,9 @@
             ],
             "Minimize": [
                 "Minimizar"
+            ],
+            "Missing-import warner — live demo": [
+                ""
             ],
             "Moderate": [
                 ""
@@ -1102,6 +1120,12 @@
             "Plugin": [
                 ""
             ],
+            "Plugin activated.": [
+                ""
+            ],
+            "Plugin installed successfully.": [
+                ""
+            ],
             "Plugin shortcut. Double-click to open.": [
                 ""
             ],
@@ -1183,7 +1207,16 @@
             "Remove custom image": [
                 "Eliminar imagen personalizada"
             ],
+            "Replace": [
+                "Error al subir."
+            ],
+            "Replace existing plugin?": [
+                ""
+            ],
             "Replaces the classic Posts list iframe with a native, table-driven window: sticky header, server-paginated rows, multi-select bulk actions, and a sub-row preview. On by default. Toggle off to return to the classic experience.": [
+                ""
+            ],
+            "Replacing existing plugin…": [
                 ""
             ],
             "Replies (%d)": [
@@ -1412,6 +1445,9 @@
                 ""
             ],
             "The dock repaints LIVE after every install / activate / deactivate / delete. No reload, no stale tile, no \"wait, did that work?\".": [
+                ""
+            ],
+            "The three <wpd-*> tags below are intentionally bogus. Open the browser console: within ~2 seconds you should see three console.error entries from the framework, each pointing the developer at the fix (typo with \"did you mean\", and unknown tags). The tags are kept off-screen so they do not affect layout. Remove this section in your fork if you want a quieter Components tab.": [
                 ""
             ],
             "The underlying entity is no longer available.": [

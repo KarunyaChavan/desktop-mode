@@ -4,7 +4,7 @@ Tags: desktop, admin, ui, productivity, ai
 Requires at least: 6.0
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 0.8.3
+Stable tag: 0.8.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -106,6 +106,14 @@ The plugin bundles the following third-party JavaScript library, loaded on deman
 * **[PixiJS](https://pixijs.com/)** (MIT License) — used by the interactive **OS Settings → About** scene, the **Content Graph** window, and built-in canvas wallpapers (e.g. the animated WordPress logo). PixiJS is loaded from the plugin's own `assets/vendor/` directory; no CDN requests are made.
 
 == Changelog ==
+
+= 0.8.4 =
+* Faster Desktop Mode, main bundle cut by 59 %
+* "Edit Post" from the front-end admin bar opens nothing
+* Cross-page admin-link clicks: state, destructive actions, referer hint
+* Warn loudly when a `<wpd-*>` tag is used without being imported
+* Support re-uploading existing plugins, add post-install Activate panel
+* Restore the full WordPress command palette inside Cmd+K
 
 = 0.8.3 =
 * Feat comments as native windows

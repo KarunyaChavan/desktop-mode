@@ -20,6 +20,7 @@ import {
 	setUserAssociations,
 } from './openers';
 import { getTypes } from './registry';
+// Pre-registered globally by the lazy shell-overlays bundle (Stage 10) — see src/shell-overlays/entry.ts.
 
 const TAB_ID = 'desktop-mode-file-associations';
 

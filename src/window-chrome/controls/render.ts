@@ -23,6 +23,7 @@ import { paintTitleBarButtonIcon } from '../../title-bar-buttons/paint-icon';
 
 import type { Window as DesktopWindow } from '../../window';
 import type { WindowControlsConfig } from '../../types';
+// Pre-registered globally by the lazy shell-overlays bundle (Stage 10) — see src/shell-overlays/entry.ts.
 
 /**
  * Resolve the control list for a window, partitioned by placement.

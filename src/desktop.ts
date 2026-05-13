@@ -96,7 +96,7 @@ import {
 	type LayoutDispatcher,
 } from './desktop-layout';
 // `createApplyPayload` is consumed inside `boot/menu-refresh.ts` since 0.8.1.
-import { AiAssistant, type AiAssistantApi } from './ai-assistant';
+import { AiAssistantStub, type AiAssistantApi } from './ai-assistant';
 import { createAsk } from './ai/ask';
 import {
 	attachBroadcastBus,
@@ -160,14 +160,22 @@ import {
 	type DockRailRenderer,
 } from './dock-rail';
 import { createWidgetRegistrySync } from './widgets/server-sync';
-import { WPD_COMPONENT_TAGS } from './ui/components';
+import { WPD_COMPONENT_TAGS } from './ui/components/tags';
 import {
 	registerModule,
 	type ModuleDef,
 } from './modules/registry';
-import { wpdConfirm } from './ui/components/wpd-confirm-dialog/wpd-confirm-dialog';
+import { wpdConfirm } from './wpd-confirm';
+import { preloadShellOverlays } from './shell-overlays/loader';
+import { preloadWindowSystem } from './window-system/loader';
 import type { WallpaperDef } from './wallpapers/types';
-import './plugins';
+// Built-in plugins used to be side-effect-imported from `./plugins`.
+// As of 0.8.4 each built-in plugin ships as its own lazy-loaded
+// bundle and is registered through the same server-side
+// `desktop_mode_register_wallpaper()` / `desktop_mode_register_*()` APIs
+// third-party plugins use, so the shell no longer pulls them into
+// `desktop.min.js`. See `includes/wallpapers.php` for the animated
+// WP logo wallpaper's registration.
 import {
 	filesApi,
 	filesRest,
@@ -424,7 +432,7 @@ export interface WpDesktopPublicApi {
 	 * ... })` calls: plugins declare only what they care about, and
 	 * the shell fills in the boilerplate.
 	 */
-	registerWindow: ( def: NativeWindowDef ) => DesktopWindow;
+	registerWindow: ( def: NativeWindowDef ) => Promise< DesktopWindow >;
 	/**
 	 * Open (or focus) a server-registered native window by id —
 	 * the same path the dock click + wallpaper-icon click go
@@ -1571,24 +1579,32 @@ function init(): void {
 			aiPlatformSettingsUrl: config.aiPlatformSettingsUrl ?? '',
 			extendedOptions: config.extendedOptions ?? null,
 			extendedOptionsUrl: config.extendedOptionsUrl ?? '',
+			osSettingsPanelBundleUrl: config.osSettingsPanelBundleUrl ?? '',
 		},
 		wallpaperLayer ?? new WallpaperLayer( document.createElement( 'div' ), pluginUrl ),
 	);
 	osSettings.apply();
 
-	// AI Assistant — mounts the spotlight overlay onto document.body and
-	// wires the global Cmd+K shortcut. aiSearchUrl comes from PHP config;
-	// falls back to an empty string when AI is not configured (the search
-	// will return a 403 from the permission gate and show an error).
-	const aiAssistant = new AiAssistant( {
-		aiSearchUrl: config.aiSearchUrl ?? '',
-		aiSearchStreamUrl: config.aiSearchStreamUrl ?? '',
-		restNonce: config.restNonce,
-		// Transport picker lives in OS Settings → AI Settings. Read live
-		// (not captured at construction) so a change applies on the next
-		// search without a page reload.
-		getTransport: () => osSettings.getOsSettingsSnapshot().ai.transport,
-	} );
+	// AI Assistant — main bundle ships a tiny stub matching the same
+	// AiAssistantApi contract. The 38 kB implementation lives in its
+	// own `ai-assistant[.min].js` bundle and is `<script>`-injected on
+	// the user's first invocation, so first-paint pays nothing for it.
+	// aiSearchUrl comes from PHP config; falls back to an empty string
+	// when AI is not configured (the search will return a 403 from the
+	// permission gate and show an error). aiAssistantBundleUrl is
+	// always emitted by PHP — never empty when the shell is loaded.
+	const aiAssistant = new AiAssistantStub(
+		{
+			aiSearchUrl: config.aiSearchUrl ?? '',
+			aiSearchStreamUrl: config.aiSearchStreamUrl ?? '',
+			restNonce: config.restNonce,
+			// Transport picker lives in OS Settings → AI Settings. Read
+			// live (not captured at construction) so a change applies on
+			// the next search without a page reload.
+			getTransport: () => osSettings.getOsSettingsSnapshot().ai.transport,
+		},
+		config.aiAssistantBundleUrl ?? '',
+	);
 
 	// Late-bind the programmatic `ask` entry point. Passing `config`
 	// through a getter (rather than capturing at construction time)
@@ -1761,7 +1777,7 @@ function init(): void {
 		adminUrl: config.adminUrl,
 		deriveSlug: ( url ) => deriveWindowId( url, config.adminUrl ),
 		openWindow: ( windowConfig ) => {
-			manager.open( windowConfig );
+			void manager.open( windowConfig );
 		},
 		findDockEntry: findDockEntryForUrl,
 	} );
@@ -2030,7 +2046,7 @@ function init(): void {
 	 * @since 0.18.0
 	 */
 	function openOsSettings(): void {
-		manager.open( {
+		void manager.open( {
 			id: OS_SETTINGS_WINDOW_ID,
 			baseId: OS_SETTINGS_WINDOW_ID,
 			url: '#os-settings',
@@ -2051,7 +2067,7 @@ function init(): void {
 	 * and any future widget all reach the same window instance.
 	 */
 	function openBugReport(): void {
-		manager.open( {
+		void manager.open( {
 			id: BUG_REPORT_WINDOW_ID,
 			baseId: BUG_REPORT_WINDOW_ID,
 			url: `#${ BUG_REPORT_WINDOW_ID }`,
@@ -2146,7 +2162,18 @@ function init(): void {
 	//      with the user's chosen startup.
 	const hasSession = !! ( config.session && config.session.windows && config.session.windows.length > 0 );
 	if ( hasSession ) {
-		restoreSession( manager, config, desktopArea );
+		// Fire-and-forget: the boot path doesn't need to wait for
+		// session restore to complete before proceeding with the
+		// rest of setup. Windows appear asynchronously as the lazy
+		// `window-system[.min].js` bundle resolves and each
+		// `manager.open(...)` finishes. Restore errors are logged
+		// rather than surfaced — a broken session shouldn't strand
+		// the desktop.
+		void restoreSession( manager, config, desktopArea ).catch( ( err ) => {
+			if ( typeof console !== 'undefined' ) {
+				console.error( '[desktop-mode] session restore failed:', err );
+			}
+		} );
 	}
 	const defaultEnabled = config.defaultWindow?.enabled !== false;
 	const defaultUrlEarly = config.defaultWindow?.url ?? '';
@@ -2157,7 +2184,11 @@ function init(): void {
 		config.fromPortal &&
 		( hasSession || ! defaultEnabled || isNativeDefault );
 	if ( ! suppressAutoOpen ) {
-		openCurrentPage( manager, config );
+		void openCurrentPage( manager, config ).catch( ( err ) => {
+			if ( typeof console !== 'undefined' ) {
+				console.error( '[desktop-mode] openCurrentPage failed:', err );
+			}
+		} );
 	}
 
 	// Persistence.
@@ -2703,7 +2734,15 @@ function init(): void {
 			if ( tryNativeUrlRemap( url ) ) {
 				return true;
 			}
-			return !! manager.open( { id, baseId: id, url, title, icon } );
+			// Fire-and-forget: `installFilesOpenDeps` expects a sync
+			// boolean meaning "did we accept the open intent?". The
+			// open dispatch is intent-only — the lazy
+			// `window-system[.min].js` bundle finishes constructing
+			// the actual `<Window>` asynchronously. We return `true`
+			// to signal acceptance; failures inside the lazy path
+			// surface via the manager's normal error channels.
+			void manager.open( { id, baseId: id, url, title, icon } );
+			return true;
 		},
 		openNativeWindow: ( id ) => nativeWindows.openById( id ),
 		deriveWindowId: ( url: string ) => deriveWindowId( url, config.adminUrl ),
@@ -2769,6 +2808,32 @@ function init(): void {
 	// `wp.desktop.notify` API. No-op when `config.pwa` is absent
 	// (chromeless context, classic admin, older PHP build).
 	bootstrapPwa( config, showToast );
+
+	// Pre-load the shell-overlays bundle (toast + confirm-dialog +
+	// context-menu component classes) in the background once we're
+	// past the boot path. By the time the user fires their first
+	// `showToast()` / `wpdConfirm()` / right-click, the components
+	// are already registered and the overlay opens with no
+	// perceptible latency. Idle-callback when available, falls back
+	// to a 0ms timer so even non-supporting browsers get the
+	// "after first paint" timing.
+	const overlayPreload = (): void => {
+		preloadShellOverlays( config.shellOverlaysBundleUrl ?? '' );
+		// Window system (Stage 11) — preload alongside the
+		// overlays. By the time the user clicks an icon and
+		// `windowManager.open()` runs, the lazy bundle is
+		// registered and `createWindow()`'s `await` resolves on
+		// the sync fast path. Session-restore and openCurrentPage
+		// race the preload, but both are explicit `await
+		// manager.open(...)` paths so they just wait an extra
+		// frame.
+		preloadWindowSystem( config.windowSystemBundleUrl ?? '' );
+	};
+	if ( typeof window.requestIdleCallback === 'function' ) {
+		window.requestIdleCallback( overlayPreload, { timeout: 1500 } );
+	} else {
+		window.setTimeout( overlayPreload, 0 );
+	}
 
 	doAction( HOOKS.INIT, { config } );
 

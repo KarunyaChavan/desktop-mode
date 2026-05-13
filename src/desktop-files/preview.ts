@@ -23,6 +23,7 @@ import { __, sprintf } from '../i18n';
 import { joinRestUrl } from '../rest-url';
 import { trackedFetch } from '../tracked-fetch';
 import type { RestPlacementShape } from './rest';
+// Pre-registered globally by the lazy shell-overlays bundle (Stage 10) — see src/shell-overlays/entry.ts.
 
 interface FetchInit extends RequestInit {
 	silent?: boolean;

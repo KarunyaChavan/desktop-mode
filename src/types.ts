@@ -1792,6 +1792,57 @@ export interface DesktopConfig {
 	 */
 	aiSearchStreamUrl?: string;
 	/**
+	 * Fully-qualified URL of the lazy-loaded AI Assistant bundle —
+	 * the script `<script>`-injected by the main-bundle stub on the
+	 * user's first invocation. PHP picks `.js` vs `.min.js` based on
+	 * `SCRIPT_DEBUG` and appends `?ver=DESKTOP_MODE_VERSION` for
+	 * cache busting.
+	 *
+	 * @since 0.8.4
+	 */
+	aiAssistantBundleUrl?: string;
+	/**
+	 * Fully-qualified URL of the lazy-loaded About-scene bundle —
+	 * the script `<script>`-injected by the main-bundle loader the
+	 * first time the user opens OS Settings → About. Hosts a single
+	 * 25 kB PixiJS particle scene; never reached unless the user
+	 * navigates to that tab.
+	 *
+	 * @since 0.8.4
+	 */
+	aboutSceneBundleUrl?: string;
+	/**
+	 * Fully-qualified URL of the lazy-loaded OS Settings panel
+	 * bundle. The main bundle ships a thin `OsSettings.renderPanel`
+	 * stub that `<script>`-injects this on first open. Holds every
+	 * panel section renderer + the ~13 `<wpd-*>` component classes
+	 * that only the panel uses, so nothing about Settings ships in
+	 * `desktop.min.js`.
+	 *
+	 * @since 0.8.4
+	 */
+	osSettingsPanelBundleUrl?: string;
+	/**
+	 * Fully-qualified URL of the lazy-loaded shell-overlays bundle.
+	 * Holds `<wpd-toast>`, `<wpd-confirm-dialog>`,
+	 * `<wpd-context-menu>` and their siblings — components only
+	 * needed for triggered actions (toast.show, wpdConfirm,
+	 * right-click). Main pre-loads this after first paint so the
+	 * first user trigger feels instant.
+	 *
+	 * @since 0.8.4
+	 */
+	shellOverlaysBundleUrl?: string;
+	/**
+	 * Fully-qualified URL of the lazy window-system bundle (Stage
+	 * 11). The `Window` class + its DOM / pointer / tab / chrome
+	 * helpers live here; the main bundle's `WindowManager.open()`
+	 * (now async) `<script>`-injects this on demand.
+	 *
+	 * @since 0.8.4
+	 */
+	windowSystemBundleUrl?: string;
+	/**
 	 * Platform-wide AI settings — only present for admins (null for
 	 * non-admin users so the key is never leaked in the page source).
 	 * @since 0.14.0

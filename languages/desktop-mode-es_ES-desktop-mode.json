@@ -115,6 +115,9 @@
             "%s is already installed. Open it from your apps menu or home screen.": [
                 ""
             ],
+            "%s is already up to date.": [
+                "%s (ya añadido)"
+            ],
             "%s is currently editing": [
                 ""
             ],
@@ -127,7 +130,13 @@
             "%s — open windows": [
                 ""
             ],
+            "%s+": [
+                ""
+            ],
             "%s+ active": [
+                ""
+            ],
+            "%s+ active installs": [
                 ""
             ],
             "(folder)": [
@@ -277,10 +286,16 @@
             "Author": [
                 ""
             ],
+            "Author URL": [
+                ""
+            ],
             "Author archive": [
                 ""
             ],
             "Author insights drawer": [
+                ""
+            ],
+            "Author website": [
                 ""
             ],
             "Author · %s": [
@@ -436,6 +451,9 @@
             "Contributors · %d": [
                 ""
             ],
+            "Could not delete sharing data.": [
+                "No se pudieron cargar tus medios: %s"
+            ],
             "Could not initialise the graph renderer.": [
                 ""
             ],
@@ -461,6 +479,9 @@
                 "No se pudieron cargar tus medios."
             ],
             "Could not load reviews.": [
+                "No se pudieron cargar tus medios."
+            ],
+            "Couldn’t load reviews": [
                 "No se pudieron cargar tus medios."
             ],
             "Couldn’t load the revision content. You may not have permission to view it.": [
@@ -499,14 +520,26 @@
             "Delete": [
                 ""
             ],
+            "Delete data": [
+                ""
+            ],
             "Delete failed: %s": [
                 "Error al subir."
+            ],
+            "Delete folder sharing data": [
+                ""
+            ],
+            "Delete folder sharing data?": [
+                ""
             ],
             "Delete plugin?": [
                 ""
             ],
             "Delete selected plugins?": [
                 ""
+            ],
+            "Deleting…": [
+                "Subiendo…"
             ],
             "Describe the issue or the feature you have in mind.": [
                 ""
@@ -528,6 +561,9 @@
             ],
             "Desktop layout": [
                 "Escritorio 1"
+            ],
+            "Details": [
+                ""
             ],
             "Dock %s back to widget column": [
                 ""
@@ -643,6 +679,9 @@
             "Failed to load graph.": [
                 ""
             ],
+            "Fast — 15s (not recommended)": [
+                ""
+            ],
             "Favorites": [
                 ""
             ],
@@ -658,6 +697,9 @@
             "Fewer than 10 active": [
                 ""
             ],
+            "Files REST endpoint is not available.": [
+                ""
+            ],
             "First post": [
                 ""
             ],
@@ -671,6 +713,12 @@
                 ""
             ],
             "Fit graph to view": [
+                ""
+            ],
+            "Folder sharing": [
+                ""
+            ],
+            "Folder sharing data deleted.": [
                 ""
             ],
             "Found a bug or have a feature idea? Fill this in and we will open a pre-filled GitHub issue for you to review and submit.": [
@@ -698,6 +746,9 @@
                 "Añadir nuevo escritorio"
             ],
             "Hide from dock": [
+                ""
+            ],
+            "How often the WordPress Heartbeat API runs. Faster = quicker live updates (autosaves, lock checks, the heartbeat widget) at the cost of more server traffic. 15 s triples server load vs. the 60 s default — use sparingly. 30 s and 45 s require a page reload to apply exactly; 15 s and 60 s take effect immediately.": [
                 ""
             ],
             "How the assistant streams progress while it works. Pick Off if your host blocks long-lived connections (e.g. you see \"Lost connection to the assistant\" errors).": [
@@ -781,6 +832,9 @@
             "Last seen": [
                 ""
             ],
+            "Latest": [
+                ""
+            ],
             "Latest post": [
                 ""
             ],
@@ -793,6 +847,9 @@
             "Let me moderate": [
                 ""
             ],
+            "Lets you share desktop folders with other users or roles, with read or read+write access. When off, every share-related affordance (Share button, invites, \"Leave shared folder\") disappears from your shell and the heartbeat stops delivering share payloads to your session. Other users are unaffected. On by default.": [
+                ""
+            ],
             "Live progress updates": [
                 ""
             ],
@@ -802,10 +859,16 @@
             "Loading author insights…": [
                 "Subiendo…"
             ],
+            "Loading description…": [
+                "Subiendo…"
+            ],
             "Loading details…": [
                 "Subiendo…"
             ],
             "Loading footprint…": [
+                ""
+            ],
+            "Loading from WordPress.org…": [
                 ""
             ],
             "Loading graph…": [
@@ -843,6 +906,9 @@
             ],
             "Media Library": [
                 "Biblioteca de medios"
+            ],
+            "Medium — 30s": [
+                ""
             ],
             "Member since": [
                 ""
@@ -904,6 +970,9 @@
             "Network error — check your connection.": [
                 ""
             ],
+            "Network only": [
+                ""
+            ],
             "New": [
                 "Añadir %s"
             ],
@@ -917,6 +986,9 @@
                 ""
             ],
             "No %s yet.": [
+                ""
+            ],
+            "No FAQ": [
                 ""
             ],
             "No HD images found. Try unchecking the filter, or upload a larger image.": [
@@ -940,6 +1012,9 @@
             "No categories assigned.": [
                 ""
             ],
+            "No changelog": [
+                ""
+            ],
             "No comments on this post yet.": [
                 ""
             ],
@@ -950,6 +1025,9 @@
                 ""
             ],
             "No content available.": [
+                ""
+            ],
+            "No description": [
                 ""
             ],
             "No images in your Media Library yet.": [
@@ -1051,6 +1129,9 @@
             "Open on startup": [
                 "Abrir al iniciar"
             ],
+            "Open reviews on WordPress.org ↗": [
+                ""
+            ],
             "Open revision in WordPress": [
                 ""
             ],
@@ -1120,13 +1201,22 @@
             "Plugin": [
                 ""
             ],
+            "Plugin URL": [
+                ""
+            ],
             "Plugin activated.": [
+                ""
+            ],
+            "Plugin file": [
                 ""
             ],
             "Plugin installed successfully.": [
                 ""
             ],
             "Plugin shortcut. Double-click to open.": [
+                ""
+            ],
+            "Plugin website": [
                 ""
             ],
             "Plugins and the admin menu will appear here once they’re registered.": [
@@ -1166,6 +1256,12 @@
                 ""
             ],
             "Re-shows the one-time introduction dialog the next time you open each redesigned native window.": [
+                ""
+            ],
+            "Read all reviews on WordPress.org ↗": [
+                ""
+            ],
+            "Read full review ↗": [
                 ""
             ],
             "Read on WordPress.org ↗": [
@@ -1237,6 +1333,18 @@
             "Reply right inside the row — no modal, no full-page navigation. Press R on any row to jump straight to the editor.": [
                 ""
             ],
+            "Requires PHP": [
+                ""
+            ],
+            "Requires PHP %s+": [
+                ""
+            ],
+            "Requires WP %s+": [
+                ""
+            ],
+            "Requires WordPress": [
+                "Azul WordPress"
+            ],
             "Reset to defaults": [
                 "Restablecer valores predeterminados"
             ],
@@ -1254,6 +1362,9 @@
             ],
             "Reviews": [
                 "Vista general"
+            ],
+            "Reviews live on WordPress.org": [
+                ""
             ],
             "Revision": [
                 ""
@@ -1290,6 +1401,9 @@
             ],
             "Saving…": [
                 "Subiendo…"
+            ],
+            "Scope": [
+                ""
             ],
             "Score new comments with AI": [
                 ""
@@ -1348,6 +1462,9 @@
             "Show author insights": [
                 ""
             ],
+            "Show desktop when clicking the wallpaper": [
+                ""
+            ],
             "Show in": [
                 "Mostrando %d"
             ],
@@ -1366,13 +1483,22 @@
             "Single bottom dock holding every menu — core and plugin apps share one rail.": [
                 ""
             ],
+            "Site-wide destructive action (admin only). Drops every shares table — invites, decisions, share rows. Empty tables are recreated immediately so the feature still works for anyone who wants to start fresh. Use this on sites that never needed sharing to clear the data outright.": [
+                ""
+            ],
             "Site-wide enhancements that apply to every user. Toggling requires the affected page to be reloaded for the change to take effect.": [
                 ""
             ],
             "Size": [
                 ""
             ],
+            "Size on disk": [
+                ""
+            ],
             "Slots": [
+                ""
+            ],
+            "Slow — 45s": [
                 ""
             ],
             "Sort by": [
@@ -1432,7 +1558,13 @@
             "Teal": [
                 "Verde azulado"
             ],
+            "Tested up to WP %s": [
+                ""
+            ],
             "Tested up to WordPress %s": [
+                ""
+            ],
+            "Text domain": [
                 ""
             ],
             "That file isn’t an image.": [
@@ -1456,7 +1588,19 @@
             "This component has no help descriptor yet. Add `static help` to its class for a fuller reference.": [
                 ""
             ],
+            "This drops every shares table on the site (current + legacy). All invites, accept/deny decisions, and share rows are permanently removed. Recipients lose their access until someone shares with them again. The empty tables are recreated on the next admin load so the feature keeps working — but every existing share is gone.": [
+                ""
+            ],
             "This plugin does not ship a wp.org download package. Update it manually from its source.": [
+                ""
+            ],
+            "This plugin doesn’t ship a changelog.": [
+                ""
+            ],
+            "This plugin doesn’t ship a description in its header.": [
+                ""
+            ],
+            "This plugin doesn’t ship an FAQ.": [
                 ""
             ],
             "This plugin doesn’t ship screenshots.": [
@@ -1546,6 +1690,9 @@
             "Unknown": [
                 ""
             ],
+            "Unknown author": [
+                ""
+            ],
             "Unknown entity type.": [
                 ""
             ],
@@ -1624,6 +1771,9 @@
             "Version": [
                 ""
             ],
+            "Very slow — 60s (default)": [
+                ""
+            ],
             "View": [
                 ""
             ],
@@ -1639,6 +1789,9 @@
             "View details for %s": [
                 ""
             ],
+            "View on WordPress.org": [
+                "Azul WordPress"
+            ],
             "View on WordPress.org ↗": [
                 ""
             ],
@@ -1647,6 +1800,9 @@
             ],
             "Wallpaper": [
                 "Fondo de pantalla"
+            ],
+            "We couldn’t pull the review feed here. Open the full thread on WordPress.org to read every review.": [
+                ""
             ],
             "Website": [
                 ""
@@ -1681,10 +1837,19 @@
             "WordPress Desktop Mode": [
                 "Escritorio %d"
             ],
+            "WordPress Heartbeat rate": [
+                "Azul WordPress"
+            ],
+            "WordPress.org didn’t respond. Try again in a moment.": [
+                ""
+            ],
             "Wrap selection in a link": [
                 ""
             ],
             "Write a reply…": [
+                ""
+            ],
+            "Write a review on WordPress.org ↗": [
                 ""
             ],
             "You can't edit this comment.": [
@@ -1703,6 +1868,9 @@
                 ""
             ],
             "an experiment by Automattic": [
+                ""
+            ],
+            "by": [
                 ""
             ],
             "by %s": [
@@ -1726,6 +1894,9 @@
             "in %s": [
                 ""
             ],
+            "macOS-style gesture: a left click on the empty desktop minimizes every window, and a second click restores them. When on, the matching \"Show desktop\" entry is removed from the wallpaper context menu — the click gesture replaces it. Off by default.": [
+                ""
+            ],
             "one contributor": [
                 ""
             ],
@@ -1734,6 +1905,9 @@
             ],
             "updated": [
                 "%d actualización"
+            ],
+            "v%s": [
+                ""
             ],
             "· %d open tab": [
                 "· %d pestaña abierta",

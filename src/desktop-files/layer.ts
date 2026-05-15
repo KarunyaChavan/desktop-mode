@@ -43,6 +43,7 @@ import {
 } from './grid';
 import type { RestPlacementShape } from './rest';
 import type { FilesState } from './store';
+import { isConflict, showConflictToast } from './conflict-toast';
 import type { DragManagerApi, DropTarget } from '../drag';
 import { trashFolderWithUndo, trashPlacementWithUndo } from './trash';
 import type {
@@ -109,6 +110,23 @@ export interface FilesLayer {
 	 * @since 0.8.0
 	 */
 	reflow: () => void;
+	/**
+	 * Resolves once this folder's initial REST hydration has settled
+	 * (either the placements list returned and was upserted into the
+	 * store, OR the folder was already hydrated from a previous mount
+	 * and no REST call was needed).
+	 *
+	 * Boot path uses this to defer revealing the desktop area until
+	 * the icon set is final, so the user doesn't see a brief paint
+	 * with only server-side wallpaper icons (then a re-paint a frame
+	 * later when REST returns the folders + placements). Never
+	 * rejects — REST failure is reported via `console.error` from the
+	 * mount path and the promise still resolves so the caller's
+	 * reveal-after-hydrate isn't stranded forever.
+	 *
+	 * @since 0.18.x
+	 */
+	readonly hydrated: Promise< void >;
 	dispose: () => void;
 }
 
@@ -374,20 +392,28 @@ export function mountFilesLayer( host: HTMLElement, folderId = 0 ): FilesLayer {
 					placementId: data.placement.id,
 				} );
 				void rest
-					.updatePlacement( data.placement.id, {
-						x: cell.x,
-						y: cell.y,
-						parentId: folderId,
-					} )
+					.updatePlacement(
+						data.placement.id,
+						{
+							x: cell.x,
+							y: cell.y,
+							parentId: folderId,
+						},
+						data.placement.updatedAtMs,
+					)
 					.then( ( server ) => {
 						filesStoreApi.upsertPlacement( server, 'remote' );
 					} )
 					.catch( ( err ) => {
-						// eslint-disable-next-line no-console
-						console.error(
-							'[desktop-mode] files: drag persist failed',
-							err,
-						);
+						if ( isConflict( err ) ) {
+							showConflictToast( err );
+						} else {
+							// eslint-disable-next-line no-console
+							console.error(
+								'[desktop-mode] files: drag persist failed',
+								err,
+							);
+						}
 						filesStoreApi.upsertPlacement( data.placement );
 					} );
 				return;
@@ -470,7 +496,15 @@ export function mountFilesLayer( host: HTMLElement, folderId = 0 ): FilesLayer {
 	repaint( filesStoreApi.getState() );
 	const off = filesStoreApi.subscribe( repaint );
 
-	// Hydrate from REST if we haven't seen this folder yet.
+	// Hydrate from REST if we haven't seen this folder yet. Resolves
+	// the `hydrated` promise so the boot path can hold off revealing
+	// the desktop until the placements list has landed in the store
+	// — avoids the "wallpaper icons paint first, folders/posts a
+	// frame later" staircase the user sees on F5.
+	let resolveHydrated: () => void = () => undefined;
+	const hydrated = new Promise< void >( ( resolve ) => {
+		resolveHydrated = resolve;
+	} );
 	if ( ! filesStoreApi.getState().hydratedFolders.has( folderId ) ) {
 		void rest
 			.listPlacements( folderId )
@@ -480,7 +514,14 @@ export function mountFilesLayer( host: HTMLElement, folderId = 0 ): FilesLayer {
 			.catch( ( err ) => {
 				// eslint-disable-next-line no-console
 				console.error( '[desktop-mode] files: failed to hydrate folder', folderId, err );
+			} )
+			.finally( () => {
+				resolveHydrated();
 			} );
+	} else {
+		// Already hydrated — resolve on the next microtask so the
+		// caller's `.then` runs after the synchronous repaint above.
+		queueMicrotask( resolveHydrated );
 	}
 
 	/**
@@ -656,6 +697,7 @@ export function mountFilesLayer( host: HTMLElement, folderId = 0 ): FilesLayer {
 		},
 		sort,
 		reflow,
+		hydrated,
 		dispose() {
 			off();
 			resizeObserver?.disconnect();
@@ -813,18 +855,24 @@ function registerFolderDropTarget(
 				};
 				filesStoreApi.upsertPlacement( next );
 				void rest
-					.updatePlacement( data.placement.id, {
-						parentId: targetFolderId,
-					} )
+					.updatePlacement(
+						data.placement.id,
+						{ parentId: targetFolderId },
+						data.placement.updatedAtMs,
+					)
 					.then( ( server ) => {
 						filesStoreApi.upsertPlacement( server, 'remote' );
 					} )
 					.catch( ( err ) => {
-						// eslint-disable-next-line no-console
-						console.error(
-							'[desktop-mode] files: move-into-folder persist failed',
-							err,
-						);
+						if ( isConflict( err ) ) {
+							showConflictToast( err );
+						} else {
+							// eslint-disable-next-line no-console
+							console.error(
+								'[desktop-mode] files: move-into-folder persist failed',
+								err,
+							);
+						}
 						filesStoreApi.upsertPlacement( data.placement );
 					} );
 				return;
@@ -1061,9 +1109,14 @@ function attachContextMenu(
 							};
 							filesStoreApi.upsertPlacement( optimistic );
 							try {
+								const folderUpdatedAtMs =
+									filesStoreApi
+										.getState()
+										.folders.get( folderId )?.updatedAtMs ?? 0;
 								const updated = await rest.updateFolder(
 									folderId,
 									{ name: trimmed },
+									folderUpdatedAtMs,
 								);
 								filesStoreApi.upsertFolder( updated );
 								// Refresh the placement list for the
@@ -1097,14 +1150,24 @@ function attachContextMenu(
 					} );
 				},
 			} );
-			items.push( {
-				id: 'delete-folder',
-				label: 'Move folder to Trash',
-				icon: 'dashicons-trash',
-				sort: 90,
-				danger: true,
-				onClick: () => trashFolderWithUndo( placement ),
-			} );
+			// Only surface "Move folder to Trash" when the server
+			// says the viewer is allowed to. For a recipient's root
+			// placement of a SHARED folder the share-trash gate
+			// returns false (the correct affordance is "Leave shared
+			// folder", added by `share-menu-items.ts`), so the
+			// destructive entry stays out of their menu entirely.
+			// `undefined` falls through for legacy payloads — the
+			// server REST 403 + toast still backstop those.
+			if ( placement.canTrash !== false ) {
+				items.push( {
+					id: 'delete-folder',
+					label: 'Move folder to Trash',
+					icon: 'dashicons-trash',
+					sort: 90,
+					danger: true,
+					onClick: () => trashFolderWithUndo( placement ),
+				} );
+			}
 		} else {
 			// Two cases get "Hide from desktop" instead of "Move to
 			// Trash":
@@ -1137,7 +1200,16 @@ function attachContextMenu(
 					sort: 90,
 					onClick: () => hidePromotedDockItem( hideId ),
 				} );
-			} else {
+			} else if ( placement.canTrash !== false ) {
+				// Only surface "Move to Trash" when the server says
+				// the viewer is allowed to. `canTrash === false`
+				// applies to placements inside a shared folder where
+				// the viewer lacks write capability — without this
+				// guard the user could pick the menu item, attempt
+				// the REST call, and only see the failure logged to
+				// the console while the tile sat un-moved. `undefined`
+				// (legacy payloads) falls through to "let it through"
+				// so older clients keep behaving as today.
 				items.push( {
 					id: 'remove',
 					label: 'Move to Trash',

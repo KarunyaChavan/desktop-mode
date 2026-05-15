@@ -128,6 +128,13 @@ function _parseRaw( parsed: Partial<OsSettingsState> ): OsSettingsState {
 				? parsed.libraryHdOnly
 				: DEFAULTS.libraryHdOnly,
 		ai: sanitizeAi( parsed.ai ),
+		heartbeatRate:
+			parsed.heartbeatRate === 15 ||
+			parsed.heartbeatRate === 30 ||
+			parsed.heartbeatRate === 45 ||
+			parsed.heartbeatRate === 60
+				? parsed.heartbeatRate
+				: DEFAULTS.heartbeatRate,
 		nativePostsEnabled:
 			typeof parsed.nativePostsEnabled === 'boolean'
 				? parsed.nativePostsEnabled
@@ -160,6 +167,10 @@ function _parseRaw( parsed: Partial<OsSettingsState> ): OsSettingsState {
 			typeof parsed.showDesktopOnWallpaperClick === 'boolean'
 				? parsed.showDesktopOnWallpaperClick
 				: DEFAULTS.showDesktopOnWallpaperClick,
+		foldersSharingEnabled:
+			typeof parsed.foldersSharingEnabled === 'boolean'
+				? parsed.foldersSharingEnabled
+				: DEFAULTS.foldersSharingEnabled,
 		itemVisibility: sanitizeItemVisibility( parsed.itemVisibility ),
 		dockOrder: sanitizeDockOrder( parsed.dockOrder ),
 	};

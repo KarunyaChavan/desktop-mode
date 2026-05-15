@@ -558,6 +558,13 @@ function desktop_mode_files_restore_placement( $user_id, $placement_id ) {
 		array( '%d' )
 	);
 
+	// Enforce the "tombstones never refer to alive rows" invariant:
+	// a placement coming back to life must not carry lingering
+	// tombstones from an earlier (reversible) removal. Without this,
+	// every heartbeat tick would re-deliver those tombstones to the
+	// client and the row would flicker off the desktop on each tick.
+	desktop_mode_files_clear_tombstones_for( 'placement', $placement_id );
+
 	/**
 	 * @since 0.8.0
 	 *
@@ -913,6 +920,27 @@ function desktop_mode_files_restore_folder( $user_id, $folder_id ) {
 		desktop_mode_files_restore_folder( $user_id, (int) $nid );
 	}
 
+	// Enforce the "tombstones never refer to alive rows" invariant
+	// across the restored cohort: the folder itself, every cascade-
+	// restored placement that lived inside it, and every nested
+	// folder recursed into above already clears its own. Here we
+	// scrub the FOLDER's own tombstones plus those of every cascade-
+	// restored placement so a fresh heartbeat tick can't surface
+	// them as `removed.*` against the now-alive rows.
+	desktop_mode_files_clear_tombstones_for( 'folder', $folder_id );
+	$restored_placement_ids = $wpdb->get_col(
+		$wpdb->prepare(
+			"SELECT id FROM {$tables['placements']}
+			WHERE trashed_via_folder IS NULL
+				AND ( parent_id = %d OR ( file_type = 'folder' AND file_ref = %s ) )",
+			$folder_id,
+			(string) $folder_id
+		)
+	);
+	foreach ( (array) $restored_placement_ids as $rpid ) {
+		desktop_mode_files_clear_tombstones_for( 'placement', (int) $rpid );
+	}
+
 	/**
 	 * @since 0.8.0
 	 *
@@ -967,6 +995,62 @@ function desktop_mode_files_purge_folder( $user_id, $folder_id ) {
 	 * @param array $row
 	 */
 	do_action( 'desktop_mode_files_before_purge_folder', $folder_id, $user_id, $row );
+
+	// Cascade-revoke every share + per-user decision for the folder
+	// BEFORE deleting the folder row. Without this, purge left
+	// orphan `folder_shares` + `share_user_decisions` rows pointing
+	// at a folder id that no longer exists — `compute_visible_folders`
+	// would still join them, and the row leak grew with every
+	// recycle-bin empty. Mirrors the same cleanup
+	// `desktop_mode_files_delete_folder_recursive` does for the
+	// "delete from desktop" path.
+	$share_ids = (array) $wpdb->get_col(
+		$wpdb->prepare(
+			"SELECT id FROM {$tables['shares']} WHERE folder_id = %d",
+			$folder_id
+		)
+	);
+	if ( ! empty( $share_ids ) ) {
+		$placeholders = implode( ',', array_fill( 0, count( $share_ids ), '%d' ) );
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+		$wpdb->query(
+			$wpdb->prepare(
+				"DELETE FROM {$tables['decisions']} WHERE share_id IN ($placeholders)",
+				$share_ids
+			)
+		);
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+		$wpdb->query(
+			$wpdb->prepare(
+				"DELETE FROM {$tables['shares']} WHERE id IN ($placeholders)",
+				$share_ids
+			)
+		);
+	}
+
+	// Drop every placement that points AT this folder (recipients'
+	// root tiles + the owner's own), with tombstones so connected
+	// clients scrub the tile via the heartbeat.
+	$pointing_ids = (array) $wpdb->get_col(
+		$wpdb->prepare(
+			"SELECT id FROM {$tables['placements']}
+			WHERE file_type = 'folder' AND file_ref = %s",
+			(string) $folder_id
+		)
+	);
+	foreach ( $pointing_ids as $pid ) {
+		desktop_mode_files_write_tombstone( 'placement', (int) $pid );
+	}
+	if ( ! empty( $pointing_ids ) ) {
+		$placeholders = implode( ',', array_fill( 0, count( $pointing_ids ), '%d' ) );
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+		$wpdb->query(
+			$wpdb->prepare(
+				"DELETE FROM {$tables['placements']} WHERE id IN ($placeholders)",
+				$pointing_ids
+			)
+		);
+	}
 
 	$wpdb->delete(
 		$tables['placements'],

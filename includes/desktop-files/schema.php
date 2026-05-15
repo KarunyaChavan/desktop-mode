@@ -32,7 +32,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'DESKTOP_MODE_FILES_SCHEMA_VERSION', '7' );
+define( 'DESKTOP_MODE_FILES_SCHEMA_VERSION', '10' );
 define( 'DESKTOP_MODE_FILES_SCHEMA_OPTION', 'desktop_mode_files_schema_version' );
 
 /**
@@ -48,6 +48,8 @@ function desktop_mode_files_table_names() {
 		'placements' => $wpdb->prefix . 'desktop_mode_file_placements',
 		'folders'    => $wpdb->prefix . 'desktop_mode_folders',
 		'tombstones' => $wpdb->prefix . 'desktop_mode_file_tombstones',
+		'shares'     => $wpdb->prefix . 'desktop_mode_folder_shares',
+		'decisions'  => $wpdb->prefix . 'desktop_mode_share_user_decisions',
 	);
 }
 
@@ -123,6 +125,26 @@ function desktop_mode_files_install_schema() {
 		KEY kind_removed (kind, removed_at_ms)
 	) $charset_collate;";
 
+	// Schema v9 — per-principal grants (`folder_shares` table) +
+	// per-user opt-in decisions (`share_user_decisions` table).
+	// `share_meta` on the folders row stays as a diagnostic-only
+	// column; visibility is computed entirely from the shares
+	// table.
+	//
+	// Shares + decisions are intentionally NOT routed through
+	// dbDelta. Their `ensure_*_table()` helpers below are the sole
+	// creators. dbDelta uses `DESCRIBE` to detect existing tables
+	// and falls back to a bare `CREATE TABLE` (no IF NOT EXISTS)
+	// when DESCRIBE returns empty — under certain MySQL / MariaDB
+	// configurations (case-folding mismatches, transient connection
+	// states, the `lower_case_table_names` quirk on case-sensitive
+	// filesystems) DESCRIBE can fail on a table that physically
+	// exists, and dbDelta then issues a CREATE that blows up with
+	// "Table … already exists" (MySQL error 1050). The `ensure_*`
+	// helpers use INFORMATION_SCHEMA + explicit `CREATE TABLE IF NOT
+	// EXISTS`, which is bullet-proof; v9 → vN column additions are
+	// handled by `ALTER TABLE … ADD COLUMN` inside the same helper.
+
 	dbDelta( $placements_sql );
 	dbDelta( $folders_sql );
 	dbDelta( $tombstones_sql );
@@ -147,6 +169,23 @@ function desktop_mode_files_install_schema() {
 	// the duplicate shortcuts again. Must run AFTER dedupe —
 	// adding a unique key against duplicate rows would fail.
 	desktop_mode_files_ensure_unique_placement_index();
+
+	// v9: belt-and-suspenders existence check for the shares +
+	// decisions tables. The folder-sharing feature is the
+	// canonical source of truth for "who can see this folder" —
+	// the `share_meta` JSON column on the folders table remains
+	// for diagnostic purposes only and is not consulted by the
+	// visibility resolver.
+	desktop_mode_files_ensure_shares_table();
+	desktop_mode_files_ensure_decisions_table();
+
+	// v10: `updated_by` column on placements so the If-Match 409
+	// conflict toast names the SESSION that actually won the race,
+	// not just whoever currently owns the row. Critical for the
+	// shared-write scenario where User B (writer recipient) moves a
+	// placement and User C gets the conflict — without this column,
+	// the toast would blame User A (owner of the row).
+	desktop_mode_files_ensure_updated_by_column();
 
 	update_option( DESKTOP_MODE_FILES_SCHEMA_OPTION, DESKTOP_MODE_FILES_SCHEMA_VERSION );
 
@@ -173,18 +212,39 @@ function desktop_mode_files_ensure_trash_columns() {
 	global $wpdb;
 	$tables = desktop_mode_files_table_names();
 
+	// Two-worker race protection: between the INFORMATION_SCHEMA
+	// check and the ALTER, a concurrent worker (cron + admin-init,
+	// REST + heartbeat) can run the same check, see the column
+	// missing, and both fire ALTER. The second hits MySQL error
+	// 1060 ("Duplicate column"). Suppressing wpdb errors around
+	// the ALTER swallows that benign log line. The column ends up
+	// present either way — we re-verify with a second
+	// INFORMATION_SCHEMA query and only surface an error when the
+	// column is genuinely missing after the attempt.
 	$ensure = static function ( $table, $column, $definition ) use ( $wpdb ) {
-		$exists = (int) $wpdb->get_var(
-			$wpdb->prepare(
-				"SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-				WHERE TABLE_SCHEMA = DATABASE()
-					AND TABLE_NAME = %s
-					AND COLUMN_NAME = %s",
-				$table,
-				$column
-			)
-		);
-		if ( 0 === $exists ) {
+		$col_exists = static function () use ( $wpdb, $table, $column ) {
+			return (int) $wpdb->get_var(
+				$wpdb->prepare(
+					"SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+					WHERE TABLE_SCHEMA = DATABASE()
+						AND TABLE_NAME = %s
+						AND COLUMN_NAME = %s",
+					$table,
+					$column
+				)
+			);
+		};
+		if ( $col_exists() > 0 ) {
+			return;
+		}
+		$prev_suppress = $wpdb->suppress_errors( true );
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$wpdb->query( "ALTER TABLE `{$table}` ADD COLUMN `{$column}` {$definition}" );
+		$wpdb->suppress_errors( $prev_suppress );
+		// Belt-and-suspenders: if the column STILL isn't there
+		// after the ALTER (real schema error, not a race), retry
+		// once unsuppressed so WP_DEBUG users see the cause.
+		if ( $col_exists() === 0 ) {
 			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 			$wpdb->query( "ALTER TABLE `{$table}` ADD COLUMN `{$column}` {$definition}" );
 		}
@@ -217,6 +277,26 @@ function desktop_mode_files_dedupe_placements() {
 	global $wpdb;
 	$tables = desktop_mode_files_table_names();
 	$tbl    = $tables['placements'];
+
+	// Once the unique index exists, MySQL prevents duplicate
+	// inserts at the DB level — dedupe is a no-op and the
+	// table-scanning DELETE is pure waste on every install_schema
+	// call. Skip in that case so the cost is paid exactly once,
+	// during the v4 → v5 migration.
+	$has_unique = (int) $wpdb->get_var(
+		$wpdb->prepare(
+			"SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+			WHERE TABLE_SCHEMA = DATABASE()
+				AND TABLE_NAME   = %s
+				AND INDEX_NAME   = %s",
+			$tbl,
+			'placement_unique'
+		)
+	);
+	if ( $has_unique > 0 ) {
+		return;
+	}
+
 	// Self-join keeps the minimum id per (user_id, parent_id,
 	// file_type, file_ref) and deletes everything else. Restricted
 	// to shortcut + folder placements, where duplicates are never
@@ -263,11 +343,165 @@ function desktop_mode_files_ensure_unique_placement_index() {
 		)
 	);
 	if ( 0 === $exists ) {
+		// Suppress errors on the ADD KEY in case a concurrent
+		// worker won the same race (MySQL 1061: "Duplicate key
+		// name"). The index ends up present either way; the
+		// check-then-add pattern is benign under contention.
+		$prev_suppress = $wpdb->suppress_errors( true );
 		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 		$wpdb->query(
 			"ALTER TABLE `{$tbl}`
 			ADD UNIQUE KEY `placement_unique`
 				(user_id, parent_id, file_type, file_ref)"
+		);
+		$wpdb->suppress_errors( $prev_suppress );
+	}
+}
+
+/**
+ * Add the v10 `updated_by` column to the placements table.
+ *
+ * Tracks which user last mutated the row (created, moved, restored).
+ * Used by `desktop_mode_files_check_if_match()` so the If-Match 409
+ * conflict toast attributes the change to the SESSION that won the
+ * race rather than to the row's static owner — critical when a
+ * writer recipient of a shared folder rearranges placements and
+ * another viewer hits a stale `If-Match`.
+ *
+ * NULL on legacy rows (pre-v10). The conflict resolver falls back
+ * to `user_id` when this column is NULL, matching the old behavior.
+ *
+ * @since 0.18.x (schema v10)
+ * @internal
+ */
+function desktop_mode_files_ensure_updated_by_column() {
+	global $wpdb;
+	$tables = desktop_mode_files_table_names();
+	$tbl    = $tables['placements'];
+	$exists = (int) $wpdb->get_var(
+		$wpdb->prepare(
+			"SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+			WHERE TABLE_SCHEMA = DATABASE()
+				AND TABLE_NAME = %s
+				AND COLUMN_NAME = %s",
+			$tbl,
+			'updated_by'
+		)
+	);
+	if ( 0 === $exists ) {
+		// Suppress errors so a concurrent worker that already won
+		// the same race doesn't fire a benign MySQL 1060
+		// ("Duplicate column"). The column ends up present either
+		// way.
+		$prev_suppress = $wpdb->suppress_errors( true );
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$wpdb->query( "ALTER TABLE `{$tbl}` ADD COLUMN `updated_by` BIGINT UNSIGNED NULL AFTER `user_id`" );
+		$wpdb->suppress_errors( $prev_suppress );
+	}
+}
+
+/**
+ * Belt-and-suspenders verifier for the v8 `shares` table. `dbDelta`
+ * has known edge cases where a brand-new table with `UNIQUE KEY`
+ * declarations on a non-`utf8mb4` collation gets silently skipped
+ * on some MySQL/MariaDB combos; we mirror the trash-columns
+ * pattern and `CREATE TABLE IF NOT EXISTS` the row explicitly.
+ *
+ * @since 0.18.0
+ * @internal
+ */
+function desktop_mode_files_ensure_shares_table() {
+	global $wpdb;
+	$tables          = desktop_mode_files_table_names();
+	$charset_collate = $wpdb->get_charset_collate();
+	$tbl             = $tables['shares'];
+
+	$exists = (int) $wpdb->get_var(
+		$wpdb->prepare(
+			"SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES
+			WHERE TABLE_SCHEMA = DATABASE()
+				AND TABLE_NAME   = %s",
+			$tbl
+		)
+	);
+	if ( 0 === $exists ) {
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$wpdb->query(
+			"CREATE TABLE IF NOT EXISTS `{$tbl}` (
+				id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+				target_type VARCHAR(32) NOT NULL DEFAULT 'folder',
+				folder_id BIGINT UNSIGNED NOT NULL,
+				principal_type VARCHAR(16) NOT NULL,
+				principal_ref VARCHAR(191) NOT NULL,
+				capability VARCHAR(8) NOT NULL DEFAULT 'read',
+				state VARCHAR(16) NOT NULL DEFAULT 'pending',
+				invited_by BIGINT UNSIGNED NOT NULL,
+				invited_at_ms BIGINT UNSIGNED NOT NULL,
+				decided_at_ms BIGINT UNSIGNED NULL,
+				PRIMARY KEY  (id),
+				UNIQUE KEY uniq_principal (target_type, folder_id, principal_type, principal_ref),
+				KEY by_principal (principal_type, principal_ref, state),
+				KEY target (target_type, folder_id)
+			) $charset_collate"
+		);
+	} else {
+		// Existing table — make sure `target_type` is there for
+		// installs that ran a pre-target_type build of v8.
+		$has_col = (int) $wpdb->get_var(
+			$wpdb->prepare(
+				"SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+				WHERE TABLE_SCHEMA = DATABASE()
+					AND TABLE_NAME = %s
+					AND COLUMN_NAME = %s",
+				$tbl,
+				'target_type'
+			)
+		);
+		if ( 0 === $has_col ) {
+			// Same TOCTOU rationale as the other ensure_* helpers
+			// — concurrent worker that already added the column
+			// surfaces a benign MySQL 1060 we should swallow.
+			$prev_suppress = $wpdb->suppress_errors( true );
+			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$wpdb->query( "ALTER TABLE `{$tbl}` ADD COLUMN `target_type` VARCHAR(32) NOT NULL DEFAULT 'folder' AFTER `id`" );
+			$wpdb->suppress_errors( $prev_suppress );
+		}
+	}
+}
+
+/**
+ * Belt-and-suspenders verifier for the decisions table.
+ *
+ * @since 0.18.0
+ * @internal
+ */
+function desktop_mode_files_ensure_decisions_table() {
+	global $wpdb;
+	$tables          = desktop_mode_files_table_names();
+	$charset_collate = $wpdb->get_charset_collate();
+	$tbl             = $tables['decisions'];
+
+	$exists = (int) $wpdb->get_var(
+		$wpdb->prepare(
+			"SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES
+			WHERE TABLE_SCHEMA = DATABASE()
+				AND TABLE_NAME   = %s",
+			$tbl
+		)
+	);
+	if ( 0 === $exists ) {
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$wpdb->query(
+			"CREATE TABLE IF NOT EXISTS `{$tbl}` (
+				id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+				share_id BIGINT UNSIGNED NOT NULL,
+				user_id BIGINT UNSIGNED NOT NULL,
+				state VARCHAR(16) NOT NULL DEFAULT 'pending',
+				decided_at_ms BIGINT UNSIGNED NOT NULL,
+				PRIMARY KEY  (id),
+				UNIQUE KEY uniq_share_user (share_id, user_id),
+				KEY by_user (user_id, state)
+			) $charset_collate"
 		);
 	}
 }

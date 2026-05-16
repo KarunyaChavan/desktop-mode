@@ -268,6 +268,51 @@ export const HOOKS = {
 	// CustomEvents but ship under the hook bus so plugins can use one
 	// idiomatic API for everything the shell emits.
 	// ------------------------------------------------------------------
+	/**
+	 * Filter, last call before a window's resolved geometry (x, y,
+	 * width, height, initialState) is baked into the `WindowConfig`
+	 * passed to the `Window` constructor. Lets a plugin override
+	 * default placement for windows it owns, snap restored bounds to
+	 * a different region, or force a particular initial state.
+	 *
+	 * Signature:
+	 *
+	 *     ( geometry: ResolvedWindowGeometry, ctx: WindowGeometryContext )
+	 *         => ResolvedWindowGeometry
+	 *
+	 * Where `ResolvedWindowGeometry = { x, y, width, height, state? }`
+	 * and `ctx = { windowId, baseId, hasSavedGeometry, callerPinned,
+	 * desktopRect }`.
+	 *
+	 * - `hasSavedGeometry` is `true` when the user previously
+	 *   dragged or resized this window and the resolved geometry
+	 *   includes those restored values. Plugins that want to
+	 *   "leave the user's saved layout alone" should bail when
+	 *   this is true.
+	 * - `callerPinned` is `true` when the caller of `manager.open()`
+	 *   passed at least one of `{ x, y, width, height, initialState }`
+	 *   explicitly. For NATIVE windows this is usually true (the
+	 *   framework's native-window opener passes the registry's
+	 *   declared dimensions); for admin-page iframe windows opened
+	 *   from the dock this is usually false. The filter is free to
+	 *   override registry defaults — `callerPinned: true` does NOT
+	 *   mean "leave it alone."
+	 *
+	 * The shell re-clamps `width`/`height` to the registered
+	 * `minWidth`/`minHeight` after the filter returns — a buggy
+	 * filter cannot ship a sub-minimum window. `x` and `y` are
+	 * NOT re-clamped to the desktop rect after the filter (plugins
+	 * sometimes want to place windows partially off-screen for
+	 * deliberate stylistic reasons); the filter is responsible for
+	 * its own viewport math when it cares.
+	 *
+	 * Companion of `desktop_mode_register_window` server-side
+	 * defaults — runs every time a window opens, not just at
+	 * registration.
+	 *
+	 * @since 0.25.0
+	 */
+	WINDOW_GEOMETRY: 'desktop-mode.window.geometry',
 	/** Action, fires when a window is added to the stack. */
 	WINDOW_OPENED: 'desktop-mode.window.opened',
 	/**
@@ -585,11 +630,21 @@ export const HOOKS = {
 	DESKTOP_ICON_CLICKED: 'desktop-mode.desktop-icon.clicked',
 	/**
 	 * Action, fires after the wallpaper icon grid is rendered or
-	 * re-rendered. Payload: `{ ids: string[] }` — the ids in the
-	 * order they were painted. Plugins that decorate icons with
-	 * surfaces the framework doesn't natively expose (drag handles,
-	 * status dots) subscribe to this so their decorations survive a
-	 * live menu refresh that legitimately rebuilds the grid.
+	 * re-rendered. Payload:
+	 *
+	 *     {
+	 *         ids: string[];                          // paint order
+	 *         container: HTMLElement;                  // <div class="desktop-mode-icons">
+	 *         tiles: ReadonlyMap<string, HTMLElement>; // id → tile <button>
+	 *     }
+	 *
+	 * Plugins that decorate icons with surfaces the framework doesn't
+	 * natively expose (drag handles, status dots, cursor adornments)
+	 * subscribe here so their decorations survive a live menu refresh
+	 * that legitimately rebuilds the grid. The `container` and
+	 * `tiles` map mirror the {@link DOCK_AFTER_RENDER}
+	 * `tileElements` contract — reach into them directly instead of
+	 * re-`querySelector`ing the rendered DOM.
 	 *
 	 * Notification badges have a first-class API since 0.24.0 —
 	 * use `wp.desktop.icons.setBadge( id, count )` (and subscribe
@@ -598,12 +653,15 @@ export const HOOKS = {
 	 * a plugin that uses the API doesn't need to re-decorate on
 	 * every render.
 	 *
-	 * Idempotent payload (`{ ids: [] }`) when the icon list is
-	 * empty; suppressed entirely when the rendered DOM is
-	 * unchanged from the previous call (the fingerprint short-
-	 * circuit upstream skips both the rebuild and this signal).
+	 * Suppressed entirely when the rendered DOM is unchanged from
+	 * the previous call (the fingerprint short-circuit upstream
+	 * skips both the rebuild and this signal). When the icon list
+	 * is empty the hook does not fire at all — the previous
+	 * container is removed and no new one is appended.
 	 *
 	 * @since 0.21.0
+	 * @since 0.25.0 — `container` + `tiles` added to the payload
+	 *                  (`ids` retained for back-compat).
 	 */
 	DESKTOP_ICONS_RENDERED: 'desktop-mode.desktop-icons.rendered',
 	/**

@@ -926,6 +926,36 @@ export class WindowManager {
 		const previouslyFocused =
 			this._stack.length > 0 ? this._stack[ this._stack.length - 1 ] : null;
 
+		// A fullscreen window pins itself above all other windows via
+		// `z-index: var(--desktop-mode-z-fullscreen)`, so any newly-
+		// focused window would render behind it. Default: exit
+		// fullscreen on focus change. Plugins whose fullscreen surface
+		// is meant to persist (slideshow, video, game) can opt out via
+		// the `WINDOW_AUTO_EXIT_FULLSCREEN` filter.
+		//
+		// `previouslyFocused` above is `_stack[length-1]` — but `open()`
+		// pushes the new window onto the stack BEFORE calling `focus()`,
+		// so on the open path that snapshot is `win` itself. Find the
+		// other fullscreen window by `isFocused()` instead so the
+		// auto-exit covers open, activate, and restore-from-minimize
+		// uniformly.
+		const priorFullscreen = this._stack.find(
+			( w ) => w !== win && w.isFocused() && w.isFullscreen(),
+		);
+		if ( priorFullscreen ) {
+			const shouldExit = applyFilters<
+				boolean,
+				[ { windowId: string; focusedTo: string } ]
+			>(
+				HOOKS.WINDOW_AUTO_EXIT_FULLSCREEN,
+				true,
+				{ windowId: priorFullscreen.id, focusedTo: win.id },
+			);
+			if ( shouldExit ) {
+				priorFullscreen.toggleFullscreen();
+			}
+		}
+
 		// Remove from current position and push to top.
 		const idx = this._stack.indexOf( win );
 		if ( idx > -1 ) {

@@ -25,21 +25,16 @@ import {
 	renderStatusBarSegments,
 	type StatusBarSegment,
 } from '../desktop-files/folder-status-bar';
-import type { DragManagerApi } from '../drag';
 import type { ShortcutDragData } from '../desktop-files/drag-payloads';
-
-/**
- * Read the runtime DragManager. Boot order guarantees this exists by
- * the time this module's tile builders run — the My WordPress window
- * only mounts after `installPublicApi(desktopApi)` has wired the
- * manager onto `wp.desktop.dragManager`.
- */
-function getDragManager(): DragManagerApi | null {
-	const api = (
-		window as { wp?: { desktop?: { dragManager?: DragManagerApi } } }
-	).wp?.desktop?.dragManager;
-	return api ?? null;
-}
+import { getDragManager, stripTags } from './dom-utils';
+import {
+	getEntityRenderer,
+	registerEntityKind,
+	type EntityRenderHost,
+	type EntityRenderer,
+} from './kind-registry';
+import { renderMediaList } from './media-list';
+import { renderMediaDetail } from './media-detail';
 import {
 	renderBreadcrumbs,
 	type BreadcrumbSegment,
@@ -166,12 +161,6 @@ function openIframeWindow( opts: OpenWindowOptions ): void {
 	} );
 }
 
-function stripTags( html: string ): string {
-	const div = document.createElement( 'div' );
-	div.innerHTML = html;
-	return ( div.textContent ?? '' ).trim();
-}
-
 function getThumbnail( item: EntityListItem | EntityDetail ): string {
 	const media = item._embedded?.[ 'wp:featuredmedia' ]?.[ 0 ];
 	if ( ! media ) {
@@ -193,6 +182,16 @@ interface RenderState {
 	breadcrumbs: HTMLElement;
 	statusBar: HTMLElement;
 	teardown: Array< () => void >;
+	/**
+	 * Navigation history stack. Every `navigate()` call (except
+	 * "back") pushes the route it's leaving onto this stack; the
+	 * breadcrumb back button pops. Lets the user retrace cross-
+	 * hierarchy jumps (Media-detail → referenced post → back to
+	 * Media-detail), not just walk up the static folder tree.
+	 *
+	 * @since 0.21.0
+	 */
+	history: Route[];
 }
 
 interface StatusContext {
@@ -237,7 +236,20 @@ function pluralLabel(
 	return `${ n.toLocaleString() } ${ n === 1 ? singular : plural }`;
 }
 
-function navigate( state: RenderState, route: Route ): void {
+function navigate(
+	state: RenderState,
+	route: Route,
+	opts: { fromBack?: boolean } = {},
+): void {
+	// Push the route we're leaving onto the history stack so the
+	// back button can retrace cross-hierarchy jumps (e.g. Media
+	// → Media-detail → referenced post → back lands on Media-detail,
+	// not on the post's parent folder). Skipped on back-pops (we'd
+	// just re-add what we just removed) and on no-op re-navigations.
+	const sameRoute = routesEqual( state.route, route );
+	if ( ! opts.fromBack && ! sameRoute ) {
+		state.history.push( state.route );
+	}
 	clearTeardown( state );
 	state.route = route;
 	updateBreadcrumbs( state );
@@ -255,11 +267,16 @@ function navigate( state: RenderState, route: Route ): void {
 		return;
 	}
 	if ( route.kind === 'list' ) {
-		if ( entity.kind === 'user' ) {
-			renderUserEntityList( state, entity );
-		} else {
-			renderEntityList( state, entity );
+		const renderer = getEntityRenderer( entity.kind );
+		if ( renderer ) {
+			const host = makeRenderHost( state );
+			renderer( host, entity );
+			return;
 		}
+		// Unknown kind — fall back to the post renderer so older
+		// plugins that ship entities without a `kind` field keep
+		// working as they did before the registry.
+		renderEntityList( state, entity );
 		return;
 	}
 	if ( route.kind === 'detail' ) {
@@ -278,6 +295,69 @@ function navigate( state: RenderState, route: Route ): void {
 	}
 	if ( route.kind === 'user-footprint' ) {
 		renderUserFootprint( state, entity, route.userId, route.userName );
+		return;
+	}
+	if ( route.kind === 'media-detail' ) {
+		void renderMediaDetail( makeRenderHost( state ), route.mediaId );
+		// Defensive: every other branch in this switch ends with an
+		// explicit `return`. Keeping the symmetry means a new route
+		// kind added below won't silently fall through after a
+		// successful media-detail dispatch.
+		// eslint-disable-next-line no-useless-return
+		return;
+	}
+}
+
+/**
+ * Adapt the internal `RenderState` to the public `EntityRenderHost`
+ * contract consumed by registry-installed renderers. Hides the
+ * internal teardown / breadcrumb plumbing.
+ */
+function makeRenderHost( state: RenderState ): EntityRenderHost {
+	return {
+		body: state.body,
+		route: state.route,
+		navigate: ( route ) => navigate( state, route ),
+		addTeardown: ( fn ) => state.teardown.push( fn ),
+	};
+}
+
+/**
+ * Structural equality for `Route` discriminated-union values. Used
+ * to drop no-op re-navigations from the history stack — clicking
+ * the same tile twice shouldn't poison the back button.
+ */
+function routesEqual( a: Route, b: Route ): boolean {
+	if ( a.kind !== b.kind ) {
+		return false;
+	}
+	switch ( a.kind ) {
+		case 'root':
+			return true;
+		case 'list':
+			return a.entityId === ( b as { entityId: string } ).entityId;
+		case 'detail': {
+			const o = b as Extract< Route, { kind: 'detail' } >;
+			return a.entityId === o.entityId && a.postId === o.postId;
+		}
+		case 'sub-list': {
+			const o = b as Extract< Route, { kind: 'sub-list' } >;
+			return (
+				a.entityId === o.entityId &&
+				a.postId === o.postId &&
+				a.relation === o.relation
+			);
+		}
+		case 'user-footprint': {
+			const o = b as Extract< Route, { kind: 'user-footprint' } >;
+			return a.entityId === o.entityId && a.userId === o.userId;
+		}
+		case 'media-detail': {
+			const o = b as Extract< Route, { kind: 'media-detail' } >;
+			return a.entityId === o.entityId && a.mediaId === o.mediaId;
+		}
+		default:
+			return false;
 	}
 }
 
@@ -297,6 +377,8 @@ function parentRoute( route: Route ): Route {
 				postTitle: route.postTitle,
 			};
 		case 'user-footprint':
+			return { kind: 'list', entityId: route.entityId };
+		case 'media-detail':
 			return { kind: 'list', entityId: route.entityId };
 		default:
 			return { kind: 'root' };
@@ -380,15 +462,30 @@ function updateBreadcrumbs( state: RenderState ): void {
 			),
 		} );
 	}
+	if ( route.kind === 'media-detail' ) {
+		segments.push( { label: route.mediaTitle } );
+	}
 
 	renderBreadcrumbs( state.breadcrumbs, segments, {
 		onBack: () => {
-			if ( state.route.kind === 'root' ) {
+			// Prefer history (navigation back) over hierarchy
+			// (parent folder) so cross-tree jumps unwind in the
+			// order the user made them. The breadcrumb "My
+			// WordPress" jump lands at root WITH history non-empty
+			// — we mustn't early-return on `route.kind === 'root'`
+			// or that lands as a visually-enabled-but-no-op back
+			// button. `backDisabled` below gates the empty-history-
+			// at-root case, and the parent-route fallback collapses
+			// to a same-route no-op (routesEqual short-circuits
+			// the history push).
+			const previous = state.history.pop();
+			if ( previous ) {
+				navigate( state, previous, { fromBack: true } );
 				return;
 			}
-			navigate( state, parentRoute( state.route ) );
+			navigate( state, parentRoute( state.route ), { fromBack: true } );
 		},
-		backDisabled: isRoot,
+		backDisabled: isRoot && state.history.length === 0,
 	} );
 }
 
@@ -3138,22 +3235,61 @@ function openTileMenu(
 		menu.appendChild( opt );
 	};
 
-	addOption(
-		'open',
-		__( 'Open in editor', 'desktop-mode' ),
-		'dashicons-edit',
+	interface TileMenuOption {
+		id: string;
+		label: string;
+		icon: string;
+		danger?: boolean;
+		/**
+		 * Plugin-supplied click handler. Built-ins set this to null
+		 * so the static `wpd-context-menu-pick` switch below routes
+		 * them — keeps the existing semantics.
+		 */
+		onSelect?: ( () => void ) | null;
+	}
+
+	const baseOptions: TileMenuOption[] = [
+		{
+			id: 'open',
+			label: __( 'Open in editor', 'desktop-mode' ),
+			icon: 'dashicons-edit',
+		},
+		{
+			id: 'navigate-into',
+			label: __( 'Navigate into', 'desktop-mode' ),
+			icon: 'dashicons-category',
+		},
+		{
+			id: 'trash',
+			label: __( 'Move to Trash', 'desktop-mode' ),
+			icon: 'dashicons-trash',
+			danger: true,
+		},
+	];
+
+	/**
+	 * Let plugins add / remove / reorder context-menu entries
+	 * uniformly across every section. Plugin-added entries must
+	 * supply an `onSelect` handler (built-ins are dispatched by
+	 * the static switch below).
+	 */
+	const ctxFilter = {
+		entityId: entity.id,
+		kind: entity.kind ?? 'post',
+		item: item as unknown as Record< string, unknown >,
+	};
+	const options = applyFilters<
+		TileMenuOption[],
+		[ typeof ctxFilter ]
+	>(
+		'desktop-mode.my-wordpress.tile-context-menu',
+		baseOptions,
+		ctxFilter,
 	);
-	addOption(
-		'navigate-into',
-		__( 'Navigate into', 'desktop-mode' ),
-		'dashicons-category',
-	);
-	addOption(
-		'trash',
-		__( 'Move to Trash', 'desktop-mode' ),
-		'dashicons-trash',
-		true,
-	);
+	const finalOptions = Array.isArray( options ) ? options : baseOptions;
+	for ( const o of finalOptions ) {
+		addOption( o.id, o.label, o.icon, o.danger );
+	}
 
 	menu.addEventListener( 'wpd-context-menu-pick', ( e: Event ) => {
 		const detail = ( e as CustomEvent< { id: string } > ).detail;
@@ -3173,6 +3309,20 @@ function openTileMenu(
 		}
 		if ( detail.id === 'trash' ) {
 			void confirmTrash( state, ctx, entity, item.id, title );
+			return;
+		}
+		// Plugin-supplied entry — dispatch its `onSelect`.
+		const match = finalOptions.find( ( o ) => o.id === detail.id );
+		if ( match && typeof match.onSelect === 'function' ) {
+			try {
+				match.onSelect();
+			} catch ( err ) {
+				// eslint-disable-next-line no-console
+				console.error(
+					`[my-wordpress] tile-context-menu '${ detail.id }' onSelect threw:`,
+					err,
+				);
+			}
 		}
 	} );
 
@@ -5353,6 +5503,7 @@ function renderInto( body: HTMLElement ): void {
 		breadcrumbs: breadcrumbsHost,
 		statusBar: statusHost,
 		teardown: [],
+		history: [],
 	};
 	activeState = state;
 
@@ -5424,6 +5575,40 @@ const callback: RenderCallback = ( body ) => {
 window.desktopModeNativeWindows = window.desktopModeNativeWindows || {};
 window.desktopModeNativeWindows[ WINDOW_ID ] = callback;
 
+// Built-in entity-kind renderers. Third-party plugins can register
+// their own via `wp.desktop.myWordpress.registerEntityKind()`.
+registerEntityKind( 'post', ( host, entity ) => {
+	renderEntityList( asRenderState( host ), entity );
+} );
+registerEntityKind( 'user', ( host, entity ) => {
+	renderUserEntityList( asRenderState( host ), entity );
+} );
+registerEntityKind( 'media', renderMediaList );
+
+/**
+ * Recover the internal `RenderState` from an `EntityRenderHost`.
+ * Only the legacy renderers (`renderEntityList`,
+ * `renderUserEntityList`) still take the internal state directly;
+ * the registry passes the public host shape so plugins can call
+ * `host.navigate` / `host.addTeardown`. This shim bridges the
+ * two during the gradual rewrite.
+ */
+function asRenderState( host: EntityRenderHost ): RenderState {
+	if ( ! activeState ) {
+		throw new Error(
+			'[my-wordpress] asRenderState: called outside an active render.',
+		);
+	}
+	// Sanity check — the host MUST be derived from the active state
+	// or we're about to scribble into a defunct render frame.
+	if ( host.body !== activeState.body ) {
+		throw new Error(
+			'[my-wordpress] asRenderState: host body does not match active state.',
+		);
+	}
+	return activeState;
+}
+
 /* ------------------------------------------------------------------ *
  *  Public API — `wp.desktop.myWordpress.openDetail( … )`.
  *
@@ -5475,15 +5660,95 @@ function openDetail( args: OpenDetailArgs ): void {
 	desktop?.openWindow?.( WINDOW_ID, { source: 'my-wordpress/open-detail' } );
 }
 
+interface OpenMediaArgs {
+	mediaId: number;
+	mediaTitle?: string;
+}
+
+/**
+ * Route the My WordPress window directly into the media drill-in
+ * view for the given attachment. Mirrors `openDetail()` for posts.
+ *
+ * @public
+ * @since 0.21.0
+ */
+function openMedia( args: OpenMediaArgs ): void {
+	const route: Route = {
+		kind: 'media-detail',
+		entityId: 'media',
+		mediaId: args.mediaId,
+		mediaTitle: args.mediaTitle ?? `#${ args.mediaId }`,
+	};
+	if ( activeState ) {
+		navigate( activeState, route );
+		return;
+	}
+	pendingRoute = route;
+	const desktop = (
+		window.wp as
+			| {
+					desktop?: {
+						openWindow?: (
+							id: string,
+							opts?: { source?: string },
+						) => boolean;
+					};
+			}
+			| undefined
+	)?.desktop;
+	desktop?.openWindow?.( WINDOW_ID, { source: 'my-wordpress/open-media' } );
+}
+
 interface MyWordpressApi {
 	openDetail: ( args: OpenDetailArgs ) => void;
+	openMedia: ( args: OpenMediaArgs ) => void;
+	registerEntityKind: ( kind: string, renderer: EntityRenderer ) => () => void;
+}
+
+interface PendingEntry {
+	kind: string;
+	renderer: EntityRenderer;
+	slot: { unregister: ( () => void ) | null };
 }
 
 const desktopGlobal = (
 	window.wp as
-		| { desktop?: Record< string, unknown > & { myWordpress?: MyWordpressApi } }
+		| { desktop?: Record< string, unknown > & {
+				myWordpress?: MyWordpressApi & {
+					__pendingKinds?: PendingEntry[];
+				};
+			} }
 		| undefined
 )?.desktop;
 if ( desktopGlobal ) {
-	desktopGlobal.myWordpress = { openDetail };
+	// Drain the early-registration queue installed by
+	// `src/my-wordpress/early-api.ts` (which ships in the main
+	// `desktop.min.js` bundle). Lets plugin scripts that load
+	// before this lazy bundle register kinds without timing
+	// guards. We write the real `unregister` closure back into
+	// each queued entry's `slot` so any stub-unregister that the
+	// plugin already cached still works after the swap.
+	const pending = desktopGlobal.myWordpress?.__pendingKinds;
+	if ( Array.isArray( pending ) ) {
+		for ( const entry of pending ) {
+			try {
+				entry.slot.unregister = registerEntityKind(
+					entry.kind,
+					entry.renderer,
+				);
+			} catch ( err ) {
+				// eslint-disable-next-line no-console
+				console.error(
+					`[my-wordpress] queued registerEntityKind('${ entry.kind }') failed:`,
+					err,
+				);
+			}
+		}
+		pending.length = 0;
+	}
+	desktopGlobal.myWordpress = {
+		openDetail,
+		openMedia,
+		registerEntityKind,
+	};
 }

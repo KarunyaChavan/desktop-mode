@@ -36,6 +36,7 @@
  * @since 0.8.2
  */
 
+import { __ } from '../i18n';
 import { resolveDashicon } from '../ui/components/wpd-icon/dashicons-map';
 import {
 	getPixi,
@@ -54,8 +55,10 @@ import {
 } from './satellites';
 import type {
 	GraphEdge,
+	GraphGroupCatalogs,
 	GraphNode,
 	GraphPayload,
+	GroupFacet,
 	PostDetail,
 	PostTypeDescriptor,
 } from './types';
@@ -65,6 +68,56 @@ const NODE_FILL_FOCUS = 0x2c6be5;
 const NODE_FILL_NEIGHBOUR = 0x4f8bf3;
 const EDGE_BASE = 0x9aa6b6;
 const EDGE_HOT = 0x2c6be5;
+
+/**
+ * Per-dashicon visual-centre nudge applied on top of the
+ * `(0.5, 0.5)` text anchor — same idea as satellites'
+ * `KIND_ICON_NUDGE`, but stored as a fraction of the live fontSize
+ * because the node icon's size scales with `2 * node.radius`. Values
+ * are bbox-centre → visible-centre offsets:
+ *
+ *   - `Y_ASCENT` is a universal baseline correction (the dashicons
+ *     font's bbox is `ascent + descent` and the descent below the
+ *     baseline is unused space, so bbox-centred always parks the
+ *     visible glyph slightly above world-y=0).
+ *   - Per-icon entries override the baseline when the glyph is also
+ *     visually off-balance left-right (e.g. `admin-post`'s pushpin
+ *     head sits in the upper-left of its bbox, so the visible glyph
+ *     reads as top-left unless we nudge it down + right).
+ *
+ * Values are tuned against rendered output; pushing further without
+ * re-checking at multiple zoom levels usually over-shoots.
+ */
+const ICON_NUDGE_Y_ASCENT = 0;
+const ICON_NUDGE: Record< string, { x: number; y: number } > = {
+	'admin-post': { x: 0.06, y: 0.06 },
+};
+
+/**
+ * Per-facet tint for cluster label pills. Picked so each facet
+ * reads as its own "kind" at a glance and so cluster labels
+ * cannot be confused with node titles (which are dark text on
+ * a white pill). White text on a saturated background gives
+ * the visual contrast.
+ *
+ * The year + year-month facets share the orange tint — both are
+ * date buckets, so visually grouping them is correct.
+ *
+ * CSS strings (not Pixi colour ints) because cluster labels
+ * render as DOM elements over the canvas, not as Pixi children.
+ * Earlier they were Pixi `Graphics + Text`, but Pixi v8's batched
+ * renderer would intermittently crash with "Cannot read properties
+ * of null (reading 'clear')" when an external event (e.g. opening
+ * another desktop-mode window in an iframe) perturbed the canvas's
+ * GL context. DOM labels sidestep the Pixi renderer entirely.
+ */
+const GROUP_LABEL_COLOR: Record< GroupFacet, string > = {
+	category: '#2c6be5',
+	tag: '#2ca97a',
+	author: '#7c3aed',
+	year: '#ea580c',
+	year_month: '#ea580c',
+};
 
 const ZOOM_MIN = 0.15;
 const ZOOM_MAX = 4;
@@ -89,11 +142,28 @@ interface NodeView {
 	labelBg: PixiGraphics;
 	label: PixiText;
 	iconCharCode: string | null;
+	iconName: string;
 }
 
 interface EdgeView {
 	edge: GraphEdge;
 	gfx: PixiGraphics;
+}
+
+/**
+ * One label marker per non-empty cluster. Rendered as a DOM
+ * element overlaid on the Pixi canvas (see `GROUP_LABEL_COLOR`
+ * for why DOM, not Pixi). Repositioned each tick at the centroid
+ * of its member nodes, projected from world coords to canvas-local
+ * screen coords. `members` is the node-id list captured at grouping
+ * time so the per-frame centroid recompute is O(memberCount)
+ * instead of O(all nodes).
+ */
+interface GroupView {
+	key: string;
+	label: string;
+	el: HTMLDivElement;
+	members: number[];
 }
 
 export class GraphScene {
@@ -107,9 +177,62 @@ export class GraphScene {
 	private spokeLayer!: PixiContainer;
 	private nodeLayer!: PixiContainer;
 	private labelLayer!: PixiContainer;
+	// Per-cluster label DOM overlay — see the `GROUP_LABEL_COLOR`
+	// comment for why these are DOM elements, not Pixi children.
+	// The overlay sits absolutely positioned inside `host`, above
+	// the Pixi canvas, with `pointer-events: none` so it never
+	// steals interaction from the node layer.
+	private groupLabelOverlay: HTMLDivElement | null = null;
 	private satellites: SatelliteLayer | null = null;
 	private nodeViews = new Map< number, NodeView >();
 	private edgeViews: EdgeView[] = [];
+	private groupViews = new Map< string, GroupView >();
+	private currentGrouping: GroupFacet | null = null;
+	// Captured at setData() time; consulted by setGrouping() to
+	// resolve display labels for cluster markers (e.g. category names,
+	// author display names) without re-fetching.
+	private groupCatalogs: GraphGroupCatalogs = {
+		authors: {},
+		categories: {},
+		tags: {},
+	};
+	/**
+	 * Active grouping-change tween, or `null` when no transition is in
+	 * flight. While set, the per-frame tick lerps each non-pinned
+	 * node's position from its `start` to its `target` (ease-out
+	 * cubic) and SKIPS the sim integration so the two layout
+	 * mechanisms don't fight. When complete, the sim resumes and the
+	 * cluster force refines the final positions.
+	 *
+	 * Lets the user see a smooth flow to clusters instead of the
+	 * earlier hard snap, while still arriving at the well-separated
+	 * end state from the first frame (no need to drag a node to
+	 * trigger the "good" layout).
+	 */
+	private groupingTween: {
+		startTime: number;
+		duration: number;
+		starts: Map< number, { x: number; y: number } >;
+		targets: Map< number, { x: number; y: number } >;
+	} | null = null;
+	// Auto-fit-follow loop. After grouping is applied, the initial
+	// `fitToViewOfTargets` frames the seed positions; the cluster
+	// force then refines and members can drift past the framed
+	// viewport. While the layout is still moving, refit every tick;
+	// once peak velocity falls below the threshold, stop chasing.
+	// Hard-capped at `fitFollowMaxDurationMs` so a stuck high-motion
+	// situation (e.g. user drags a node mid-settle) never grabs the
+	// camera forever.
+	private fitFollowActive = false;
+	private fitFollowStartedAt = 0;
+	// Has any peak-velocity sample since arming been above the threshold?
+	// Without this gate, the first `advanceFitFollow` after the tween
+	// ends finds velocities at exactly 0 (the tween zeroes them every
+	// frame by design) and disarms before the cluster force has a
+	// chance to inject any motion at all.
+	private fitFollowSawMotion = false;
+	private readonly fitFollowMaxDurationMs = 3000;
+	private readonly fitFollowVelocityThreshold = 1.0;
 	private nodes: GraphNode[] = [];
 	private edges: GraphEdge[] = [];
 	private sim: ForceSim | null = null;
@@ -191,6 +314,16 @@ export class GraphScene {
 			antialias: true,
 			autoDensity: true,
 			resolution: Math.min( window.devicePixelRatio || 1, 2 ),
+			// Dedicated ticker, NOT the shared one. Other desktop-mode
+			// bundles (posts-window, recycle-bin, …) also load Pixi via
+			// `loadModules('pixijs')` — sharing `Ticker.shared` across
+			// independent Application instances has bitten us: a render
+			// triggered by another bundle's app would also drive our
+			// renderer, sometimes while the browser had perturbed our
+			// canvas (iframe mount, layout shift) and our pipes weren't
+			// ready, producing the "Cannot read properties of null
+			// (reading 'clear')" crash inside `Batcher.break()`.
+			sharedTicker: false,
 		} );
 		this.app = app;
 		this.host.appendChild( app.canvas );
@@ -215,6 +348,63 @@ export class GraphScene {
 			this.nodeLayer,
 			this.labelLayer,
 		);
+		// DOM overlay for cluster labels, layered above the Pixi
+		// canvas. Pointer-events disabled so clicks pass through to
+		// the canvas.
+		this.groupLabelOverlay = document.createElement( 'div' );
+		this.groupLabelOverlay.className =
+			'desktop-mode-content-graph__group-labels';
+		this.host.appendChild( this.groupLabelOverlay );
+
+		// Pixi v8's WebGL context can be lost when the browser shuffles
+		// canvases around (e.g. when another desktop-mode window opens
+		// in an iframe and forces a reflow). Without this guard the
+		// ticker keeps trying to render against a dead GL context and
+		// floods the console with "Cannot read properties of null"
+		// crashes. We stop the ticker on loss; the user can reload to
+		// recover. Restoration would require rebuilding all GPU pipes
+		// — deferred.
+		app.canvas.addEventListener(
+			'webglcontextlost',
+			( ev ) => {
+				ev.preventDefault();
+				try {
+					this.app?.ticker?.stop();
+				} catch {
+					// Ignore — best-effort.
+				}
+			},
+			false,
+		);
+
+		// Belt-and-braces: wrap the renderer's `render()` method so any
+		// internal Pixi crash (e.g., the `Batcher.break()` "Cannot read
+		// properties of null (reading 'clear')" race triggered when
+		// another Pixi.Application on the page destroys shared state)
+		// catches the throw, stops our ticker, and prevents the
+		// infinite-rAF console spam the user reported. The Pixi auto-
+		// render runs on the same ticker our `tickerCb` is on, so an
+		// unhandled throw inside it would otherwise keep firing every
+		// frame forever.
+		const renderer = app.renderer as { render: ( ...a: unknown[] ) => unknown };
+		const origRender = renderer.render.bind( renderer );
+		renderer.render = ( ...a: unknown[] ) => {
+			try {
+				return origRender( ...a );
+			} catch ( err ) {
+				try {
+					this.app?.ticker?.stop();
+				} catch {
+					// Ignore.
+				}
+				// eslint-disable-next-line no-console
+				console.warn(
+					'[content-graph] Pixi render threw, stopping ticker:',
+					err,
+				);
+				return undefined;
+			}
+		};
 
 		this.satellites = new SatelliteLayer(
 			pixi,
@@ -240,6 +430,15 @@ export class GraphScene {
 		for ( const n of this.nodes ) {
 			prev.set( n.id, n );
 		}
+		// Capture the group catalog up-front so subsequent setGrouping()
+		// calls (including the auto-re-apply at the end of this method
+		// when the user had a facet active across a refetch) can
+		// resolve display labels without a round-trip.
+		this.groupCatalogs = payload.groups ?? {
+			authors: {},
+			categories: {},
+			tags: {},
+		};
 
 		const nodes: GraphNode[] = payload.nodes.map( ( p ) => {
 			const old = prev.get( p.id );
@@ -292,6 +491,12 @@ export class GraphScene {
 		for ( let i = 0; i < warmupSteps; i++ ) {
 			this.sim.step( 1 );
 		}
+		// If a grouping was active before this rebuild (e.g. the post-type
+		// filter changed mid-session), re-derive the assignment against
+		// the new node set so the cluster force keeps working.
+		if ( this.currentGrouping ) {
+			this.setGrouping( this.currentGrouping );
+		}
 	}
 
 	private rebuildSprites(): void {
@@ -322,9 +527,8 @@ export class GraphScene {
 			const halo = new this.pixi.Graphics();
 			container.addChild( halo );
 
-			const iconChar = resolveDashicon(
-				this.postTypeIcon( n.type ),
-			);
+			const iconName = this.postTypeIcon( n.type );
+			const iconChar = resolveDashicon( iconName );
 			const icon = new this.pixi.Text( {
 				text: iconChar ?? '●', // black circle fallback
 				style: {
@@ -388,6 +592,7 @@ export class GraphScene {
 				labelBg,
 				label,
 				iconCharCode: iconChar,
+				iconName,
 			} );
 		}
 	}
@@ -577,9 +782,27 @@ export class GraphScene {
 		this.lastResizeWidth = this.host.clientWidth;
 		this.lastResizeHeight = this.host.clientHeight;
 		this.resizeObserver = new ResizeObserver( () => {
+			if ( this.destroyed ) {
+				return;
+			}
 			const w = this.host.clientWidth;
 			const h = this.host.clientHeight;
-			this.app.renderer.resize( w, h );
+			// Hidden / detached host has clientWidth/clientHeight = 0.
+			// `renderer.resize(0, 0)` puts Pixi v8's batched renderer
+			// into a state that crashes the next render with
+			// "Cannot read properties of null (reading 'clear')",
+			// which then floods rAF for the rest of the session. Skip
+			// the resize entirely while we're zero-sized; the next
+			// observation, when the host has dimensions again, will
+			// catch up.
+			if ( w <= 0 || h <= 0 ) {
+				return;
+			}
+			try {
+				this.app.renderer.resize( w, h );
+			} catch {
+				return;
+			}
 			// Render synchronously so the freshly-resized canvas has
 			// pixels NOW. Without this the WebGL drawingBuffer briefly
 			// composites as white before the next ticker frame paints —
@@ -622,7 +845,22 @@ export class GraphScene {
 		if ( this.destroyed ) {
 			return;
 		}
-		this.sim?.step( delta );
+		// Defensive: the Pixi app's ticker also drives the internal
+		// renderer. If we've been torn down between frames, bail
+		// before touching any layer / graphics state.
+		if ( ! this.app || ! this.world ) {
+			return;
+		}
+		if ( this.groupingTween ) {
+			// While the grouping tween is active, lerp positions
+			// toward the targets and SKIP the sim integration so the
+			// two layout mechanisms don't fight. Once the tween
+			// completes the sim resumes and the cluster force
+			// polishes the final positions.
+			this.advanceGroupingTween();
+		} else {
+			this.sim?.step( delta );
+		}
 		// Ease the camera toward its targets each frame. dt-aware so
 		// the feel stays consistent across frame-rate dips. Snap when
 		// we're within sub-pixel distance to avoid the buzz.
@@ -646,10 +884,238 @@ export class GraphScene {
 			this.world.y += dyc * k;
 		}
 		this.draw();
+		this.drawGroupLabels();
 		this.satellites?.drawLinks();
+		this.advanceFitFollow();
+	}
+
+	/**
+	 * Per-tick auto-fit while the layout is still moving after a
+	 * grouping change. Re-frames the camera at the current node
+	 * bounds whenever peak velocity is above the threshold; once
+	 * the layout has settled (or the hard cap has elapsed) the
+	 * loop disarms and the camera stays put. Skips while the
+	 * grouping tween is mid-lerp — velocities are zeroed there by
+	 * design, and the initial `fitToViewOfTargets` already framed
+	 * the target bounds.
+	 */
+	private advanceFitFollow(): void {
+		if ( ! this.fitFollowActive ) {
+			return;
+		}
+		if (
+			performance.now() - this.fitFollowStartedAt >
+			this.fitFollowMaxDurationMs
+		) {
+			this.fitFollowActive = false;
+			return;
+		}
+		// During the tween, our `advanceGroupingTween` zeroes vx/vy
+		// every frame — peak velocity is 0 by construction. Don't
+		// disarm on that account: wait until the tween hands control
+		// back to the sim and real motion (or stillness) is observable.
+		if ( this.groupingTween ) {
+			return;
+		}
+		let peakVelocity = 0;
+		for ( const n of this.nodes ) {
+			if ( n.pinned ) {
+				continue;
+			}
+			const v = Math.hypot( n.vx, n.vy );
+			if ( v > peakVelocity ) {
+				peakVelocity = v;
+			}
+		}
+		if ( peakVelocity >= this.fitFollowVelocityThreshold ) {
+			this.fitFollowSawMotion = true;
+			this.fitToView();
+		} else if ( this.fitFollowSawMotion ) {
+			// Only disarm AFTER we've observed non-zero motion at
+			// least once. Otherwise the first tick after the tween
+			// ends — when the sim hasn't yet run a step and velocities
+			// are still zero from the tween — would disarm before the
+			// cluster force gets a chance to spread members past the
+			// initial fit framing.
+			this.fitFollowActive = false;
+		}
+	}
+
+	private deriveGroupKeys( n: GraphNode, facet: GroupFacet ): string[] {
+		switch ( facet ) {
+			case 'category':
+				if ( n.category_ids.length === 0 ) {
+					return [ 'cat:uncat' ];
+				}
+				return n.category_ids.map( ( id ) => `cat:${ id }` );
+			case 'tag':
+				if ( n.tag_ids.length === 0 ) {
+					return [ 'tag:untagged' ];
+				}
+				return n.tag_ids.map( ( id ) => `tag:${ id }` );
+			case 'author': {
+				const primaryId = n.author_id || 0;
+				const primaryKey = `author:${ primaryId }`;
+				// List the primary author TWICE so the cluster
+				// attractor weights its pull 2× per contributor.
+				// Result: a post with one contributor settles at the
+				// (2·primary + 1·contributor) / 3 balance point —
+				// between the two authors but closer to the primary.
+				// Posts with no contributors get the same 2× pull,
+				// which is mathematically equivalent to a single
+				// entry (force magnitude is unchanged after the
+				// sim's `perKey = k / keys.length` normalisation),
+				// so doubling is safe across the board.
+				const keys = [ primaryKey, primaryKey ];
+				// Defensive: an older cached server payload (predates
+				// the `contributor_ids` field) deserialises to
+				// undefined here. TS thinks it's required, but at
+				// runtime we accept missing/null/non-array and treat
+				// it as an empty contributor list rather than throwing.
+				const contribs = Array.isArray( n.contributor_ids )
+					? n.contributor_ids
+					: [];
+				for ( const cid of contribs ) {
+					if ( cid > 0 && cid !== primaryId ) {
+						keys.push( `author:${ cid }` );
+					}
+				}
+				return keys;
+			}
+			case 'year':
+				return [ `year:${ n.year || 0 }` ];
+			case 'year_month':
+				return [ `ym:${ n.year_month || 'unknown' }` ];
+		}
+	}
+
+	private labelForGroupKey( key: string ): string {
+		const idx = key.indexOf( ':' );
+		const facet = key.slice( 0, idx );
+		const rest = key.slice( idx + 1 );
+		switch ( facet ) {
+			case 'cat': {
+				if ( rest === 'uncat' ) {
+					return __( 'Uncategorized' );
+				}
+				const id = Number( rest );
+				return this.groupCatalogs.categories[ id ]?.name ?? `#${ id }`;
+			}
+			case 'tag': {
+				if ( rest === 'untagged' ) {
+					return __( 'Untagged' );
+				}
+				const id = Number( rest );
+				return this.groupCatalogs.tags[ id ]?.name ?? `#${ id }`;
+			}
+			case 'author': {
+				const id = Number( rest );
+				if ( id <= 0 ) {
+					return __( 'Unknown author' );
+				}
+				return this.groupCatalogs.authors[ id ]?.name ?? `#${ id }`;
+			}
+			case 'year': {
+				const y = Number( rest );
+				if ( y <= 0 ) {
+					return __( 'Undated' );
+				}
+				return String( y );
+			}
+			case 'ym': {
+				if ( rest === 'unknown' || rest === '' ) {
+					return __( 'Undated' );
+				}
+				return formatYearMonth( rest );
+			}
+		}
+		return key;
+	}
+
+	private buildGroupViews(
+		members: Map< string, number[] >,
+		facet: GroupFacet,
+	): void {
+		if ( ! this.groupLabelOverlay ) {
+			return;
+		}
+		const tint = GROUP_LABEL_COLOR[ facet ];
+		for ( const [ key, ids ] of members ) {
+			if ( ids.length === 0 ) {
+				continue;
+			}
+			// Suffix the member count so readers see cluster size at a
+			// glance, e.g. "Recipe (15)" / "Untagged (3)".
+			const label = `${ this.labelForGroupKey( key ) } (${ ids.length })`;
+			const el = document.createElement( 'div' );
+			el.className = 'desktop-mode-content-graph__group-label';
+			el.textContent = label;
+			el.style.setProperty( '--wpd-cg-cluster-color', tint );
+			this.groupLabelOverlay.appendChild( el );
+			this.groupViews.set( key, { key, label, el, members: ids } );
+		}
+	}
+
+	private clearGroupViews(): void {
+		for ( const v of this.groupViews.values() ) {
+			v.el.remove();
+		}
+		this.groupViews.clear();
+	}
+
+	/**
+	 * Per-frame paint of the cluster label markers. Centroid is the
+	 * running average of member positions, scale is inverse of world
+	 * scale (so labels stay legible across zoom), alpha fades the
+	 * labels OUT as you zoom past the focused-node range so they
+	 * don't clutter the close-up view.
+	 */
+	private drawGroupLabels(): void {
+		if ( this.destroyed || this.groupViews.size === 0 ) {
+			return;
+		}
+		// Mirror of the node-label fade, inverted: present at low
+		// zoom (cluster reading), gone at high zoom (close-up).
+		const fade = 1 - smoothstep( 1.2, 2.4, this.world.scale.x );
+		const scale = this.world.scale.x;
+		const ox = this.world.x;
+		const oy = this.world.y;
+		for ( const v of this.groupViews.values() ) {
+			let sumX = 0;
+			let sumY = 0;
+			let count = 0;
+			for ( const id of v.members ) {
+				const node = this.nodeViews.get( id )?.node;
+				if ( ! node ) {
+					continue;
+				}
+				sumX += node.x;
+				sumY += node.y;
+				count++;
+			}
+			if ( count === 0 || fade <= 0.02 ) {
+				v.el.style.display = 'none';
+				continue;
+			}
+			// Pure centroid positioning — labels glide smoothly with
+			// the cluster's centre of mass. Tried and rejected: top-of-
+			// bounding-box anchoring (read as detached from the
+			// cluster), and per-frame collision push-away (members
+			// rotating under the label made it twitch). Fluidity over
+			// strict non-overlap; some overlap with a node passing
+			// through the label is the accepted trade-off.
+			const screenX = ox + ( sumX / count ) * scale;
+			const screenY = oy + ( sumY / count ) * scale;
+			v.el.style.display = '';
+			v.el.style.transform = `translate(${ screenX }px, ${ screenY }px) translate(-50%, -50%)`;
+			v.el.style.opacity = String( fade );
+		}
 	}
 
 	private draw(): void {
+		if ( this.destroyed ) {
+			return;
+		}
 		const focusId = this.focusedId;
 		const hoverId = this.hoveredId;
 
@@ -772,7 +1238,15 @@ export class GraphScene {
 			}
 
 			icon.style.fill = fill;
-			icon.style.fontSize = 2 * node.radius;
+			const fontSize = 2 * node.radius;
+			icon.style.fontSize = fontSize;
+			// Nudge the glyph onto the visible disc centre. Without this
+			// the bbox-centred anchor leaves glyphs (notably `admin-post`
+			// — the pushpin head is in the upper-left of its bbox) reading
+			// as top-left of where the user expects them.
+			const nudge = ICON_NUDGE[ v.iconName ];
+			icon.x = ( nudge?.x ?? 0 ) * fontSize;
+			icon.y = ( ( nudge?.y ?? ICON_NUDGE_Y_ASCENT ) ) * fontSize;
 
 			labelBox.x = node.x;
 			labelBox.y = node.y + node.radius + 4;
@@ -837,6 +1311,345 @@ export class GraphScene {
 		// reheating here would shake the whole cluster (see focusNode).
 	}
 
+	/**
+	 * Swap the active clustering facet. Pass `null` to disable
+	 * clustering entirely. Computes the per-node group assignment from
+	 * the current node set, hands it to the sim (which reheats), and
+	 * rebuilds the per-cluster label markers in `groupLabelLayer`.
+	 *
+	 * Cheap to call repeatedly — there's no Pixi teardown beyond
+	 * destroying / recreating the small `GroupView` containers.
+	 */
+	setGrouping( facet: GroupFacet | null ): void {
+		this.currentGrouping = facet;
+		this.clearGroupViews();
+		if ( ! facet || ! this.sim ) {
+			this.sim?.setGroupAssignment( null );
+			return;
+		}
+		const assignment = new Map< number, string[] >();
+		// `members` is built alongside the assignment so the per-frame
+		// centroid recompute in drawGroupLabels() doesn't have to walk
+		// every node for every group.
+		const members = new Map< string, number[] >();
+		for ( const n of this.nodes ) {
+			const keys = this.deriveGroupKeys( n, facet );
+			assignment.set( n.id, keys );
+			// Dedupe before populating `members` — `deriveGroupKeys`
+			// can list the same key twice on purpose (e.g. the
+			// primary author gets a 2× weighting), and we don't want
+			// that duplication to inflate the visual "(15)" count
+			// or pull the cluster centroid toward duplicated nodes.
+			const seen = new Set< string >();
+			for ( const key of keys ) {
+				if ( seen.has( key ) ) {
+					continue;
+				}
+				seen.add( key );
+				const list = members.get( key );
+				if ( list ) {
+					list.push( n.id );
+				} else {
+					members.set( key, [ n.id ] );
+				}
+			}
+		}
+		const order = this.chronologicalOrder( facet, members );
+		// Year-month produces ~60 clusters on a long-lived blog, all
+		// jammed onto one horizontal line in chronological order →
+		// crowded. Alternating Y above / below the axis gives each
+		// cluster its own vertical "lane" while keeping the time
+		// reading. Year alone (single-digit cluster count) stays on
+		// the straight axis.
+		this.sim.groupOrderStaggerY = facet === 'year_month' ? 160 : 0;
+		// Hand the assignment to the sim BEFORE starting the tween so
+		// the cluster force is already wired up when the tween hands
+		// motion control back. The sim's reheat does nothing visible
+		// during the tween (tick skips sim.step while the tween runs).
+		this.sim.setGroupAssignment( assignment, order );
+		// Build per-node target positions on the seed lattice, then
+		// hand them to the tween. Camera is fit-to-view'd against the
+		// targets so it zooms in parallel with the layout instead of
+		// waiting for the tween to finish.
+		const targets = this.buildGroupSeedTargets( assignment, members, order );
+		this.startGroupingTween( targets );
+		this.fitToViewOfTargets( targets );
+		this.buildGroupViews( members, facet );
+		// Arm the auto-fit-follow. Stays active until peak velocity
+		// falls below the threshold post-tween (sim has settled) or
+		// the hard-cap duration elapses, whichever comes first.
+		this.fitFollowActive = true;
+		this.fitFollowStartedAt = performance.now();
+		this.fitFollowSawMotion = false;
+	}
+
+	/**
+	 * Drive one frame of the active grouping tween. Lerps each
+	 * non-pinned node from its captured start position to its target
+	 * with an ease-out cubic. Cleans up + resumes the sim when done.
+	 */
+	private advanceGroupingTween(): void {
+		if ( this.destroyed ) {
+			return;
+		}
+		const tween = this.groupingTween;
+		if ( ! tween ) {
+			return;
+		}
+		const t = Math.min( 1, ( performance.now() - tween.startTime ) / tween.duration );
+		const k = 1 - Math.pow( 1 - t, 3 );
+		for ( const [ nodeId, start ] of tween.starts ) {
+			const target = tween.targets.get( nodeId );
+			if ( ! target ) {
+				continue;
+			}
+			const node = this.nodeViews.get( nodeId )?.node;
+			if ( ! node || node.pinned ) {
+				continue;
+			}
+			node.x = start.x + ( target.x - start.x ) * k;
+			node.y = start.y + ( target.y - start.y ) * k;
+			node.vx = 0;
+			node.vy = 0;
+		}
+		if ( t >= 1 ) {
+			this.groupingTween = null;
+			// Brief reheat so the cluster force can polish positions
+			// post-tween (clusters land near their seeds; the force
+			// settles any small drift from emergent Y centroids).
+			this.sim?.reheat( 0.18, false );
+		}
+	}
+
+	/**
+	 * Compute a per-cluster seed position + per-node target on that
+	 * seed. The tween animates each node from its current position
+	 * to its target so the user sees a smooth flow into clusters
+	 * instead of an instant snap.
+	 *
+	 * Seeds:
+	 *   - **Ordered facets** (year, year-month): a horizontal lattice
+	 *     matching the order array, so chronological clusters land
+	 *     in the same left-to-right slots the cluster force pins
+	 *     them to. Unordered keys (e.g. `'ym:unknown'`) sit to the
+	 *     right of the chronological range.
+	 *   - **Unordered facets** (category, tag, author): polar
+	 *     distribution around the origin, radius scaling with the
+	 *     number of groups. Floor keeps small group counts (2–3)
+	 *     visually distinct.
+	 *
+	 * Multi-membership posts (a post in two categories) target the
+	 * average of their group seeds so they start at the force-balance
+	 * midpoint instead of being arbitrarily assigned to one cluster.
+	 */
+	private buildGroupSeedTargets(
+		assignment: Map< number, string[] >,
+		members: Map< string, number[] >,
+		order: string[] | null,
+	): Map< number, { x: number; y: number } > {
+		const targets = new Map< number, { x: number; y: number } >();
+		if ( ! this.sim ) {
+			return targets;
+		}
+		const groupKeys = Array.from( members.keys() );
+		const seeds = new Map< string, { x: number; y: number } >();
+		const spacing = this.sim.groupOrderSpacing;
+
+		if ( order && order.length > 0 ) {
+			const n = order.length;
+			// Mirror the sim's zig-zag exactly so the tween lands on
+			// the cluster force's target Y instead of snapping at
+			// `y=0` then jumping to ±stagger on the first sim step.
+			const stagger = this.sim.groupOrderStaggerY;
+			const staggerY = ( idx: number ): number => {
+				if ( stagger <= 0 ) {
+					return 0;
+				}
+				return idx % 2 === 0 ? -stagger : stagger;
+			};
+			for ( let i = 0; i < n; i++ ) {
+				seeds.set( order[ i ], {
+					x: ( i - ( n - 1 ) / 2 ) * spacing,
+					y: staggerY( i ),
+				} );
+			}
+			let extra = n;
+			for ( const k of groupKeys ) {
+				if ( seeds.has( k ) ) {
+					continue;
+				}
+				seeds.set( k, {
+					x: ( extra - ( n - 1 ) / 2 ) * spacing,
+					y: staggerY( extra ),
+				} );
+				extra++;
+			}
+		} else {
+			const n = groupKeys.length;
+			const radius = Math.max( 220, 120 + n * 40 );
+			for ( let i = 0; i < n; i++ ) {
+				const angle = ( i / Math.max( 1, n ) ) * Math.PI * 2 - Math.PI / 2;
+				seeds.set( groupKeys[ i ], {
+					x: Math.cos( angle ) * radius,
+					y: Math.sin( angle ) * radius,
+				} );
+			}
+		}
+
+		const jitter = 40;
+		for ( const node of this.nodes ) {
+			if ( node.pinned ) {
+				continue;
+			}
+			const keys = assignment.get( node.id );
+			if ( ! keys || keys.length === 0 ) {
+				continue;
+			}
+			let sx = 0;
+			let sy = 0;
+			let count = 0;
+			for ( const k of keys ) {
+				const s = seeds.get( k );
+				if ( ! s ) {
+					continue;
+				}
+				sx += s.x;
+				sy += s.y;
+				count++;
+			}
+			if ( count === 0 ) {
+				continue;
+			}
+			targets.set( node.id, {
+				x: sx / count + ( Math.random() - 0.5 ) * jitter,
+				y: sy / count + ( Math.random() - 0.5 ) * jitter,
+			} );
+		}
+		return targets;
+	}
+
+	/**
+	 * Capture the current positions as the tween starts, set the
+	 * tween clock, and let `tick()` drive each frame from there.
+	 * Replaces any in-flight tween — picking a new facet mid-tween
+	 * just retargets from wherever the nodes currently sit.
+	 */
+	private startGroupingTween(
+		targets: Map< number, { x: number; y: number } >,
+	): void {
+		if ( targets.size === 0 ) {
+			this.groupingTween = null;
+			return;
+		}
+		const starts = new Map< number, { x: number; y: number } >();
+		for ( const nodeId of targets.keys() ) {
+			const node = this.nodeViews.get( nodeId )?.node;
+			if ( ! node ) {
+				continue;
+			}
+			starts.set( nodeId, { x: node.x, y: node.y } );
+		}
+		this.groupingTween = {
+			startTime: performance.now(),
+			// Fast enough to feel responsive, long enough to read as
+			// a real transition (not a snap). Tuned by feel; if it
+			// looks sluggish on slow machines, drop to 350.
+			duration: 450,
+			starts,
+			targets,
+		};
+	}
+
+	/**
+	 * Frame the camera against the target bounds (not the current
+	 * node positions) so the zoom-out animates IN PARALLEL with the
+	 * layout tween instead of waiting for it to settle.
+	 */
+	private fitToViewOfTargets(
+		targets: Map< number, { x: number; y: number } >,
+	): void {
+		if ( targets.size === 0 ) {
+			return;
+		}
+		let minX = Infinity;
+		let minY = Infinity;
+		let maxX = -Infinity;
+		let maxY = -Infinity;
+		for ( const t of targets.values() ) {
+			if ( t.x < minX ) {
+				minX = t.x;
+			}
+			if ( t.y < minY ) {
+				minY = t.y;
+			}
+			if ( t.x > maxX ) {
+				maxX = t.x;
+			}
+			if ( t.y > maxY ) {
+				maxY = t.y;
+			}
+		}
+		const padding = 100;
+		const w = maxX - minX + padding * 2;
+		const h = maxY - minY + padding * 2;
+		const sx = this.host.clientWidth / w;
+		const sy = this.host.clientHeight / h;
+		const s = Math.max( ZOOM_MIN, Math.min( 1.5, Math.min( sx, sy ) ) );
+		const cx = ( minX + maxX ) / 2;
+		const cy = ( minY + maxY ) / 2;
+		this.targetScale = s;
+		this.targetX = this.host.clientWidth / 2 - cx * s;
+		this.targetY = this.host.clientHeight / 2 - cy * s;
+	}
+
+	/**
+	 * For date facets, sort the keys oldest-to-newest so the cluster
+	 * attractor can lay them out left-to-right. For other facets,
+	 * returns `null` — those clusters stay fully emergent.
+	 *
+	 * `'year:<unknown>'` and `'ym:unknown'` are skipped from the
+	 * order: an undated post shouldn't bias one end of the timeline.
+	 */
+	private chronologicalOrder(
+		facet: GroupFacet,
+		members: Map< string, number[] >,
+	): string[] | null {
+		if ( facet !== 'year' && facet !== 'year_month' ) {
+			return null;
+		}
+		const ordered: { key: string; sort: string }[] = [];
+		for ( const key of members.keys() ) {
+			const idx = key.indexOf( ':' );
+			const rest = key.slice( idx + 1 );
+			if ( facet === 'year' ) {
+				const y = Number( rest );
+				if ( ! Number.isFinite( y ) || y <= 0 ) {
+					continue;
+				}
+				// Zero-pad so string-sort is identical to numeric-sort
+				// without parsing twice.
+				ordered.push( { key, sort: String( y ).padStart( 6, '0' ) } );
+			} else {
+				// year-month tokens are already in YYYY-MM, which
+				// string-sorts chronologically.
+				if ( rest === 'unknown' || rest === '' ) {
+					continue;
+				}
+				ordered.push( { key, sort: rest } );
+			}
+		}
+		ordered.sort( ( a, b ) => {
+			if ( a.sort < b.sort ) {
+				return -1;
+			}
+			if ( a.sort > b.sort ) {
+				return 1;
+			}
+			return 0;
+		} );
+		return ordered.map( ( e ) => e.key );
+	}
+
 	clearFocus(): void {
 		if ( this.focusedId !== null ) {
 			const view = this.nodeViews.get( this.focusedId );
@@ -869,6 +1682,16 @@ export class GraphScene {
 
 	getNodes(): GraphNode[] {
 		return this.nodes;
+	}
+
+	/**
+	 * Currently focused node id, or `null` when nothing is focused.
+	 * Used by the host orchestrator to implement click-to-deselect:
+	 * if the user clicks the already-focused node, the host calls
+	 * `clearFocus()` instead of re-focusing.
+	 */
+	getFocusedId(): number | null {
+		return this.focusedId;
 	}
 
 	fitToView(): void {
@@ -908,14 +1731,38 @@ export class GraphScene {
 
 	destroy(): void {
 		this.destroyed = true;
+		// Park the Pixi app's ticker FIRST. The ticker auto-runs an
+		// internal render every frame regardless of our own
+		// `tickerCb`; if we destroy graphics objects (via satellites /
+		// app cascade) while the ticker is still scheduled to fire,
+		// the next auto-render hits half-destroyed state and crashes
+		// in the batched renderer. Stopping the ticker quiets the
+		// auto-render before we touch any child.
+		try {
+			this.app?.ticker?.stop();
+		} catch {
+			// Ignore — destroy is best-effort.
+		}
 		if ( this.tickerCb ) {
-			this.app.ticker.remove( this.tickerCb );
+			try {
+				this.app?.ticker?.remove( this.tickerCb );
+			} catch {
+				// Ignore.
+			}
 			this.tickerCb = null;
 		}
 		this.resizeObserver?.disconnect();
 		this.resizeObserver = null;
 		this.satellites?.destroy();
 		this.satellites = null;
+		// DOM overlay for cluster labels lives outside the Pixi
+		// cascade — remove it explicitly.
+		this.clearGroupViews();
+		this.groupLabelOverlay?.remove();
+		this.groupLabelOverlay = null;
+		// Group views, edge views, node views, etc. are destroyed by
+		// the `app.destroy({children: true})` cascade below. Doing it
+		// here explicitly was redundant and could double-destroy.
 		try {
 			this.app.destroy( true, { children: true } );
 		} catch {
@@ -971,6 +1818,33 @@ function smoothstep( a: number, b: number, x: number ): number {
 	}
 	const t = ( x - a ) / ( b - a );
 	return t * t * ( 3 - 2 * t );
+}
+
+/**
+ * Render a `'YYYY-MM'` token as a user-facing month label
+ * (e.g. `'2024-03'` → `'Mar 2024'`) using the browser's locale.
+ * Falls back to the raw token if parsing fails.
+ */
+function formatYearMonth( token: string ): string {
+	const m = /^(\d{4})-(\d{2})$/.exec( token );
+	if ( ! m ) {
+		return token;
+	}
+	const monthIdx = Number( m[ 2 ] ) - 1;
+	if ( monthIdx < 0 || monthIdx > 11 ) {
+		return token;
+	}
+	const year = Number( m[ 1 ] );
+	try {
+		const d = new Date( Date.UTC( year, monthIdx, 1 ) );
+		return new Intl.DateTimeFormat( undefined, {
+			month: 'short',
+			year: 'numeric',
+			timeZone: 'UTC',
+		} ).format( d );
+	} catch {
+		return token;
+	}
 }
 
 function defaultIconForPostType( slug: string ): string {

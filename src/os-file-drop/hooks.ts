@@ -52,15 +52,70 @@ export const FILE_DROP_HOOKS = {
 	BEFORE_UPLOAD: 'desktop-mode.drop.before-upload',
 
 	/**
+	 * Action — fires once `BEFORE_UPLOAD` has cleared and the XHR
+	 * is `open()`ed, immediately before `send()`. Payload:
+	 * `{ file: File, fields: DropDialogFields, context: DropContext,
+	 * abort: () => void }`. The `abort` handle aborts the in-flight
+	 * request; the manager rejects with `UploadAbortedError` and
+	 * fires `UPLOAD_FAILED` with that error.
+	 *
+	 * Pair with `UPLOAD_PROGRESS` to drive a progress UI; pair with
+	 * `AFTER_UPLOAD` / `UPLOAD_FAILED` to know when the upload ends.
+	 *
+	 * @since 0.31.0
+	 */
+	UPLOAD_STARTED: 'desktop-mode.drop.upload-started',
+
+	/**
+	 * Action — fires for every `XMLHttpRequestUpload.progress` event.
+	 * Payload: `{ file: File, fields: DropDialogFields, context:
+	 * DropContext, loaded: number, total: number, indeterminate:
+	 * boolean }`. `total` is `0` and `indeterminate` is `true` when
+	 * the request body length isn't known (rare for multipart, but
+	 * possible on transcoding proxies); subscribers should treat
+	 * that as an indeterminate state.
+	 *
+	 * A synthetic 100%-loaded event is dispatched once the `upload`
+	 * stream emits `load` so a HUD can show a definite "wrapping up"
+	 * state while the server finishes the response.
+	 *
+	 * @since 0.31.0
+	 */
+	UPLOAD_PROGRESS: 'desktop-mode.drop.upload-progress',
+
+	/**
 	 * Action — fires after a successful upload. Payload:
-	 * `{ result: DropUploadResult, fields: DropDialogFields,
-	 * context: DropContext }`.
+	 * `{ file: File, result: DropUploadResult, fields:
+	 * DropDialogFields, context: DropContext }`.
+	 *
+	 * The `file` field carries the same `File` reference that
+	 * `UPLOAD_STARTED` / `UPLOAD_PROGRESS` exposed (i.e. the
+	 * payload returned by the `BEFORE_UPLOAD` filter, in case a
+	 * plugin swapped the file). Subscribers tracking per-file
+	 * state — progress HUDs, sequence counters — should match on
+	 * this identity rather than the filename: two drops of
+	 * `photo.jpg` from different folders would otherwise route
+	 * each other's success event to the wrong row.
+	 *
+	 * @since 0.31.0 the `file` field was added; pre-0.31.0 code
+	 * that destructured `{ result, fields, context }` keeps working.
 	 */
 	AFTER_UPLOAD: 'desktop-mode.drop.after-upload',
 
 	/**
 	 * Action — fires after an upload fails. Payload:
 	 * `{ file: File, error: Error, context: DropContext }`.
+	 * `error` is an `UploadAbortedError` when the failure came
+	 * from the caller invoking the `abort()` handle on
+	 * `UPLOAD_STARTED`.
+	 *
+	 * `file` carries the same identity as `UPLOAD_STARTED` /
+	 * `UPLOAD_PROGRESS` / `AFTER_UPLOAD` — the post-`BEFORE_UPLOAD`
+	 * `File`, in case a plugin swapped it. Match by reference, not
+	 * filename: a HUD that keys its row map on the started-File
+	 * needs the same key here, otherwise the row stays stuck in
+	 * "running" after a failure when a `BEFORE_UPLOAD` filter
+	 * replaced the file.
 	 */
 	UPLOAD_FAILED: 'desktop-mode.drop.upload-failed',
 } as const;

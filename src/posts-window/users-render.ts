@@ -884,7 +884,7 @@ export async function renderUsersWindow(
 			el.textContent = seg.label;
 			statusHost.appendChild( el );
 		}
-		statusHost.addEventListener( 'wpd-segmented-change', ( e: Event ) => {
+		statusHost.addEventListener( 'wpd-pick', ( e: Event ) => {
 			const detail = ( e as CustomEvent< { value: string } > ).detail;
 			view.status = detail?.value ?? '';
 			view.page = 1;

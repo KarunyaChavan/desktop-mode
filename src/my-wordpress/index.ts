@@ -4360,6 +4360,19 @@ function buildFootprintHeadlineStats(
 			'',
 		),
 	);
+	// Lifetime saves on existing content — the editor counterpart to
+	// "Total content" / "Comments left". Skipped when zero so a
+	// brand-new author doesn't see an empty card.
+	const updateCount = payload.totals.updates ?? 0;
+	if ( updateCount > 0 ) {
+		wrap.appendChild(
+			buildStatCard(
+				updateCount.toLocaleString(),
+				__( 'Updates', 'desktop-mode' ),
+				__( 'Saves on existing posts', 'desktop-mode' ),
+			),
+		);
+	}
 
 	const longestRange = payload.streak.longestRange;
 	const longestCaption =
@@ -4428,8 +4441,13 @@ function buildFootprintCalendar(
 
 	// Bucket each day by intensity. Max intensity in the window
 	// drives the scale so a sparse poster's pattern still reads.
+	// Update saves count toward the intensity alongside fresh posts
+	// and comments — same shape as GitHub, where edits to existing
+	// content paint the calendar just as boldly as net-new work.
+	const dayIntensity = ( d: UserFootprint[ 'daily' ][ number ] ): number =>
+		d.posts + d.comments + ( d.updates ?? 0 );
 	const maxIntensity = payload.daily.reduce( ( m, d ) => {
-		const v = d.posts + d.comments;
+		const v = dayIntensity( d );
 		return v > m ? v : m;
 	}, 0 );
 	const bucketize = ( v: number ): number => {
@@ -4550,18 +4568,19 @@ function buildFootprintCalendar(
 	}
 	for ( let i = 0; i < payload.daily.length; i += 1 ) {
 		const d = payload.daily[ i ];
-		const intensity = bucketize( d.posts + d.comments );
+		const intensity = bucketize( dayIntensity( d ) );
 		const cell = document.createElement( 'span' );
 		cell.className = `desktop-mode-my-wordpress__footprint-cell desktop-mode-my-wordpress__footprint-cell--l${ intensity }`;
 		cell.title = sprintf(
-			// translators: 1: date, 2: post count, 3: comment count.
+			// translators: 1: date, 2: post count, 3: comment count, 4: update (re-save) count.
 			__(
-				'%1$s — %2$d posts, %3$d comments',
+				'%1$s — %2$d posts, %3$d comments, %4$d updates',
 				'desktop-mode',
 			),
 			formatLongDate( d.date ),
 			d.posts,
 			d.comments,
+			d.updates ?? 0,
 		);
 		cell.dataset.date = d.date;
 		placeCell( cell, firstDow + i );
@@ -4786,11 +4805,13 @@ function buildFootprintTimeline(
 		const dot = document.createElement( 'span' );
 		dot.className = 'desktop-mode-my-wordpress__footprint-dot';
 		const icon = document.createElement( 'span' );
-		icon.className =
-			'dashicons ' +
-			( ev.kind === 'comment'
-				? 'dashicons-admin-comments'
-				: 'dashicons-admin-post' );
+		let iconClass = 'dashicons-admin-post';
+		if ( ev.kind === 'comment' ) {
+			iconClass = 'dashicons-admin-comments';
+		} else if ( ev.kind === 'post-update' ) {
+			iconClass = 'dashicons-edit';
+		}
+		icon.className = 'dashicons ' + iconClass;
 		icon.setAttribute( 'aria-hidden', 'true' );
 		dot.appendChild( icon );
 		li.appendChild( dot );
@@ -4804,14 +4825,21 @@ function buildFootprintTimeline(
 			: document.createElement( 'span' );
 		titleNode.className =
 			'desktop-mode-my-wordpress__footprint-event-title';
-		titleNode.textContent =
-			ev.kind === 'comment'
-				? sprintf(
-					// translators: %s is a post title the user commented on.
-					__( 'Commented on “%s”', 'desktop-mode' ),
-					title,
-				)
-				: title;
+		if ( ev.kind === 'comment' ) {
+			titleNode.textContent = sprintf(
+				// translators: %s is a post title the user commented on.
+				__( 'Commented on “%s”', 'desktop-mode' ),
+				title,
+			);
+		} else if ( ev.kind === 'post-update' ) {
+			titleNode.textContent = sprintf(
+				// translators: %s is the post title the user re-saved.
+				__( 'Updated “%s”', 'desktop-mode' ),
+				title,
+			);
+		} else {
+			titleNode.textContent = title;
+		}
 		if ( ev.link && titleNode instanceof HTMLAnchorElement ) {
 			titleNode.href = ev.link;
 			titleNode.target = '_blank';
@@ -5432,15 +5460,30 @@ function storageKey( scope: string ): string {
 // for drag-out and a plain `click` listener for selection.
 
 /**
- * Live `RenderState` for the currently-mounted My WordPress
- * window, or `null` when it isn't open. Captured in `renderInto`
- * and cleared on close — used by the public
+ * The most-recently-mounted My WordPress window's `RenderState`, or
+ * `null` when none is open. Used by the public
  * `wp.desktop.myWordpress.openDetail()` API so any other shell
  * surface (folder window CMO, plugin code) can route the My
  * WordPress window directly into a post's detail dossier without
- * duplicating the per-relation rendering.
+ * duplicating the per-relation rendering. When multiple instances
+ * are open (a duplicate spawned via `wp.desktop.openNewWindow`, or a
+ * second copy on another virtual desktop) this points at the
+ * latest mount — that's the one the user just acted on, so a
+ * fresh `openDetail()` navigates it in place rather than spawning
+ * another window.
  */
 let activeState: RenderState | null = null;
+/**
+ * Every currently-mounted `RenderState`, keyed by its body host
+ * element. Multi-instance support: the kind-registry renderers
+ * receive an opaque `EntityRenderHost` derived from a specific
+ * window's state, and we need to recover the matching state even
+ * when it isn't the most recently focused one. Without this map,
+ * navigating inside a NON-latest instance threw — `asRenderState`
+ * fell back to the singleton `activeState` and rejected the call
+ * because the bodies didn't match.
+ */
+const liveStates = new Map< HTMLElement, RenderState >();
 /**
  * Pending route applied on next `renderInto`. When the My WordPress
  * window isn't open yet, `openDetail()` opens it AND queues a
@@ -5448,17 +5491,26 @@ let activeState: RenderState | null = null;
  * queue.
  */
 let pendingRoute: Route | null = null;
+/**
+ * Monotonic counter for the per-instance drop-target id. Multiple
+ * My WordPress windows can coexist (duplicate via the dock peek,
+ * a second copy on another virtual desktop), so the claimant id
+ * has to be unique per render — otherwise the second registration
+ * silently replaces the first's element binding in the drag
+ * registry and instance 1's body stops rejecting drops.
+ */
+let rejectIdCounter = 0;
 
-function renderInto( body: HTMLElement ): void {
+function renderInto( body: HTMLElement ): ( () => void ) | undefined {
 	const root = body.querySelector< HTMLElement >( ROOT_SEL );
 	if ( ! root ) {
-		return;
+		return undefined;
 	}
 	const breadcrumbsHost = root.querySelector< HTMLElement >( BREADCRUMBS_SEL );
 	const bodyHost = root.querySelector< HTMLElement >( BODY_SEL );
 	const statusHost = root.querySelector< HTMLElement >( STATUS_SEL );
 	if ( ! breadcrumbsHost || ! bodyHost || ! statusHost ) {
-		return;
+		return undefined;
 	}
 
 	const state: RenderState = {
@@ -5471,6 +5523,17 @@ function renderInto( body: HTMLElement ): void {
 		history: [],
 	};
 	activeState = state;
+	liveStates.set( bodyHost, state );
+
+	// Window-lifetime teardowns — tracked OUTSIDE `state.teardown`
+	// because `navigate()` flushes the latter on every route change.
+	// Putting drop-target deregistration and tile-menu cleanup in
+	// `state.teardown` (the previous shape) meant the first
+	// `navigate( state, root )` call below ran them immediately, so
+	// the window's drop-rejection claimant never survived past the
+	// initial paint. These run exclusively from the returned
+	// teardown.
+	const windowTeardowns: Array< () => void > = [];
 
 	// Register a CLAIMANT drop target on the window body that rejects
 	// every payload. My WordPress is a read-only directory listing
@@ -5490,8 +5553,9 @@ function renderInto( body: HTMLElement ): void {
 	// @since 0.20.0
 	const dragManager = getDragManager();
 	if ( dragManager ) {
+		rejectIdCounter += 1;
 		const deregister = dragManager.registerDropTarget( {
-			id: `${ WINDOW_ID }-reject`,
+			id: `${ WINDOW_ID }-reject-${ rejectIdCounter }`,
 			element: body,
 			accept: () => false,
 			onDrop: () => {
@@ -5499,41 +5563,58 @@ function renderInto( body: HTMLElement ): void {
 				// commit path. Defined for the type contract.
 			},
 		} );
-		state.teardown.push( deregister );
+		windowTeardowns.push( deregister );
 	}
 
 	// Back button + crumb-click handlers are wired by the shared
 	// breadcrumb helper inside `updateBreadcrumbs` — no per-element
 	// listener wiring here anymore.
 
-	// Tear down on close.
-	const closeHandler = ( e: Event ) => {
-		const detail = ( e as CustomEvent< { windowId?: string } > ).detail;
-		if ( detail?.windowId === WINDOW_ID ) {
-			clearTeardown( state );
-			closeAnyTileMenu();
-			if ( activeState === state ) {
-				activeState = null;
-			}
-			document.removeEventListener( 'desktop-mode-window-closed', closeHandler );
-		}
-	};
-	document.addEventListener( 'desktop-mode-window-closed', closeHandler );
-	state.teardown.push( () => closeAnyTileMenu() );
+	windowTeardowns.push( () => closeAnyTileMenu() );
 
 	// If the consumer opened the window via `openDetail` while it
 	// was closed, the queued route is the actual destination.
 	const initialRoute = pendingRoute ?? { kind: 'root' };
 	pendingRoute = null;
 	navigate( state, initialRoute );
+
+	// Return a teardown the framework invokes when THIS specific
+	// window closes. The framework wires it to the per-window
+	// lifecycle (see `Window.hydrateNative`), so a duplicate
+	// instance closing only tears down its OWN state — the previous
+	// implementation listened for `desktop-mode-window-closed`
+	// globally and matched on the base WINDOW_ID, which fired for
+	// every sibling's close event and clobbered live instances.
+	return () => {
+		clearTeardown( state );
+		for ( const fn of windowTeardowns ) {
+			try {
+				fn();
+			} catch {
+				/* swallow — teardown best-effort */
+			}
+		}
+		windowTeardowns.length = 0;
+		liveStates.delete( bodyHost );
+		if ( activeState === state ) {
+			// Promote whichever sibling is still alive to active so
+			// `openDetail` / `openMedia` keep routing to an open
+			// instance instead of spawning a fresh window.
+			const next = liveStates.size > 0
+				? Array.from( liveStates.values() ).pop()!
+				: null;
+			activeState = next;
+		}
+	};
 }
 
 const callback: RenderCallback = ( body ) => {
 	try {
-		renderInto( body );
+		return renderInto( body );
 	} catch ( err ) {
 		// eslint-disable-next-line no-console
 		console.error( '[my-wordpress] render failed:', err );
+		return undefined;
 	}
 };
 
@@ -5557,21 +5638,27 @@ registerEntityKind( 'media', renderMediaList );
  * the registry passes the public host shape so plugins can call
  * `host.navigate` / `host.addTeardown`. This shim bridges the
  * two during the gradual rewrite.
+ *
+ * Looks up `host.body` in the live-states map (instead of
+ * comparing against the singleton `activeState`) so navigating
+ * inside a NON-latest instance still resolves to the correct
+ * state. Without the map lookup, every kind-registry render
+ * (Posts list, Users list, …) in a backgrounded duplicate threw
+ * with "host body does not match active state" — the symptom the
+ * user saw as "the second window won't load" once they tried to
+ * drill in.
  */
 function asRenderState( host: EntityRenderHost ): RenderState {
-	if ( ! activeState ) {
-		throw new Error(
-			'[my-wordpress] asRenderState: called outside an active render.',
-		);
+	const found = liveStates.get( host.body );
+	if ( found ) {
+		return found;
 	}
-	// Sanity check — the host MUST be derived from the active state
-	// or we're about to scribble into a defunct render frame.
-	if ( host.body !== activeState.body ) {
-		throw new Error(
-			'[my-wordpress] asRenderState: host body does not match active state.',
-		);
+	if ( activeState && host.body === activeState.body ) {
+		return activeState;
 	}
-	return activeState;
+	throw new Error(
+		'[my-wordpress] asRenderState: host body does not match any live render state.',
+	);
 }
 
 /* ------------------------------------------------------------------ *

@@ -4200,6 +4200,54 @@ See [Examples — My WordPress media action](./examples/my-wordpress-media-actio
 
 ---
 
+## Nonce refresh — heartbeat field *(Stable, since 0.8.7)*
+
+WordPress nonces expire after `nonce_life` (24 h by default). The
+desktop shell is a long-running SPA, so cached nonces stamped
+into `window.desktopModeConfig.restNonce` (auto-injected by
+`injectRestNonce`) and per-window config blobs like
+`window.desktopModeWindowConfig['desktop-mode-plugins']` would
+otherwise go stale after a day. The server's
+`heartbeat_received` filter (see
+[`desktop_mode_nonce_refresh_actions`](./hooks-reference.md#desktop_mode_nonce_refresh_actions--stable-filter-since-087))
+ships a fresh `{ action: nonce }` map on every tick under the
+`desktop_mode_nonces` heartbeat field; the framework overwrites
+its own cached values in place. Defaults cover `wp_rest`,
+`desktop-mode-plugins`, and `updates`.
+
+**Out of the box**: the shell-wide `restNonce` and every
+per-window blob's `restNonce` are refreshed automatically — most
+plugin authors don't need to wire anything by hand.
+
+**For plugins that ship their own cached nonce** (an admin-ajax
+nonce keyed by a custom action, a private REST nonce, …): publish
+the action on PHP via
+[`desktop_mode_nonce_refresh_actions`](./hooks-reference.md#desktop_mode_nonce_refresh_actions--stable-filter-since-087),
+then subscribe to the heartbeat field and read the action key off
+the returned map:
+
+```ts
+wp.desktop.heartbeat.subscribe( 'desktop_mode_nonces', ( nonces ) => {
+    const fresh = nonces[ 'my-plugin/admin-ajax' ];
+    if ( typeof fresh === 'string' && fresh !== '' ) {
+        window.myPluginConfig.ajaxNonce = fresh;
+    }
+} );
+```
+
+The same heartbeat surface (`wp.desktop.heartbeat.subscribe` /
+`.contribute`) is already used for presence, recycle-bin badges,
+files realtime, etc. — see the
+[heartbeat bus](#wp-desktop-heartbeat) section for the full
+contract.
+
+`src/nonce-refresh.ts` ships an internal `registerNonceTarget()`
+helper used by the framework's built-in updaters, but it's not
+exposed across bundles — third-party plugins should use the
+heartbeat subscription above.
+
+---
+
 ## See also
 
 - [Hooks Reference](./hooks-reference.md) — the PHP side of the API.

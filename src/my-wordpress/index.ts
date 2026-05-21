@@ -1188,6 +1188,18 @@ function buildEntityTile(
 			ref: String( item.id ),
 			title: titleText,
 			icon: entity.icon,
+			// Cross-frame bridge payload — the Gutenberg drop-receiver
+			// turns this into a `core/paragraph` with an `<a href>` to
+			// the permalink. Tiles without a `link` (very old REST
+			// shapes / private posts) still drag-out for placement
+			// purposes; the receiver no-ops on an empty url.
+			bridgePayload: {
+				kind: 'post',
+				id: item.id,
+				postType: entity.id,
+				url: item.link ?? '',
+				title: titleText,
+			},
 		},
 		() => hideTooltip(),
 	);
@@ -4090,6 +4102,17 @@ function buildUserTile(
 			ref: String( item.id ),
 			title: displayName,
 			icon: 'dashicons-admin-users',
+			// Cross-frame bridge payload — receiver inserts a
+			// `core/paragraph` with `<a href>` pointing at the
+			// author archive (`item.link`). Falls back to empty
+			// string when the REST shape omitted the link; the
+			// receiver gates on a truthy URL.
+			bridgePayload: {
+				kind: 'user',
+				id: item.id,
+				url: item.link ?? '',
+				title: displayName,
+			},
 		},
 		() => hideTooltip(),
 	);

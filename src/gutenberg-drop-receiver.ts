@@ -293,15 +293,6 @@ function notifyParentOfFailure( reason: string ): void {
 // Message wiring.
 // ---------------------------------------------------------------------
 
-interface DragOverMsg {
-	type: 'desktop-mode-drag-over';
-	payload: DragBridgePayload;
-}
-
-interface DragLeaveMsg {
-	type: 'desktop-mode-drag-leave';
-}
-
 function isDropMsg( m: unknown ): m is DropMsg {
 	if ( ! m || typeof m !== 'object' ) {
 		return false;
@@ -315,6 +306,70 @@ function isDropMsg( m: unknown ): m is DropMsg {
 		return false;
 	}
 	return p.kind === 'attachment' || p.kind === 'post' || p.kind === 'user';
+}
+
+/**
+ * Latest bridge payload broadcast from the parent shell while a
+ * cross-frame drag is in flight. Set on `desktop-mode-drag-over`,
+ * cleared on `-drag-leave` or after a successful insert.
+ *
+ * The native HTML5 backstop below uses it to insert the right block
+ * when Chromium strips the custom `application/x-wp-media-attachment`
+ * MIME at the iframe boundary (so Gutenberg's own drop logic doesn't
+ * recognise the payload). Pure postMessage handling isn't enough in
+ * practice — when the parent's pointer-events suppression doesn't
+ * take effect mid-drag, the drop fires INSIDE the canvas iframe and
+ * never reaches the parent's `onBridgeDrop`. This stash + native
+ * handler is the iframe-side catch.
+ *
+ * @since 0.22.0
+ */
+let stashedBridgePayload: DragBridgePayload | null = null;
+
+/** Sentinel on `Document` so `attachToDocument` is idempotent. */
+interface AttachedDocSentinel extends Document {
+	__desktopModeDropReceiverAttached?: boolean;
+}
+
+/**
+ * Whether the drag carries OS files. The Media Library legacy patch
+ * uses `application/x-wp-media-attachment`, NOT `Files`; an OS file
+ * drag from Finder / Explorer / Linux DEs always carries `Files`.
+ * The guard lets the native handler ignore OS drops so Gutenberg's
+ * own canvas dropzone handles them natively (upload + insert).
+ */
+function dragCarriesOsFiles( e: DragEvent ): boolean {
+	const types = e.dataTransfer?.types;
+	if ( ! types ) {
+		return false;
+	}
+	const list = types as unknown as {
+		includes?: ( s: string ) => boolean;
+		contains?: ( s: string ) => boolean;
+		length: number;
+		[ i: number ]: string;
+	};
+	if ( typeof list.includes === 'function' ) {
+		return list.includes( 'Files' );
+	}
+	if ( typeof list.contains === 'function' ) {
+		return list.contains( 'Files' );
+	}
+	for ( let i = 0; i < list.length; i++ ) {
+		if ( list[ i ] === 'Files' ) {
+			return true;
+		}
+	}
+	return false;
+}
+
+interface DragOverMsg {
+	type: 'desktop-mode-drag-over';
+	payload: DragBridgePayload;
+}
+
+interface DragLeaveMsg {
+	type: 'desktop-mode-drag-leave';
 }
 
 function isDragOverMsg( m: unknown ): m is DragOverMsg {
@@ -333,45 +388,41 @@ function isDragOverMsg( m: unknown ): m is DragOverMsg {
 }
 
 function isDragLeaveMsg( m: unknown ): m is DragLeaveMsg {
-	if ( ! m || typeof m !== 'object' ) {
-		return false;
-	}
-	return ( m as { type?: unknown } ).type === 'desktop-mode-drag-leave';
+	return (
+		!! m &&
+		typeof m === 'object' &&
+		( m as { type?: unknown } ).type === 'desktop-mode-drag-leave'
+	);
 }
 
-/**
- * Latest bridge payload broadcast from the parent shell while a
- * cross-frame drag is in flight. Set on `desktop-mode-drag-over`,
- * cleared on `-drag-leave` or after a successful insert. Used by
- * the native HTML5 `drop` handler below to insert the correct
- * block when Chromium strips the custom `application/x-wp-media-
- * attachment` MIME on the cross-iframe hop (so Gutenberg's own
- * drop logic doesn't recognize the payload as a media drop and
- * silently no-ops).
- */
-let stashedBridgePayload: DragBridgePayload | null = null;
-
-interface AttachedDocSentinel extends Document {
-	__desktopModeDropReceiverAttached?: boolean;
-}
-
-// Diagnostic counters — surfaced via the debug helper below so we
-// can immediately see at runtime which side of the pipeline is
-// reaching the user and which is silent.
-const _debugCounters = {
-	dragOverMsgs: 0,
-	dragLeaveMsgs: 0,
-	nativeDrops: 0,
-	nativeDropsWithStash: 0,
-	docsAttached: 0,
-};
-
-function onNativeDrop( e: DragEvent ): void {
-	_debugCounters.nativeDrops++;
+function onNativeDragOver( e: DragEvent ): void {
 	if ( ! stashedBridgePayload ) {
 		return;
 	}
-	_debugCounters.nativeDropsWithStash++;
+	if ( dragCarriesOsFiles( e ) ) {
+		// OS file drop — Gutenberg's own dropzone handles upload +
+		// insert natively. Don't claim the dragover; let the bubble-
+		// phase handler do its thing.
+		return;
+	}
+	e.preventDefault();
+	if ( e.dataTransfer ) {
+		e.dataTransfer.dropEffect = 'copy';
+	}
+}
+
+function onNativeDrop( e: DragEvent ): void {
+	if ( ! stashedBridgePayload ) {
+		return;
+	}
+	if ( dragCarriesOsFiles( e ) ) {
+		// OS file drop. Discard any stale stash (a previous bridge
+		// drag whose `drag-leave` never landed) so the next real
+		// bridge drop doesn't see ghost state, then yield to
+		// Gutenberg's native handler.
+		stashedBridgePayload = null;
+		return;
+	}
 	const payload = stashedBridgePayload;
 	stashedBridgePayload = null;
 	e.preventDefault();
@@ -390,25 +441,17 @@ function onNativeDrop( e: DragEvent ): void {
 	} );
 }
 
-function onNativeDragOver( e: DragEvent ): void {
-	if ( ! stashedBridgePayload ) {
-		return;
-	}
-	e.preventDefault();
-	if ( e.dataTransfer ) {
-		e.dataTransfer.dropEffect = 'copy';
-	}
-}
-
 /**
- * Attach native HTML5 `drop` + `dragover` listeners to a Document
- * (the outer post.php iframe AND every nested same-origin iframe
- * inside it — Gutenberg's editor canvas runs in a sub-iframe so
- * drops on the canvas never reach `window` of the outer iframe
- * where this script runs).
+ * Attach the native HTML5 drop + dragover capture-phase listeners
+ * to a Document. Idempotent — each document is marked with a
+ * sentinel so repeated walks don't pile up listeners.
  *
- * Idempotent — each document is marked with a sentinel so repeated
- * walks don't pile up listeners.
+ * We attach to the receiver's own document (post.php iframe) AND to
+ * every same-origin nested iframe document — including Gutenberg's
+ * editor-canvas iframe, which is where the real drop event fires
+ * when the user releases over a block. The Files guard above keeps
+ * these listeners inert for OS file drops so Gutenberg's own
+ * canvas-iframe dropzone handles them.
  */
 function attachToDocument( doc: Document ): void {
 	const sentinel = doc as AttachedDocSentinel;
@@ -418,7 +461,6 @@ function attachToDocument( doc: Document ): void {
 	sentinel.__desktopModeDropReceiverAttached = true;
 	doc.addEventListener( 'drop', onNativeDrop, true );
 	doc.addEventListener( 'dragover', onNativeDragOver, true );
-	_debugCounters.docsAttached++;
 }
 
 function attachToAllFrames(): void {
@@ -443,21 +485,24 @@ function install(): void {
 		if ( e.origin !== expectedOrigin ) {
 			return;
 		}
+		// Bridge `drag-over` — stash the payload for the native
+		// backstop below. The parent shell broadcasts this on
+		// `onBridgeDragOver` while a bridge session is live.
 		if ( isDragOverMsg( e.data ) ) {
 			stashedBridgePayload = e.data.payload;
-			_debugCounters.dragOverMsgs++;
 			return;
 		}
 		if ( isDragLeaveMsg( e.data ) ) {
 			stashedBridgePayload = null;
-			_debugCounters.dragLeaveMsgs++;
 			return;
 		}
 		if ( ! isDropMsg( e.data ) ) {
 			return;
 		}
-		// Explicit `desktop-mode-drop` (DragManager-driven path —
-		// shell-side tile dropped on this iframe's overlay).
+		// Explicit `desktop-mode-drop` (parent's `onBridgeDrop`
+		// succeeded — pointer-events suppression routed the drop to
+		// the parent doc). Clear any stash so the native backstop
+		// doesn't double-fire on the same drop.
 		stashedBridgePayload = null;
 		void performInsert( e.data.payload ).catch( ( err: unknown ) => {
 			const reason = err instanceof Error ? err.message : String( err );
@@ -470,20 +515,37 @@ function install(): void {
 		} );
 	} );
 
-	// Attach now (covers the outer post.php iframe + any sub-
-	// iframes already in the DOM at script-run time). Then mount a
-	// MutationObserver so any iframe Gutenberg adds later (its
-	// editor-canvas iframe lands on first paint, sometimes after
-	// our boot) is picked up. Also re-walk on iframe `load` since
-	// reloading a nested iframe replaces its document and clears
-	// our sentinel.
+	// Native HTML5 backstop. Catches the in-iframe drop when the
+	// parent's pointer-events suppression didn't take effect mid-
+	// drag — Chromium strips the custom MIME at the iframe boundary
+	// so Gutenberg's own dropzone can't read the attachment, and
+	// without this handler the drop is silently lost.
 	attachToAllFrames();
 	if ( typeof MutationObserver !== 'undefined' && document.documentElement ) {
-		new MutationObserver( () => attachToAllFrames() ).observe(
-			document.documentElement,
-			{ childList: true, subtree: true },
-		);
+		new MutationObserver( ( records ) => {
+			// Cheap mutation filter — only re-walk if an `iframe`
+			// was actually added. Gutenberg mutates the DOM heavily
+			// during editing; an unconditional re-walk per mutation
+			// would walk every iframe on every keystroke.
+			for ( const r of records ) {
+				for ( const node of Array.from( r.addedNodes ) ) {
+					if (
+						node instanceof HTMLIFrameElement ||
+						( node instanceof Element &&
+							node.querySelector?.( 'iframe' ) )
+					) {
+						attachToAllFrames();
+						return;
+					}
+				}
+			}
+		} ).observe( document.documentElement, {
+			childList: true,
+			subtree: true,
+		} );
 	}
+	// Re-walk on iframe `load` — a srcdoc reload replaces the
+	// iframe's document and clears the sentinel.
 	document.addEventListener(
 		'load',
 		( e: Event ) => {
@@ -493,18 +555,6 @@ function install(): void {
 		},
 		true,
 	);
-
-	// Diagnostic surface — paste `window.__desktopModeDropReceiverDebug()`
-	// in DevTools (inside the post.php iframe) to inspect.
-	type DebugWindow = Window & {
-		__desktopModeDropReceiverDebug?: () => Record< string, unknown >;
-	};
-	( window as DebugWindow ).__desktopModeDropReceiverDebug = () => ( {
-		..._debugCounters,
-		hasStash: stashedBridgePayload !== null,
-		stashKind: stashedBridgePayload?.kind ?? null,
-		iframesNow: document.querySelectorAll( 'iframe' ).length,
-	} );
 }
 
 install();

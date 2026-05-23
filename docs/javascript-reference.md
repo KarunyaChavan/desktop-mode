@@ -3021,12 +3021,12 @@ All window actions include at minimum `{ windowId: string }` — additional fiel
 | `desktop-mode.window.focused` | action | Stable | `{ windowId }` — fires on focus changes |
 | `desktop-mode.window.blurred` | action | Stable *(0.5.5)* | `{ windowId, focusedTo }` — fires on the window that lost focus when another window is promoted |
 | `desktop-mode.window.title-changed` | action | Stable | `{ windowId, title }` — iframe-sourced title updates |
-| `desktop-mode.window.minimized` | action | Stable | `{ windowId }` |
-| `desktop-mode.window.restored` | action | Stable | `{ windowId }` — restored from minimized |
-| `desktop-mode.window.maximized` | action | Stable | `{ windowId }` |
-| `desktop-mode.window.unmaximized` | action | Stable | `{ windowId }` |
-| `desktop-mode.window.fullscreen-entered` | action | Stable | `{ windowId }` |
-| `desktop-mode.window.fullscreen-exited` | action | Stable | `{ windowId }` |
+| `desktop-mode.window.minimized` | action | Stable | `{ windowId, element }` — element ride-along matches `closing`'s shape so wallpaper plugins anchored to window tops (snow, leaves) can match stuck particles by identity. Minimized windows render at `opacity: 0` so `offsetParent === null` checks miss them. |
+| `desktop-mode.window.restored` | action | Stable | `{ windowId, element }` — restored from minimized |
+| `desktop-mode.window.maximized` | action | Stable | `{ windowId, element }` |
+| `desktop-mode.window.unmaximized` | action | Stable | `{ windowId, element }` |
+| `desktop-mode.window.fullscreen-entered` | action | Stable | `{ windowId, element }` |
+| `desktop-mode.window.fullscreen-exited` | action | Stable | `{ windowId, element }` |
 | `desktop-mode.window.auto-exit-fullscreen` | filter | Stable *(0.8.6)* | `( shouldExit: boolean, ctx: { windowId, focusedTo } ) => boolean` — decides whether a fullscreen window should auto-exit when focus moves elsewhere. Default `true`. Return `false` to keep persistent-fullscreen surfaces (slideshow, video, game) in fullscreen across focus changes. |
 | `desktop-mode.window.drag-start` | action | Stable | `{ windowId }` |
 | `desktop-mode.window.drag-end` | action | Stable | `{ windowId, x, y }` |

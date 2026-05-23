@@ -17,6 +17,7 @@ function makeManagerStub() {
 	return {
 		getFocused: () => null,
 		getAllByBaseId: () => [],
+		getAll: () => [],
 		getById: () => undefined,
 		getActiveDesktopId: () => 'default-1',
 		openNew: vi.fn(),

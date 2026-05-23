@@ -1461,7 +1461,10 @@ export class Window {
 
 		this.onMinimize?.( this );
 		this._emitChange( 'state' );
-		doAction( HOOKS.WINDOW_MINIMIZED, { windowId: this.id } );
+		doAction( HOOKS.WINDOW_MINIMIZED, {
+			windowId: this.id,
+			element: this.element,
+		} );
 	}
 
 	/**
@@ -1507,7 +1510,10 @@ export class Window {
 		this.onFocusRequest?.( this );
 		this._emitChange( 'state' );
 		if ( wasMinimized ) {
-			doAction( HOOKS.WINDOW_RESTORED, { windowId: this.id } );
+			doAction( HOOKS.WINDOW_RESTORED, {
+				windowId: this.id,
+				element: this.element,
+			} );
 		}
 	}
 
@@ -1551,7 +1557,10 @@ export class Window {
 		}
 		this.state = 'maximized';
 		this._emitChange( 'state' );
-		doAction( HOOKS.WINDOW_MAXIMIZED, { windowId: this.id } );
+		doAction( HOOKS.WINDOW_MAXIMIZED, {
+			windowId: this.id,
+			element: this.element,
+		} );
 	}
 
 	/**
@@ -1618,7 +1627,10 @@ export class Window {
 			}
 			this.state = 'normal';
 			this._emitChange( 'state' );
-			doAction( HOOKS.WINDOW_UNMAXIMIZED, { windowId: this.id } );
+			doAction( HOOKS.WINDOW_UNMAXIMIZED, {
+				windowId: this.id,
+				element: this.element,
+			} );
 			return;
 		}
 
@@ -1649,8 +1661,14 @@ export class Window {
 			updateFullscreenBodyClass();
 			this.updateFocusButtonState();
 			this._emitChange( 'state' );
-			doAction( HOOKS.WINDOW_FULLSCREEN_EXITED, { windowId: this.id } );
-			doAction( HOOKS.WINDOW_MAXIMIZED, { windowId: this.id } );
+			doAction( HOOKS.WINDOW_FULLSCREEN_EXITED, {
+				windowId: this.id,
+				element: this.element,
+			} );
+			doAction( HOOKS.WINDOW_MAXIMIZED, {
+				windowId: this.id,
+				element: this.element,
+			} );
 			return;
 		}
 
@@ -1707,13 +1725,19 @@ export class Window {
 			updateFullscreenBodyClass();
 			this.updateFocusButtonState();
 			this._emitChange( 'state' );
-			doAction( HOOKS.WINDOW_FULLSCREEN_EXITED, { windowId: this.id } );
+			doAction( HOOKS.WINDOW_FULLSCREEN_EXITED, {
+				windowId: this.id,
+				element: this.element,
+			} );
 			if ( landedOnMaximize ) {
 				// Re-entering maximized as a side-effect of exiting
 				// fullscreen — fire the MAXIMIZED hook so subscribers
 				// see the same sequence as the symmetric
 				// `toggleMaximize` from-fullscreen path.
-				doAction( HOOKS.WINDOW_MAXIMIZED, { windowId: this.id } );
+				doAction( HOOKS.WINDOW_MAXIMIZED, {
+					windowId: this.id,
+					element: this.element,
+				} );
 			}
 			return;
 		}
@@ -1753,7 +1777,10 @@ export class Window {
 		updateFullscreenBodyClass();
 		this.updateFocusButtonState();
 		this._emitChange( 'state' );
-		doAction( HOOKS.WINDOW_FULLSCREEN_ENTERED, { windowId: this.id } );
+		doAction( HOOKS.WINDOW_FULLSCREEN_ENTERED, {
+			windowId: this.id,
+			element: this.element,
+		} );
 	}
 
 	/**

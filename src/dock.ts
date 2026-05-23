@@ -868,10 +868,13 @@ export class Dock {
 				icon: item.icon,
 				url: '',
 			},
-			getInstances: () => {
-				const win = this.windowManager.getById( item.id );
-				return win ? [ win ] : [];
-			},
+			// System tiles target a single native-window id; that id
+			// is also the baseId the manager stores duplicates under
+			// when the user opens additional instances via the Ghost
+			// Card. `getAllByBaseId` returns `[]` / `[one]` for the
+			// singleton cases and the full set when a multi-capable
+			// system tile (`multi: true`) has been duplicated.
+			getInstances: () => this.windowManager.getAllByBaseId( item.id ),
 			enableGhost: !! item.multi,
 			windowManager: this.windowManager,
 			getOrientation: () => this.orientation,
@@ -1002,20 +1005,17 @@ export class Dock {
 				icon: item.icon,
 				url: item.url,
 			},
-			getInstances: () => {
-				if ( item.multi ) {
-					return this.windowManager.getAllByBaseId( baseId );
-				}
-				// Singleton: one window per baseId. `getById` is the
-				// canonical lookup, but a window opened via
-				// `manager.open({ id, baseId })` is keyed by the
-				// id — which equals baseId for singletons. We try
-				// both to be safe.
-				const single =
-					this.windowManager.getById( baseId ) ||
-					this.windowManager.getById( item.id );
-				return single ? [ single ] : [];
-			},
+			// Source instances from `getAllByBaseId` regardless of
+			// `item.multi`. The Ghost Card spawns duplicates on every
+			// tile (the `enableGhost: true` below), so any tile —
+			// including ones synthesized from a desktop icon, where
+			// `multi` is never set — can end up with >1 open instance.
+			// A `multi`-gated singleton lookup would only return the
+			// first window and the peek would silently underreport.
+			// For genuine singletons that never get duplicated, the
+			// returned array is just `[one]` (or `[]`), same shape the
+			// old branch produced.
+			getInstances: () => this.windowManager.getAllByBaseId( baseId ),
 			// Ghost Card on EVERY tile, regardless of `multi`. The
 			// affordance reads consistently across the dock — every
 			// hover-peek surfaces a "+ open another <Page>" card. For
@@ -1924,11 +1924,18 @@ export class Dock {
 	}
 
 	/**
-	 * Listen to window events to update active/focused indicators on dock items.
+	 * Listen to window events to update active/focused/minimized
+	 * indicators on dock items, plus the global Show Desktop body class.
 	 *
 	 * The event detail isn't used — we just need to re-query the
 	 * window manager on every change — so the handlers take no
 	 * argument and the type cast is gone with it.
+	 *
+	 * `WINDOW_MINIMIZED` / `WINDOW_RESTORED` route through the hook bus
+	 * (no DOM CustomEvent equivalent today). Without these, minimizing
+	 * a window via Show Desktop / the title-bar minimize button left
+	 * the dock's active-dot rendering stuck on "visible window" — the
+	 * user had no cue that everything had collapsed to minimized.
 	 */
 	private bindWindowEvents(): void {
 		const refresh = (): void => this.updateActiveStates();
@@ -1947,6 +1954,16 @@ export class Dock {
 		);
 		window.wp?.hooks?.addAction?.(
 			'desktop-mode.desktop.closed',
+			this.hooksNamespace,
+			refresh,
+		);
+		window.wp?.hooks?.addAction?.(
+			HOOKS.WINDOW_MINIMIZED,
+			this.hooksNamespace,
+			refresh,
+		);
+		window.wp?.hooks?.addAction?.(
+			HOOKS.WINDOW_RESTORED,
 			this.hooksNamespace,
 			refresh,
 		);
@@ -1983,6 +2000,14 @@ export class Dock {
 			'desktop-mode.desktop.closed',
 			this.hooksNamespace,
 		);
+		window.wp?.hooks?.removeAction?.(
+			HOOKS.WINDOW_MINIMIZED,
+			this.hooksNamespace,
+		);
+		window.wp?.hooks?.removeAction?.(
+			HOOKS.WINDOW_RESTORED,
+			this.hooksNamespace,
+		);
 		for ( const handle of this.attentionTimers.values() ) {
 			window.clearTimeout( handle );
 		}
@@ -2003,12 +2028,20 @@ export class Dock {
 	}
 
 	/**
-	 * Update the active/focused classes and multi-instance rail on every
-	 * dock item in response to a window lifecycle event.
+	 * Update the active/focused/minimized classes on every dock item in
+	 * response to a window lifecycle event, and toggle the global Show
+	 * Desktop body class.
 	 *
 	 * For singletons the rail is absent; "active" means "the one window
 	 * is open". For multi-capable items, active means "≥1 instance is
 	 * open" and focused means "the focused window belongs to this item".
+	 *
+	 * `--all-minimized` is layered on top of `--active` and fires only
+	 * when EVERY open instance of the tile is minimized — so a partial
+	 * minimize (one of two windows hidden) keeps the solid dot. CSS
+	 * swaps the dot for a hollow ring on minimized-only tiles so the
+	 * user can tell at a glance "I have something here, it's just
+	 * hidden right now."
 	 */
 	private updateActiveStates(): void {
 		const focused = this.windowManager.getFocused();
@@ -2021,6 +2054,8 @@ export class Dock {
 		const activeDesktopId = this.windowManager.getActiveDesktopId();
 		const onActiveDesktop = ( w: { config: { desktopId?: string } } ): boolean =>
 			( w.config.desktopId || activeDesktopId ) === activeDesktopId;
+		const isMinimized = ( w: { state?: string } ): boolean =>
+			w.state === 'minimized';
 
 		for ( const item of this.items ) {
 			const tile = this.itemElements.get( item.id );
@@ -2029,19 +2064,23 @@ export class Dock {
 			}
 
 			const baseId = this.resolveItemBaseId( item );
-			const instances = item.multi
-				? this.windowManager
-					.getAllByBaseId( baseId )
-					.filter( onActiveDesktop )
-				: [];
-			const single = this.windowManager.getById( baseId );
-			const singleOpen =
-				! item.multi && !! single && onActiveDesktop( single );
-			const isOpen = item.multi ? instances.length > 0 : singleOpen;
-			const isFocused = focusedBaseId === baseId && !! focused && onActiveDesktop( focused );
+			const instances = this.windowManager
+				.getAllByBaseId( baseId )
+				.filter( onActiveDesktop );
+			const isOpen = instances.length > 0;
+			const allMinimized = isOpen && instances.every( isMinimized );
+			const isFocused =
+				focusedBaseId === baseId &&
+				!! focused &&
+				onActiveDesktop( focused ) &&
+				! isMinimized( focused );
 
 			tile.classList.toggle( 'desktop-mode-dock__item--active', isOpen );
 			tile.classList.toggle( 'desktop-mode-dock__item--focused', isFocused );
+			tile.classList.toggle(
+				'desktop-mode-dock__item--all-minimized',
+				allMinimized,
+			);
 		}
 
 		// System items — active dot driven by the caller's predicate. No
@@ -2052,11 +2091,52 @@ export class Dock {
 			if ( ! tile ) {
 				continue;
 			}
-			const isOpen = sys.isOpen ? sys.isOpen() : false;
-			const isFocused = !! focused && focused.id === sys.id;
+			const sysWin = this.windowManager.getById( sys.id );
+			const isOpen = sys.isOpen ? sys.isOpen() : !! sysWin;
+			const allMinimized = !! sysWin && isMinimized( sysWin );
+			const isFocused =
+				!! focused && focused.id === sys.id && ! isMinimized( focused );
 			tile.classList.toggle( 'desktop-mode-dock__item--active', isOpen );
 			tile.classList.toggle( 'desktop-mode-dock__item--focused', isFocused );
+			tile.classList.toggle(
+				'desktop-mode-dock__item--all-minimized',
+				allMinimized,
+			);
 		}
+
+		// Global Show Desktop indicator — the canonical "every live
+		// window on the active desktop is minimized" state. Toggled as
+		// a body class so any surface (dock pill, wallpaper vignette,
+		// future taskbar widget) can react via CSS. Idempotent across
+		// dock instances: two docks setting the same class doesn't
+		// double-fire.
+		this.updateShowDesktopBodyClass();
+	}
+
+	/**
+	 * Toggle `body.desktop-mode-show-desktop-active` based on whether
+	 * every live window on the active desktop is minimized. Mirrors
+	 * the heuristic inside {@link WindowManager.toggleShowDesktop} so
+	 * the visual cue tracks the actual state — set by Show Desktop
+	 * gestures, restored when any window is brought back, automatically
+	 * cleared when no windows exist.
+	 *
+	 * @internal
+	 */
+	private updateShowDesktopBodyClass(): void {
+		const activeDesktopId = this.windowManager.getActiveDesktopId();
+		const live = this.windowManager
+			.getAll()
+			.filter(
+				( w ) =>
+					( w.config.desktopId || activeDesktopId ) === activeDesktopId,
+			);
+		const showDesktop =
+			live.length > 0 && live.every( ( w ) => w.state === 'minimized' );
+		document.body.classList.toggle(
+			'desktop-mode-show-desktop-active',
+			showDesktop,
+		);
 	}
 }
 

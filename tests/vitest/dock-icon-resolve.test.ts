@@ -22,6 +22,7 @@ function makeManagerStub() {
 	return {
 		getFocused: () => null,
 		getAllByBaseId: () => [],
+		getAll: () => [],
 		getById: () => undefined,
 		getActiveDesktopId: () => 'default-1',
 	} as unknown as ConstructorParameters< typeof Dock >[ 1 ];

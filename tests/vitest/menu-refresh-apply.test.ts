@@ -373,6 +373,7 @@ describe( 'menu-refresh-apply.createApplyPayload — end-to-end with real Dock',
 			getById: () => null,
 			getFocused: () => null,
 			getAll: () => [],
+			getAllByBaseId: () => [],
 			getCount: () => 0,
 			getActiveDesktopId: () => 'desktop-1',
 		} as unknown as WindowManager;

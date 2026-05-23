@@ -46,6 +46,7 @@ function makeManager(): WindowManager {
 		openNew: vi.fn(),
 		getFocused: () => null,
 		getAllByBaseId: () => [],
+		getAll: () => [],
 		getById: () => undefined,
 		getActiveDesktopId: () => 'default-1',
 	} as unknown as WindowManager;

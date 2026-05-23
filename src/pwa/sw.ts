@@ -90,24 +90,44 @@ interface SWGlobal {
 // concise.
 const sw = globalThis as unknown as SWGlobal;
 
-const VERSION = '0.8.0-pwa-3';
+const VERSION = '0.8.0-pwa-5';
 const STATIC_CACHE = `desktop-mode-static-${ VERSION }`;
 const RUNTIME_CACHE = `desktop-mode-runtime-${ VERSION }`;
 const OFFLINE_URL = '/desktop-mode/?offline=1';
 
 /**
- * Asset URLs precached on install. Kept tiny on purpose — additional
- * assets are picked up at runtime via stale-while-revalidate. We only
- * need enough here to render the shell shell-of-a-shell when offline.
+ * Asset URLs precached on install. Kept narrow on purpose — paths
+ * are unversioned, and the runtime cache lookups pass
+ * `ignoreSearch: true` so a versioned request like
+ * `desktop.min.js?ver=1717519200` finds the cached unversioned
+ * `desktop.min.js`. This gives the SW a real-bytes fallback when
+ * the network fails or is too slow to serve the navigation —
+ * without forcing the SW to know each build's `?ver=` upfront.
+ *
+ * What goes here: the JS bundles + CSS the shell needs to paint
+ * its first frame. Lazy bundles (`window-system`, `shell-overlays`)
+ * are included because the main bundle's preloader requests them
+ * immediately after first paint, so they're effectively
+ * critical-path for any user who opens a window or triggers an
+ * overlay.
  *
  * Paths are relative to `/wp-content/plugins/desktop-mode/`; we
  * resolve to the actual origin at install time using `sw.location`.
+ *
+ * Production builds ship `.min.js`; dev/SCRIPT_DEBUG builds ship
+ * the un-minified `.js`. We precache the minified set (the common
+ * production shape) and the runtime `staleWhileRevalidate` path
+ * picks up the un-minified bundle on demand for any host running
+ * with SCRIPT_DEBUG on.
  */
 const PRECACHE_PATHS: readonly string[] = [
 	'assets/css/desktop.css',
 	'assets/css/variables.css',
 	'assets/css/dock.css',
 	'assets/css/windows.css',
+	'assets/js/desktop.min.js',
+	'assets/js/window-system.min.js',
+	'assets/js/shell-overlays.min.js',
 	'assets/images/wp-logo.png',
 ];
 
@@ -242,18 +262,23 @@ async function precache(): Promise< void > {
 }
 
 function pluginAssetBase(): string {
-	const here = sw.location.pathname;
-	const idx = here.indexOf( '/desktop-mode/' );
-	const origin = sw.location.origin;
-	// Plugin URL — we can't read DESKTOP_MODE_URL from JS-side, so
-	// hardcode the conventional path. Hosts using a non-default
-	// `wp-content/plugins/` path will see the precache silently
-	// no-op; runtime caching still works because it keys off the
-	// real URL the page asks for.
-	if ( idx >= 0 ) {
-		return origin + '/wp-content/plugins/desktop-mode/';
-	}
-	return origin + '/wp-content/plugins/desktop-mode/';
+	// Plugin URL — we can't read DESKTOP_MODE_URL from the JS-side
+	// service-worker context, so we hardcode the conventional path.
+	// Hosts using a non-default `wp-content/plugins/` directory
+	// (Bedrock/Trellis's `web/app/plugins/`, Composer-based sites,
+	// custom `WP_CONTENT_DIR`, multisite with `wp-content` moved out)
+	// will see precache silently no-op — `addAll` rejects on the
+	// first 404 and the install handler swallows the error. Runtime
+	// caching still works because it keys off the real URL the page
+	// requests, so the only user-visible loss is the install-time
+	// precache warmup.
+	//
+	// TODO: in the next SW revision, surface the plugin URL via the
+	// PHP-side `?ver=` query string (`<script src="…/sw.js?plugin_url=…">`)
+	// so non-standard install layouts get the precache benefit too.
+	// Today this lives as a hardcoded fallback because every
+	// non-trivial alternative needs that PHP-side handoff.
+	return sw.location.origin + '/wp-content/plugins/desktop-mode/';
 }
 
 function isStaticAssetPath( pathname: string ): boolean {
@@ -296,9 +321,21 @@ async function networkFirstForAsset( req: Request ): Promise< Response > {
 		}
 		return fresh;
 	} catch {
-		const cached = await cache.match( req );
-		if ( cached ) {
-			return cached;
+		// Try the runtime cache first (request URL with `?ver=` etc),
+		// then fall back to the static precache with `ignoreSearch` so a
+		// versioned URL like `desktop.min.js?ver=…` can resolve to the
+		// unversioned precached `desktop.min.js`. Without the second
+		// lookup, the first navigation after an offline reload would
+		// 504 even though the bundle is sitting right there in the
+		// install-time precache.
+		const cachedRuntime = await cache.match( req );
+		if ( cachedRuntime ) {
+			return cachedRuntime;
+		}
+		const staticCache = await caches.open( STATIC_CACHE );
+		const cachedStatic = await staticCache.match( req, { ignoreSearch: true } );
+		if ( cachedStatic ) {
+			return cachedStatic;
 		}
 		return new Response( '', { status: 504 } );
 	}
@@ -306,7 +343,28 @@ async function networkFirstForAsset( req: Request ): Promise< Response > {
 
 async function staleWhileRevalidate( req: Request ): Promise< Response > {
 	const cache = await caches.open( RUNTIME_CACHE );
-	const cached = await cache.match( req );
+	// **Runtime cache: EXACT match (no `ignoreSearch`).** The runtime
+	// cache stores responses keyed by their full URL including any
+	// `?ver=<filemtime>` cache-bust suffix WordPress appends on every
+	// asset enqueue. We must respect that suffix — earlier versions of
+	// this function passed `ignoreSearch: true` here, which collapsed
+	// every version of an asset onto the same cache entry. The visible
+	// failure: after editing a CSS or JS file, the new `?ver=` URL hit
+	// the SWR path, the lookup matched the stale `?ver=` entry, SWR
+	// returned the stale bytes immediately. Users saw old CSS / old JS
+	// for as long as the SW lived in their profile. Fixed in pwa-5.
+	let cached = await cache.match( req );
+	// **Static precache fallback: `ignoreSearch: true`.** The precache
+	// list stores UNVERSIONED URLs (`assets/css/desktop.css`); runtime
+	// requests carry `?ver=<mtime>`. So a precache match REQUIRES
+	// ignoring the search params on the lookup. Only used as fallback
+	// when the runtime cache has nothing — that way the precache acts
+	// purely as a "real bytes when nothing else is around" fallback,
+	// without overriding fresh runtime cache entries.
+	if ( ! cached ) {
+		const staticCache = await caches.open( STATIC_CACHE );
+		cached = await staticCache.match( req, { ignoreSearch: true } );
+	}
 	// eslint-disable-next-line no-restricted-syntax -- service-worker context, no `wp.desktop` global available; raw fetch is the API.
 	const network = fetch( req )
 		.then( ( res ) => {

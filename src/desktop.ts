@@ -295,6 +295,84 @@ let _earlyReady = false;
 const OS_SETTINGS_WINDOW_ID = 'desktop-mode-os-settings';
 
 /**
+ * Run a non-critical boot task during browser idle time. Falls
+ * back to a 0 ms timer when `requestIdleCallback` isn't available
+ * (Safari < 17).
+ *
+ * Used by boot calls that wire event listeners or heartbeat
+ * subscribers — work that doesn't need to be ready before first
+ * paint. Pulling them off the critical path lets the shell mount
+ * sooner; the deferred listeners attach within ~1 frame of init()
+ * returning, well before any user interaction can race them.
+ *
+ * **Coalesced execution.** Multiple `scheduleIdleBoot` calls within
+ * the same synchronous tick share ONE `requestIdleCallback`
+ * registration. init() makes ~8 calls today; the browser previously
+ * saw 8 separate idle requests and could spread them across 8
+ * different idle frames over the page's first second of life. With
+ * the queue + drain pattern below, the browser sees ONE request
+ * and picks a single idle window large enough to run all of them.
+ *
+ * Per-callback try/catch keeps one bad subscriber from skipping
+ * the rest. Calls made AFTER the queue has been drained (rare —
+ * would require an idle-callback-driven module to schedule more
+ * idle work) schedule a fresh idle window; subsequent same-tick
+ * calls after that re-coalesce.
+ *
+ * Note: this is intentionally separate from the existing
+ * `preloadShellOverlays` / `preloadWindowSystem` idle block at the
+ * end of `init()` — that one preloads lazy bundles (network), this
+ * one runs sync registration work (CPU). Splitting them lets the
+ * browser interleave network prefetch with idle-CPU boot.
+ *
+ * @param cb      Work to run when the browser has spare time.
+ * @param timeout Hard deadline (ms). The SHORTEST timeout among
+ *                queued callbacks wins for the shared idle
+ *                request — a caller that needs work to land within
+ *                500 ms doesn't get held back by another caller
+ *                that's happy with 1500 ms. Defaults to 1500.
+ */
+let _idleBootQueue: Array< () => void > = [];
+let _idleBootTimeout = Number.POSITIVE_INFINITY;
+let _idleBootScheduled = false;
+function scheduleIdleBoot( cb: () => void, timeout = 1500 ): void {
+	_idleBootQueue.push( cb );
+	if ( timeout < _idleBootTimeout ) {
+		_idleBootTimeout = timeout;
+	}
+	if ( _idleBootScheduled ) {
+		return;
+	}
+	_idleBootScheduled = true;
+	const drain = (): void => {
+		const callbacks = _idleBootQueue;
+		const effectiveTimeout = _idleBootTimeout;
+		_idleBootQueue = [];
+		_idleBootTimeout = Number.POSITIVE_INFINITY;
+		_idleBootScheduled = false;
+		void effectiveTimeout; // consumed by the scheduler below; kept in scope for clarity.
+		for ( const fn of callbacks ) {
+			try {
+				fn();
+			} catch ( err ) {
+				if ( typeof console !== 'undefined' ) {
+					// eslint-disable-next-line no-console
+					console.error(
+						'[desktop-mode] scheduleIdleBoot callback threw:',
+						err,
+					);
+				}
+			}
+		}
+	};
+	if ( typeof window.requestIdleCallback === 'function' ) {
+		window.requestIdleCallback( drain, { timeout: _idleBootTimeout } );
+	} else {
+		window.setTimeout( drain, 0 );
+	}
+}
+
+/**
  * Public surface exposed on `window.wp.desktop`. Third-party plugins
  * rely on these members being stable — new fields may be added over
  * time, but nothing here is removed without a major-version bump.
@@ -1830,8 +1908,10 @@ function init(): void {
 
 	// Cross-iframe drop targets — installs an overlay per iframe
 	// window that catches shortcut drags and forwards them as
-	// `desktop-mode-drop` postMessages. Idempotent.
-	installIframeDropTargets( dragManager );
+	// `desktop-mode-drop` postMessages. Idempotent. Deferred to
+	// idle: drop overlays only matter when the user actually
+	// drags something, which can't happen before init() returns.
+	scheduleIdleBoot( () => installIframeDropTargets( dragManager ) );
 
 	// Surface a toast when an iframe receiver (Gutenberg drop-
 	// receiver today) reports a failed insert — most commonly a
@@ -1870,23 +1950,29 @@ function init(): void {
 	// of whichever window has focus and exposes the commands as slash-
 	// commands in the shell palette. Navigation commands rewrite to open
 	// a new desktop window; actions proxy back into the iframe.
-	new IframeCommandBridge( {
-		manager,
-		adminUrl: config.adminUrl,
-	} ).install();
+	// Deferred to idle: the bridge wires focus listeners and message
+	// handlers, none of which need to fire before the user opens the
+	// Cmd+K palette for the first time (typically seconds after first
+	// paint). The harvester below is deferred for the same reason.
+	scheduleIdleBoot( () => {
+		new IframeCommandBridge( {
+			manager,
+			adminUrl: config.adminUrl,
+		} ).install();
 
-	// Shell-side baseline harvester — pulls the WordPress-wide command
-	// set (Add new post, Manage plugins, Switch theme, Browse patterns,
-	// …) from `core/commands` running in the shell's own runtime and
-	// registers them under `owner: 'global'`. Without this the palette
-	// only shows commands from the focused iframe — native windows
-	// (Posts, Files, Plugins, Comments) contribute none, so the user
-	// would never see the WP baseline while one of those is focused.
-	// Re-harvests automatically on `desktop-mode-plugins-changed`.
-	new ShellCommandHarvester( {
-		manager,
-		adminUrl: config.adminUrl,
-	} ).install();
+		// Shell-side baseline harvester — pulls the WordPress-wide command
+		// set (Add new post, Manage plugins, Switch theme, Browse patterns,
+		// …) from `core/commands` running in the shell's own runtime and
+		// registers them under `owner: 'global'`. Without this the palette
+		// only shows commands from the focused iframe — native windows
+		// (Posts, Files, Plugins, Comments) contribute none, so the user
+		// would never see the WP baseline while one of those is focused.
+		// Re-harvests automatically on `desktop-mode-plugins-changed`.
+		new ShellCommandHarvester( {
+			manager,
+			adminUrl: config.adminUrl,
+		} ).install();
+	} );
 
 	// Admin-bar "Ask AI" button and programmatic `desktop-mode-open-ai`
 	// dispatches now route through openPaletteOnly so any other plugin
@@ -2136,6 +2222,8 @@ function init(): void {
 			renderDesktopIcons( desktopArea, icons, {
 				openWindow: nativeWindows.openById,
 				manager,
+				deriveWindowId: ( url: string ) =>
+					deriveWindowId( url, config.adminUrl ),
 			} );
 		};
 		layoutDispatcher = createLayoutDispatcher(
@@ -2713,8 +2801,16 @@ function init(): void {
 	// uses today: Recycle Bin publishes `desktop-mode.data-changed`
 	// when items move in/out of trash; iframes (Posts list, Media
 	// Library, …) and other native windows can react.
+	//
+	// `attachBroadcastBus` stays eager — outgoing broadcasts emitted
+	// during init() need the manager reference in place when they
+	// fan out to iframes. `installBroadcastReceiver` (which only
+	// listens for INCOMING messages from iframes) is deferred to
+	// idle: iframes can't post messages until they finish their own
+	// `admin_footer` bootstrap, which lands well after init() returns
+	// and the idle callback drains.
 	attachBroadcastBus( manager );
-	installBroadcastReceiver();
+	scheduleIdleBoot( () => installBroadcastReceiver() );
 
 	// Loading-state transitions — show the `<wpd-spinner>` overlay
 	// while a window's iframe boots / native render fetches data,
@@ -2840,6 +2936,8 @@ function init(): void {
 		renderDesktopIcons( desktopArea, icons, {
 			openWindow: nativeWindows.openById,
 			manager,
+			deriveWindowId: ( url: string ) =>
+				deriveWindowId( url, config.adminUrl ),
 		} );
 	};
 
@@ -2960,7 +3058,9 @@ function init(): void {
 	// the recycle-bin drop targets (dock icon + window body). The
 	// installer is idempotent — it listens for `DOCK_AFTER_RENDER`
 	// and `WINDOW_OPENED` to (re-)attach when the elements appear.
-	installRecycleBinDropTargets( dragManager );
+	// Deferred to idle: drop targets only matter when the user is
+	// actively dragging, never on first paint.
+	scheduleIdleBoot( () => installRecycleBinDropTargets( dragManager ) );
 
 	// Wire the cross-feature Heartbeat bus before any consumer
 	// (presence, recycle bin, third-party plugins) registers a
@@ -2972,8 +3072,12 @@ function init(): void {
 	// `restNonce` values in `window.desktopModeConfig` and
 	// `window.desktopModeWindowConfig` stay valid past the
 	// 24-hour `nonce_life` boundary. See `src/nonce-refresh.ts`
-	// and `includes/nonce-refresh.php`.
-	bootNonceRefresh();
+	// and `includes/nonce-refresh.php`. Deferred to idle: the
+	// first heartbeat tick fires ~15 s after init regardless, so
+	// the subscription doesn't need to be in place at first paint.
+	// `bootHeartbeatBus()` above is still eager so the bus is
+	// ready when this subscribe call lands.
+	scheduleIdleBoot( () => bootNonceRefresh() );
 
 	bootStickyNotes( {
 		host: desktopArea,
@@ -3078,21 +3182,29 @@ function init(): void {
 	}
 
 	// Wire the Files-on-the-Desktop Heartbeat sync. Idempotent —
-	// safe to call again on a re-init.
-	startFilesHeartbeat();
+	// safe to call again on a re-init. Deferred to idle: it's a
+	// pure heartbeat contributor + subscriber, no UI rendering and
+	// no synchronous public-API surface. First heartbeat tick is
+	// ~15 s out, well after the idle callback fires.
+	scheduleIdleBoot( () => startFilesHeartbeat() );
 
 	// Restore-from-bin sync: refetches hydrated folders the moment the
 	// Recycle Bin broadcasts `action: 'untrashed'` so a restored
 	// folder/placement lands back on the desktop without waiting for
-	// the next Heartbeat tick.
-	startFilesRestoreSync();
+	// the next Heartbeat tick. Deferred to idle: pure broadcast
+	// subscriber, only fires when the user restores something.
+	scheduleIdleBoot( () => startFilesRestoreSync() );
 
 	// Boot the framework presence probe — always runs in desktop
 	// mode, regardless of whether the chat feature is enabled. The
 	// probe wires Heartbeat send/tick listeners that bump server
 	// presence and ingest the snapshot. Idempotent on repeat
 	// init() calls (the underlying singleton-guards itself).
-	bootPresenceProbe();
+	// Deferred to idle: the first heartbeat tick is ~15 s out and
+	// the probe is purely a Heartbeat consumer — no UI rendering,
+	// no synchronous public-API surface, no race against other
+	// boot calls.
+	scheduleIdleBoot( () => bootPresenceProbe() );
 
 	// Fire `desktop-mode.init` — plugins can now register wallpapers
 	// and hook other surfaces. Fired AFTER `window.wp.desktop` is
@@ -3395,6 +3507,34 @@ function init(): void {
 	// wallpaper context menu instead. When on, we mirror the macOS
 	// gesture and the matching menu entry is suppressed (see the
 	// `includeShowDesktop` flag passed to the menu builder below).
+	//
+	// Track whether the most-recent pointerdown landed DIRECTLY on
+	// the bare wallpaper. Browsers fire `click` on the closest
+	// common ancestor of the pointerdown + pointerup targets — so a
+	// pointerdown on a window's resize handle (a child of
+	// `desktopArea`) that ends with a pointerup over the wallpaper
+	// still triggers a `click` on `desktopArea` with
+	// `e.target === desktopArea`. Without this guard the toggle
+	// fires on every "resize a window quickly and let go on the
+	// backdrop" gesture, surprise-minimizing every window. The
+	// `dragManager.recentlyEndedDrag()` check below catches the
+	// tile-drag case specifically, but it doesn't cover window
+	// resize / window drag (those use the window's own pointer
+	// handlers, not the drag manager).
+	let pointerdownOnWallpaper = false;
+	desktopArea.addEventListener( 'pointerdown', ( e: PointerEvent ) => {
+		// Only the PRIMARY pointer (`e.isPrimary === true`) drives the
+		// click intent. Under multi-touch (pinch-to-zoom on a touch
+		// screen during a window resize), each touch fires its own
+		// pointerdown — without the `isPrimary` gate, a second finger
+		// that incidentally lands on the wallpaper would set the flag
+		// to true and re-arm the show-desktop minimize gesture
+		// mid-resize. On a mouse this is always true.
+		if ( ! e.isPrimary ) {
+			return;
+		}
+		pointerdownOnWallpaper = e.target === desktopArea;
+	} );
 	desktopArea.addEventListener( 'click', ( e: MouseEvent ) => {
 		if ( ! osSettings.state.showDesktopOnWallpaperClick ) {
 			return;
@@ -3402,6 +3542,15 @@ function init(): void {
 		// Only the bare wallpaper — clicks on a tile, widget, or any
 		// inner surface bubble up but shouldn't trigger the toggle.
 		if ( e.target !== desktopArea ) {
+			return;
+		}
+		// The pointerdown that opened this gesture must ALSO have
+		// landed on the bare wallpaper. See the comment block above
+		// the listeners — this catches mouseup-over-wallpaper from a
+		// window resize / drag, which the existing `e.target` check
+		// can't (the browser synthesizes the click on the common
+		// ancestor, which IS `desktopArea`).
+		if ( ! pointerdownOnWallpaper ) {
 			return;
 		}
 		// Suppress while overview is active — overview has its own

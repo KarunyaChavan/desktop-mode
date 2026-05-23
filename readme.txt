@@ -4,7 +4,7 @@ Tags: desktop, admin, ui, productivity, ai
 Requires at least: 6.0
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 0.8.9-rc
+Stable tag: 0.8.9
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -107,7 +107,8 @@ The plugin bundles the following third-party JavaScript library, loaded on deman
 
 == Changelog ==
 
-= 0.8.9-rc =
+= 0.8.9 =
+* Improve drag-and-drop handling in chromeless bridge and iframe bridge
 * The whole shell loads faster, especially the first time you open wp-admin
 * Open an app from the wallpaper or from the dock — it's the same window now (no more two copies floating around)
 * Minimize a window and the dock icon shows it's minimized — even if you opened it from the desktop icon

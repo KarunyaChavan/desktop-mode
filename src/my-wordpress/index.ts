@@ -37,6 +37,12 @@ import { renderListToolbar } from './list-toolbar';
 import { renderMediaList } from './media-list';
 import { renderMediaDetail } from './media-detail';
 import {
+	clearFootprintTarget,
+	openUserFootprintWindow,
+	readFootprintTarget,
+	subscribeFootprintTarget,
+} from './footprint-target';
+import {
 	renderBreadcrumbs,
 	type BreadcrumbSegment,
 } from '../desktop-files/breadcrumbs';
@@ -195,9 +201,16 @@ interface RenderState {
 }
 
 interface StatusContext {
-	view: 'root' | 'list' | 'detail' | 'sub-list';
+	view: 'root' | 'list' | 'detail' | 'sub-list' | 'user-footprint';
 	entityId?: string;
 	postId?: number;
+	/**
+	 * Target user id. Only set on the `'user-footprint'` view — kept
+	 * distinct from `postId` so `desktop-mode.my-wordpress.status-bar`
+	 * filters can tell a user surface apart from a post surface
+	 * instead of mistaking a user id for a post id.
+	 */
+	userId?: number;
 	relation?: string;
 }
 
@@ -4590,7 +4603,7 @@ function renderUserFootprint(
 				sort: 10,
 			},
 		],
-		{ view: 'detail', entityId: entity.id, postId: userId },
+		{ view: 'user-footprint', entityId: entity.id, userId },
 	);
 
 	void ( async () => {
@@ -4609,7 +4622,7 @@ function renderUserFootprint(
 						sort: 10,
 					},
 				],
-				{ view: 'detail', entityId: entity.id, postId: userId },
+				{ view: 'user-footprint', entityId: entity.id, userId },
 			);
 			return;
 		}
@@ -4668,7 +4681,7 @@ function renderUserFootprint(
 					sort: 10,
 				},
 			],
-			{ view: 'detail', entityId: entity.id, postId: userId },
+			{ view: 'user-footprint', entityId: entity.id, userId },
 		);
 	} )();
 }
@@ -6002,7 +6015,26 @@ function renderInto( body: HTMLElement ): ( () => void ) | undefined {
 
 	// If the consumer opened the window via `openDetail` while it
 	// was closed, the queued route is the actual destination.
-	const initialRoute = pendingRoute ?? { kind: 'root' };
+	//
+	// A pending footprint target (set cross-bundle by
+	// `openUserFootprintWindow` — e.g. the chromeless `users.php`
+	// row action routed through the window-system bridge) wins over
+	// the queued `pendingRoute` and the root fallback: it is the most
+	// recent, explicit user intent and survives the lazy-bundle load
+	// because it lives in a shared store rather than this module's
+	// `pendingRoute`. Consume + clear so a later plain open lands on
+	// root.
+	const footprint = readFootprintTarget();
+	let initialRoute: Route;
+	if ( footprint.userId && footprint.userId > 0 ) {
+		initialRoute = footprintRouteFor(
+			footprint.userId,
+			footprint.userName,
+		);
+		clearFootprintTarget();
+	} else {
+		initialRoute = pendingRoute ?? { kind: 'root' };
+	}
 	pendingRoute = null;
 	navigate( state, initialRoute );
 
@@ -6107,6 +6139,22 @@ function asRenderState( host: EntityRenderHost ): RenderState {
  *  @since 0.8.0
  * ------------------------------------------------------------------ */
 
+/**
+ * Build a `user-footprint` route for a target user. `entityId` is the
+ * built-in `'users'` entity (registered server-side in
+ * `includes/my-wordpress/window.php`); `getEntity( 'users' )` resolves
+ * it inside `navigate()`. A missing entity renders the in-window
+ * "Unknown entity type" error rather than throwing.
+ */
+function footprintRouteFor( userId: number, userName: string ): Route {
+	return {
+		kind: 'user-footprint',
+		entityId: 'users',
+		userId,
+		userName,
+	};
+}
+
 interface OpenDetailArgs {
 	entityId: string;
 	postId: number;
@@ -6179,9 +6227,32 @@ function openMedia( args: OpenMediaArgs ): void {
 	desktop?.openWindow?.( WINDOW_ID, { source: 'my-wordpress/open-media' } );
 }
 
+interface OpenUserFootprintArgs {
+	userId: number;
+	userName?: string;
+}
+
+/**
+ * Route the My WordPress window directly into a user's activity
+ * footprint. Cross-bundle and cold-start safe: delegates to the shared
+ * `openUserFootprintWindow` helper, which stashes the target in a
+ * shared store and opens-or-focuses the window so the freshly-mounted
+ * (or already-live) bundle navigates to the footprint route. Mirrors
+ * `openDetail()` / `openMedia()`, for users.
+ *
+ * @public
+ * @since 0.23.0
+ *
+ * @param args Footprint target (`userId` required, `userName` optional).
+ */
+function openUserFootprint( args: OpenUserFootprintArgs ): void {
+	openUserFootprintWindow( args );
+}
+
 interface MyWordpressApi {
 	openDetail: ( args: OpenDetailArgs ) => void;
 	openMedia: ( args: OpenMediaArgs ) => void;
+	openUserFootprint: ( args: OpenUserFootprintArgs ) => void;
 	registerEntityKind: ( kind: string, renderer: EntityRenderer ) => () => void;
 	/**
 	 * Trash an entity by its My WordPress entity id (`'posts'`,
@@ -6245,9 +6316,29 @@ if ( desktopGlobal ) {
 	desktopGlobal.myWordpress = {
 		openDetail,
 		openMedia,
+		openUserFootprint,
 		registerEntityKind,
 		trashEntity: trashEntityById,
 	};
+
+	// Warm re-target. When a footprint open arrives while a My
+	// WordPress window is already mounted, `openWindow()` just focuses
+	// the existing instance (no remount), so `renderInto`'s mount-read
+	// never runs. Navigate the most-recently-active instance to the
+	// requested footprint instead. The cold case (window closed, or
+	// the bundle not yet loaded) is handled by the mount-read in
+	// `renderInto`, so the `! activeState` guard here intentionally
+	// no-ops — the store stays set for that mount to consume.
+	subscribeFootprintTarget( ( next ) => {
+		if ( ! next.userId || next.userId <= 0 || ! activeState ) {
+			return;
+		}
+		navigate(
+			activeState,
+			footprintRouteFor( next.userId, next.userName ),
+		);
+		clearFootprintTarget();
+	} );
 
 	// Live-tile pruning on trash. Every live My WordPress list body
 	// listens for the broadcast — `trashEntityById` fires this after

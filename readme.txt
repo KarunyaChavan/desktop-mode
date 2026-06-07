@@ -4,7 +4,7 @@ Tags: desktop, admin, ui, productivity, ai
 Requires at least: 6.0
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 0.11.0
+Stable tag: 0.9.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -107,17 +107,13 @@ The plugin bundles the following third-party JavaScript library, loaded on deman
 
 == Changelog ==
 
-= 0.11.0 =
-* AI scope narrowed: the only automatic AI analysis is now comment spam scoring — posts, pages, and taxonomy terms are no longer sent to OpenAI on save
-* The AI assistant now finds posts, pages, and comments with WordPress's native keyword search instead of pre-analyzed summaries
-* Removed the bulk `/ai/reindex` REST endpoint
-* One-time upgrade unschedules any leftover post/term analysis cron events
-* Breaking: the post/term analysis hooks (`desktop_mode_ai_post_prompt`, `desktop_mode_ai_term_prompt`, `desktop_mode_ai_post_analyzed`, `desktop_mode_ai_term_analyzed`, `desktop_mode_ai_supported_post_types`, `desktop_mode_ai_supported_taxonomies`, `desktop_mode_ai_schema_content`) have been removed — see docs/migration-ai-comment-only.md
-
-= 0.10.0 =
-* The native Posts, Pages, Users, Plugins, and Comments windows are now opt-in Beta — they no longer replace the classic admin screens by default
-* New "Beta features" section in OS Settings → Features to turn each native window on
-* One-time upgrade resets the native windows to off so the redesigned screens are a deliberate choice
+= 0.9.1 =
+* Make native list windows opt-in (Beta) instead of opt-out
+* Scope AI to comment spam + native-search assistant
+* Feat/unfocus window effects
+* Fix placement, gear/Help, and dock⇄desktop visibility bugs
+* Fix Guidelines-experiment 404 noise, duplicate welcome dialog, and unused-preload warnings
+* Add "View activity footprint" row action in Users list
 
 = 0.9.0 =
 * Gate per-user REST routes on desktop mode enabled

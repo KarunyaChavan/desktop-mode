@@ -15,6 +15,7 @@ import { __ } from '../../i18n';
 import { html, render } from '../../ui/core';
 import { renderIcon } from '../../icon';
 import type { ItemVisibility, SettingsCtx } from '../types';
+import type { OsSettingsSnapshot } from '../registry';
 import { listPlaceableItems } from '../item-placement';
 import type { DesktopConfig } from '../../types';
 import type { DockItem } from '../../dock';
@@ -96,14 +97,13 @@ export function buildAppsIconsSection( ctx: SettingsCtx ): HTMLElement {
 				}
 			};
 
-	const paint = (): void => {
+	const paint = (
+		visibility: Record< string, ItemVisibility > = ctx.state
+			.itemVisibility,
+	): void => {
 		const dockItems = readDockItems();
 		const desktopIcons = readDesktopIcons();
-		const rows = listPlaceableItems(
-			dockItems,
-			desktopIcons,
-			ctx.state.itemVisibility,
-		);
+		const rows = listPlaceableItems( dockItems, desktopIcons, visibility );
 
 		render(
 			html`
@@ -160,5 +160,32 @@ export function buildAppsIconsSection( ctx: SettingsCtx ): HTMLElement {
 	};
 
 	paint();
+
+	// Repaint when an EXTERNAL writer (the right-click visibility menu,
+	// or any other OS-settings consumer) mutates itemVisibility, so a
+	// row's <wpd-select> never shows a stale placement while this tab is
+	// open. Self-unsubscribes once the panel is torn down (the wrapper
+	// is no longer in the DOM), mirroring the wallpaper section's
+	// registry.subscribe pattern so listeners don't pile up across
+	// repeated settings-window opens.
+	const wpDesktop = ( window as unknown as {
+		wp?: {
+			desktop?: {
+				subscribeOsSettings?: (
+					cb: ( snapshot: OsSettingsSnapshot ) => void,
+				) => () => void;
+			};
+		};
+	} ).wp?.desktop;
+	if ( wpDesktop?.subscribeOsSettings ) {
+		const unsubscribe = wpDesktop.subscribeOsSettings( ( snapshot ) => {
+			if ( ! wrapper.isConnected ) {
+				unsubscribe();
+				return;
+			}
+			paint( snapshot.itemVisibility );
+		} );
+	}
+
 	return wrapper;
 }

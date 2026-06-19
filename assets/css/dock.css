@@ -204,9 +204,40 @@
 	inset-inline-end: -3px;
 }
 
+/* Minimized windows count chip — tucked into its own lower corner so
+ * it does not collide with app notification badges at the top. */
+.desktop-mode-dock__item[data-minimized-count]::after {
+	content: attr(data-minimized-count);
+	position: absolute;
+	min-width: 16px;
+	height: 16px;
+	padding: 0 4px;
+	box-sizing: border-box;
+	border-radius: 999px;
+	background: var( --desktop-mode-dock-bg, rgba( 0, 0, 0, 0.4 ) );
+	color: rgba( 255, 255, 255, 0.85 );
+	border: 1px solid rgba( 255, 255, 255, 0.85 );
+	font-size: 10px;
+	font-weight: 700;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font-variant-numeric: tabular-nums;
+	line-height: 1;
+	pointer-events: none;
+	transition: transform 0.15s ease;
+	inset-inline-end: -4px;
+	bottom: 0;
+	z-index: 2;
+}
+
 .desktop-mode-dock__item:hover .desktop-mode-dock__badge {
 	transform: scale( 1.05 );
 	top: -4px;
+}
+
+.desktop-mode-dock__item:hover[data-minimized-count]::after {
+	transform: scale( 1.05 );
 }
 
 /*

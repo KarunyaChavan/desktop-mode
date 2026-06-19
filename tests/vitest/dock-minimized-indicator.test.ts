@@ -141,6 +141,43 @@ describe( 'Dock — minimized window indicator', () => {
 		).toBe( false );
 	} );
 
+	test( 'partial minimize paints a numeric tucked-window count even while another instance is focused', () => {
+		const normal = makeWin( 'edit-php', 'edit-php', 'normal' );
+		const minimized = makeWin( 'edit-php-2', 'edit-php', 'minimized' );
+		const manager = makeManager( [ normal, minimized ], normal );
+		const { container } = mount( manager );
+		document.dispatchEvent( new CustomEvent( 'desktop-mode-window-opened' ) );
+
+		const tile = tileFor( container, 'menu-posts' );
+		const primary = tile.querySelector< HTMLElement >(
+			'.desktop-mode-dock__item-primary',
+		);
+		expect( tile.classList.contains( 'desktop-mode-dock__item--focused' ) ).toBe( true );
+		expect( tile.getAttribute( 'data-minimized-count' ) ).toBe( '1' );
+		expect( primary?.getAttribute( 'aria-label' ) ).toBe(
+			'Posts, 1 minimized window',
+		);
+	} );
+
+	test( 'minimized count clears when no instances are minimized', () => {
+		const win = makeWin( 'edit-php', 'edit-php', 'minimized' );
+		const manager = makeManager( [ win ] );
+		const { container } = mount( manager );
+		document.dispatchEvent( new CustomEvent( 'desktop-mode-window-opened' ) );
+
+		const tile = tileFor( container, 'menu-posts' );
+		const primary = tile.querySelector< HTMLElement >(
+			'.desktop-mode-dock__item-primary',
+		);
+		expect( tile.getAttribute( 'data-minimized-count' ) ).toBe( '1' );
+
+		win.state = 'normal';
+		window.wp?.hooks?.doAction?.( HOOKS.WINDOW_RESTORED, { windowId: 'edit-php' } );
+
+		expect( tile.hasAttribute( 'data-minimized-count' ) ).toBe( false );
+		expect( primary?.getAttribute( 'aria-label' ) ).toBe( 'Posts' );
+	} );
+
 	test( 'focused tile loses --focused when its window is minimized', () => {
 		const win = makeWin( 'edit-php', 'edit-php', 'minimized' );
 		const manager = makeManager( [ win ], win );

@@ -72,7 +72,7 @@ function desktop_mode_register_assets() {
 		'desktop-mode-dock',
 		DESKTOP_MODE_URL . 'assets/css/dock.css',
 		array( 'desktop-mode-variables', 'dashicons' ),
-		$version
+		$built_version( 'assets/css/dock.css' )
 	);
 	wp_register_style(
 		'desktop-mode-dock-peek',

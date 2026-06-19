@@ -358,6 +358,9 @@ function buildInstanceCard(
 	// already focused so a re-enter into the same card doesn't churn
 	// the focus stack and re-fire window-focused listeners.
 	card.addEventListener( 'pointerenter', () => {
+		if ( win.state === 'minimized' ) {
+			return;
+		}
 		if ( deps.windowManager.getFocused() === win ) {
 			return;
 		}
@@ -399,6 +402,9 @@ function spawnFocusViewTransition(
 	const focus = (): void => {
 		dismiss();
 		deps.windowManager.focus( win );
+		if ( win.state === 'minimized' ) {
+			win.restore();
+		}
 	};
 	if ( typeof doc.startViewTransition !== 'function' ) {
 		focus();

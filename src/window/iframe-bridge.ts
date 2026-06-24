@@ -11,6 +11,7 @@
  */
 
 import { doAction, HOOKS } from '../hooks';
+import { __ } from '../i18n';
 import { showToast } from '../toast';
 import { addExternalTab } from './tabs';
 import type { Window } from './index';
@@ -186,10 +187,35 @@ export function handleWindowMessage( win: Window, event: MessageEvent ): void {
 	// `load` event fires BEFORE our bridge attaches, which makes
 	// listener-timing a known footgun otherwise).
 	if ( data.type === 'desktop-mode-ready' ) {
+		win._iframeBridgeReady = true;
 		// Bridge announced — anything queued via `Window.send()`
 		// before this point flushes now in FIFO order.
 		markWindowContentReady( win.id );
 		doAction( HOOKS.IFRAME_READY, { windowId: win.id } );
+	}
+
+	// Response to the parent's pre-close query for unsaved changes.
+	if ( data.type === 'desktop-mode-bridge-beforeunload-response' ) {
+		if ( win._iframeCloseTimeout ) {
+			clearTimeout( win._iframeCloseTimeout );
+			win._iframeCloseTimeout = null;
+		}
+		if ( data.prevent ) {
+			import( '../ui/components/wpd-confirm-dialog/wpd-confirm-dialog' ).then( ( { wpdConfirm } ) => {
+				wpdConfirm( {
+					title: typeof data.message === 'string' && data.message ? data.message : __( 'Unsaved changes' ),
+					message: __( 'You have unsaved changes. Are you sure you want to close this window?' ),
+					confirmLabel: __( 'Close window' ),
+					danger: true,
+				} ).then( ( confirmed ) => {
+					if ( confirmed ) {
+						win.destroy();
+					}
+				} );
+			} );
+		} else {
+			win.destroy();
+		}
 	}
 
 	// Iframe-initiated navigation. Two modes:

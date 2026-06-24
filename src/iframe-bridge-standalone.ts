@@ -284,6 +284,57 @@ interface IframeWp {
 			return;
 		}
 
+		if ( data.type === 'desktop-mode-bridge-beforeunload-query' ) {
+			let prevent = false;
+			let msg = '';
+
+			const shimReturnValue = ( ev: Event & { returnValue?: unknown, _returnValue?: unknown } ) => {
+				Object.defineProperty( ev, 'returnValue', {
+					get() { return this._returnValue || ''; },
+					set( v ) { this._returnValue = v; },
+				} );
+			};
+
+			const checkPrevent = ( event: Event & { returnValue?: unknown }, result: unknown ) => {
+				const hasResult = typeof result === 'string' && result !== '';
+				const hasRetVal = typeof event.returnValue === 'string' && event.returnValue !== '';
+				if ( event.defaultPrevented || hasResult || hasRetVal ) {
+					prevent = true;
+					if ( hasResult ) {
+						msg = result as string;
+					} else if ( hasRetVal ) {
+						msg = event.returnValue as string;
+					}
+				}
+			};
+
+			if ( typeof window.onbeforeunload === 'function' ) {
+				const unloadEvent = new Event( 'beforeunload', { cancelable: true } ) as Event & { returnValue?: unknown };
+				shimReturnValue( unloadEvent );
+				const res = window.onbeforeunload( unloadEvent );
+				checkPrevent( unloadEvent, res );
+			}
+			if ( ! prevent ) {
+				const dispatchEvent = new Event( 'beforeunload', { cancelable: true } ) as Event & { returnValue?: unknown };
+				shimReturnValue( dispatchEvent );
+				window.dispatchEvent( dispatchEvent );
+				checkPrevent( dispatchEvent, null );
+			}
+			try {
+				window.parent.postMessage(
+					{
+						type: 'desktop-mode-bridge-beforeunload-response',
+						prevent,
+						message: msg,
+					},
+					parentOrigin,
+				);
+			} catch {
+				/* swallow */
+			}
+			return;
+		}
+
 		if (
 			data.type === 'desktop-mode-bridge-publish' &&
 			typeof data.topic === 'string'

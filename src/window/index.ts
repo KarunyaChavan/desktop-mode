@@ -409,6 +409,16 @@ export class Window {
 	 * @internal
 	 */
 	public _iframeCloseTimeout: ReturnType< typeof setTimeout > | null = null;
+
+	/**
+	 * Guards against re-entering the iframe pre-close query while one is
+	 * in-flight. Prevents duplicate queries and orphaned safety timers
+	 * when `close()` is called multiple times before a response arrives.
+	 *
+	 * @internal
+	 */
+	public _closePending: boolean = false;
+
 	/**
 	 * Which tab is currently foregrounded: 'primary' or a tab id.
 	 * @internal
@@ -2676,20 +2686,25 @@ export class Window {
 			if ( proceed === false ) {
 				return;
 			}
-		} else if ( ! this.config.native && ! this._suppressCloseFilter && this._iframeBridgeReady && this.iframe ) {
-			// Iframe windows negotiate close via cross-frame message
-			// so the iframe can run `beforeunload` checks for unsaved changes.
+		} else if ( ! this.config.native && ! this._suppressCloseFilter && ! this._closePending && this._iframeBridgeReady && this.iframe ) {
+			this._closePending = true;
 			try {
-				this.iframe.contentWindow?.postMessage( { type: 'desktop-mode-bridge-beforeunload-query' }, '*' );
+				this.iframe.contentWindow?.postMessage(
+					{ type: 'desktop-mode-bridge-beforeunload-query' },
+					location.origin,
+				);
 
-				// Safety net: if the iframe doesn't respond, close anyway
 				this._iframeCloseTimeout = setTimeout( () => {
+					if ( this._isDestroyed ) {
+						return;
+					}
 					this._suppressCloseFilter = true;
+					this._closePending = false;
 					this.close();
 				}, 500 );
-				return; // suspend close pending ack
+				return;
 			} catch {
-				// cross-origin or dead, proceed with close
+				this._closePending = false;
 			}
 		}
 

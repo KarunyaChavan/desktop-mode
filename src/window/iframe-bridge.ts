@@ -196,23 +196,32 @@ export function handleWindowMessage( win: Window, event: MessageEvent ): void {
 
 	// Response to the parent's pre-close query for unsaved changes.
 	if ( data.type === 'desktop-mode-bridge-beforeunload-response' ) {
+		if ( win._isDestroyed ) {
+			return;
+		}
+		win._closePending = false;
 		if ( win._iframeCloseTimeout ) {
 			clearTimeout( win._iframeCloseTimeout );
 			win._iframeCloseTimeout = null;
 		}
 		if ( data.prevent ) {
-			import( '../ui/components/wpd-confirm-dialog/wpd-confirm-dialog' ).then( ( { wpdConfirm } ) => {
-				wpdConfirm( {
-					title: typeof data.message === 'string' && data.message ? data.message : __( 'Unsaved changes' ),
-					message: __( 'You have unsaved changes. Are you sure you want to close this window?' ),
-					confirmLabel: __( 'Close window' ),
-					danger: true,
-				} ).then( ( confirmed ) => {
+			import( '../ui/components/wpd-confirm-dialog/wpd-confirm-dialog' )
+				.then( ( { wpdConfirm } ) =>
+					wpdConfirm( {
+						title: typeof data.message === 'string' && data.message ? data.message : __( 'Unsaved changes' ),
+						message: __( 'You have unsaved changes. Are you sure you want to close this window?' ),
+						confirmLabel: __( 'Close window' ),
+						danger: true,
+					} ),
+				)
+				.then( ( confirmed ) => {
 					if ( confirmed ) {
 						win.destroy();
 					}
+				} )
+				.catch( () => {
+					win.destroy();
 				} );
-			} );
 		} else {
 			win.destroy();
 		}

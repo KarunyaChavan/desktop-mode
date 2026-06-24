@@ -288,22 +288,28 @@ interface IframeWp {
 			let prevent = false;
 			let msg = '';
 
-			const shimReturnValue = ( ev: Event & { returnValue?: unknown, _returnValue?: unknown } ) => {
-				Object.defineProperty( ev, 'returnValue', {
-					get() { return this._returnValue || ''; },
-					set( v ) { this._returnValue = v; },
+			const shimReturnValue = ( e: Event ) => {
+				const self = e as unknown as Record<string, unknown>;
+				Object.defineProperty( e, 'returnValue', {
+					get() {
+						return self._returnValue || '';
+					},
+					set( v ) {
+						self._returnValue = v;
+					},
 				} );
 			};
 
-			const checkPrevent = ( event: Event & { returnValue?: unknown }, result: unknown ) => {
+			const checkPrevent = ( event: Event, result: unknown ) => {
+				const retVal: unknown = ( event as unknown as Record<string, unknown> ).returnValue;
 				const hasResult = typeof result === 'string' && result !== '';
-				const hasRetVal = typeof event.returnValue === 'string' && event.returnValue !== '';
+				const hasRetVal = typeof retVal === 'string' && retVal !== '';
 				if ( event.defaultPrevented || hasResult || hasRetVal ) {
 					prevent = true;
 					if ( hasResult ) {
 						msg = result as string;
 					} else if ( hasRetVal ) {
-						msg = event.returnValue as string;
+						msg = retVal as string;
 					}
 				}
 			};

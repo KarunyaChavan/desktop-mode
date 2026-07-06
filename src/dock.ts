@@ -874,7 +874,7 @@ export class Dock {
 			// Card. `getAllByBaseId` returns `[]` / `[one]` for the
 			// singleton cases and the full set when a multi-capable
 			// system tile (`multi: true`) has been duplicated.
-			getInstances: () => this.windowManager.getAllByBaseId( item.id ),
+			getInstances: () => this.windowManager.getAllByBaseIdOnActiveDesktop( item.id ),
 			enableGhost: !! item.multi,
 			windowManager: this.windowManager,
 			getOrientation: () => this.orientation,
@@ -1015,7 +1015,7 @@ export class Dock {
 			// For genuine singletons that never get duplicated, the
 			// returned array is just `[one]` (or `[]`), same shape the
 			// old branch produced.
-			getInstances: () => this.windowManager.getAllByBaseId( baseId ),
+			getInstances: () => this.windowManager.getAllByBaseIdOnActiveDesktop( baseId ),
 			// Ghost Card on EVERY tile, regardless of `multi`. The
 			// affordance reads consistently across the dock — every
 			// hover-peek surfaces a "+ open another <Page>" card. For

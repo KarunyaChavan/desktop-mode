@@ -69,7 +69,7 @@ interface WpDesktopBadgeRails {
 	dock?: BadgeRails | null;
 	taskbar?: BadgeRails | null;
 	icons?: BadgeRails;
-	windowManager?: { isActive?: ( id: string ) => boolean };
+	windowManager?: { isActive?: ( id: string ) => boolean; isActiveByBaseId?: ( baseId: string ) => boolean };
 }
 function getDesktopApi(): WpDesktopBadgeRails | undefined {
 	return ( window as unknown as { wp?: { desktop?: WpDesktopBadgeRails } } )
@@ -184,7 +184,11 @@ function paintBadge( count: number ): void {
  * `desktop.js` so that's rare, but cheap to handle).
  */
 function isBinWindowActive(): boolean {
-	return !! getDesktopApi()?.windowManager?.isActive?.( TARGET_ID );
+	const mgr = getDesktopApi()?.windowManager;
+	if ( mgr?.isActiveByBaseId ) {
+		return mgr.isActiveByBaseId( TARGET_ID );
+	}
+	return !! mgr?.isActive?.( TARGET_ID );
 }
 
 /**
@@ -295,7 +299,12 @@ function wireWindowLifecycleSignals(): void {
 	const ns = 'desktop-mode/recycle-bin/badge-lifecycle';
 	const repaint = ( payload: unknown ): void => {
 		const detail = payload as { windowId?: string };
-		if ( detail?.windowId !== TARGET_ID ) {
+		const windowId = detail?.windowId;
+		if ( ! windowId ) {
+			return;
+		}
+		const isBin = windowId === TARGET_ID || windowId.startsWith( TARGET_ID + '-' );
+		if ( ! isBin ) {
 			return;
 		}
 		paintBadge( store.state.current );

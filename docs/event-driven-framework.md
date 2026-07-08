@@ -67,8 +67,19 @@ const store  = wp.desktop.createSharedStore( 'my/state', () => ( { x: 0 } ) );
 
 If you're building a "show this thing only when the user can't
 already see my window" UI, `windowManager.isActive(id)` is the
-canonical query — it collapses three sub-checks (window exists,
-not minimized, focused) into one boolean.
+canonical query — it collapses four sub-checks (window exists,
+not minimized, focused, on the active virtual desktop) into one
+boolean. A window that's focused on a Space the user has since
+switched away from does NOT count as active.
+
+For a multi-instance window (`multi: true`, ids like
+`${baseId}-2`, `${baseId}-3`), `isActive(id)` only ever answers
+for one exact id. Use `windowManager.isActiveByBaseId(baseId)`
+instead — it returns `true` if *any* instance sharing that
+`baseId` is the currently focused window (still scoped to the
+active desktop). This is the query `src/recycle-bin/badge.ts`
+switched to so its badge doesn't stay suppressed while the user
+is looking at a *different* recycle-bin instance.
 
 ### Layer 2 — window lifecycle
 
@@ -360,6 +371,15 @@ wp.desktop.activity.subscribe( 'inbox/unread-changed', repaintBadge );
 );
 repaintBadge(); // initial paint
 ```
+
+**Multi-instance windows** (`multi: true`) need
+`windowManager.isActiveByBaseId( baseId )` instead of `isActive(
+id )` in `repaintBadge()` above — otherwise the badge only
+suppresses for the exact instance id first opened, and stays
+visible while the user is looking at instance `-2` or `-3`. See
+[`src/recycle-bin/badge.ts`](../src/recycle-bin/badge.ts) for the
+full pattern, including matching lifecycle events across every
+instance id sharing the base.
 
 **There is no `wp.desktop.taskbar` accessor.** The three badge
 rails are `wp.desktop.dock` (the primary bottom rail),

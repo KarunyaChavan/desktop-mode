@@ -20,6 +20,7 @@ function makeManagerStub() {
 	return {
 		getFocused: () => null,
 		getAllByBaseId: () => [],
+		getAllByBaseIdOnActiveDesktop: () => [],
 		getAll: () => [],
 		getById: () => undefined,
 		getActiveDesktopId: () => 'default-1',
@@ -158,6 +159,8 @@ describe( 'Dock.replaceItems tears down peek attachments', () => {
 			getFocused: () => null,
 			getAllByBaseId: ( baseId: string ) =>
 				baseId === 'themes-php' ? [ win ] : [],
+			getAllByBaseIdOnActiveDesktop: ( baseId: string ) =>
+				baseId === 'themes-php' ? [ win ] : [],
 			getAll: () => [ win ],
 			getById: ( id: string ) => ( id === 'themes-php' ? win : undefined ),
 			getActiveDesktopId: () => 'default-1',
@@ -214,6 +217,8 @@ describe( 'Dock.replaceItems tears down peek attachments', () => {
 		const manager = {
 			getFocused: () => null,
 			getAllByBaseId: ( baseId: string ) =>
+				baseId === 'themes-php' ? [ win ] : [],
+			getAllByBaseIdOnActiveDesktop: ( baseId: string ) =>
 				baseId === 'themes-php' ? [ win ] : [],
 			getAll: () => [ win ],
 			getById: ( id: string ) => ( id === 'themes-php' ? win : undefined ),

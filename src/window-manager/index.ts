@@ -1120,6 +1120,16 @@ export class WindowManager {
 			.sort( ( a, b ) => instanceSlot( a.id ) - instanceSlot( b.id ) );
 	}
 
+	/**
+	 * Get every open window sharing the given baseId on the active desktop,
+	 * ordered by instance slot.
+	 */
+	public getAllByBaseIdOnActiveDesktop( baseId: string ): Window[] {
+		return this.getAllByBaseId( baseId ).filter(
+			( w ) => ( w.config.desktopId || this._activeDesktopId ) === this._activeDesktopId,
+		);
+	}
+
 	/** Get all open windows. */
 	public getAll(): Window[] {
 		return [ ...this._stack ];
@@ -1174,8 +1184,31 @@ export class WindowManager {
 		if ( win.state === 'minimized' ) {
 			return false;
 		}
+		const winDesktop = win.config.desktopId || this._activeDesktopId;
+		if ( winDesktop !== this._activeDesktopId ) {
+			return false;
+		}
 		const focused = this.getFocused();
 		return !! focused && focused.id === id;
+	}
+
+	/**
+	 * Like {@link isActive}, but returns true if *any* window with the
+	 * given baseId is currently active.
+	 */
+	public isActiveByBaseId( baseId: string ): boolean {
+		const focused = this.getFocused();
+		if ( ! focused ) {
+			return false;
+		}
+		if ( focused.state === 'minimized' ) {
+			return false;
+		}
+		const winDesktop = focused.config.desktopId || this._activeDesktopId;
+		if ( winDesktop !== this._activeDesktopId ) {
+			return false;
+		}
+		return ( focused.config.baseId || focused.id ) === baseId;
 	}
 
 	// ---- Virtual desktop delegations ----
@@ -1317,6 +1350,10 @@ export class WindowManager {
 	public minimizeAll(): Window[] {
 		const minimized: Window[] = [];
 		for ( const win of this._stack.slice() ) {
+			const winDesktop = win.config.desktopId || this._activeDesktopId;
+			if ( winDesktop !== this._activeDesktopId ) {
+				continue;
+			}
 			if ( win.state === 'minimized' ) {
 				continue;
 			}
@@ -1358,6 +1395,10 @@ export class WindowManager {
 			if ( ! live.has( win ) ) {
 				continue;
 			}
+			const winDesktop = win.config.desktopId || this._activeDesktopId;
+			if ( winDesktop !== this._activeDesktopId ) {
+				continue;
+			}
 			if ( win.state !== 'minimized' ) {
 				continue;
 			}
@@ -1388,7 +1429,9 @@ export class WindowManager {
 	 * @since 0.6.0
 	 */
 	public toggleShowDesktop(): boolean {
-		const all = this._stack.slice();
+		const all = this._stack.filter(
+			( w ) => ( w.config.desktopId || this._activeDesktopId ) === this._activeDesktopId,
+		);
 		if ( all.length === 0 ) {
 			return false;
 		}

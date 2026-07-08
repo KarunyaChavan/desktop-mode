@@ -2325,6 +2325,66 @@ function desktop_mode_chromeless_bridge_script() {
 			return;
 		}
 
+		if ( data.type === 'desktop-mode-bridge-beforeunload-query' ) {
+			var prevent = false;
+			var msg = '';
+
+			function shimReturnValue( ev ) {
+				Object.defineProperty( ev, 'returnValue', {
+					get: function() { return this._returnValue || ''; },
+					set: function( v ) { this._returnValue = v; }
+				} );
+			}
+
+			function checkPrevent( ev, result ) {
+				var hasRes = typeof result === 'string' && result !== '';
+				var hasRetVal = typeof ev.returnValue === 'string' && ev.returnValue !== '';
+				if ( ev.defaultPrevented || hasRes || hasRetVal ) {
+					prevent = true;
+					if ( hasRes ) {
+						msg = result;
+					} else if ( hasRetVal ) {
+						msg = ev.returnValue;
+					}
+				}
+			}
+
+			var unloadEvent;
+			try {
+				unloadEvent = new Event( 'beforeunload', { cancelable: true } );
+			} catch ( _err ) {
+				unloadEvent = document.createEvent( 'Event' );
+				unloadEvent.initEvent( 'beforeunload', false, true );
+			}
+			shimReturnValue( unloadEvent );
+
+			if ( typeof window.onbeforeunload === 'function' ) {
+				var res = window.onbeforeunload( unloadEvent );
+				checkPrevent( unloadEvent, res );
+			}
+			if ( ! prevent ) {
+				var dispatchEvent;
+				try {
+					dispatchEvent = new Event( 'beforeunload', { cancelable: true } );
+				} catch ( _err ) {
+					dispatchEvent = document.createEvent( 'Event' );
+					dispatchEvent.initEvent( 'beforeunload', false, true );
+				}
+				shimReturnValue( dispatchEvent );
+				window.dispatchEvent( dispatchEvent );
+				checkPrevent( dispatchEvent, null );
+			}
+
+			try {
+				window.parent.postMessage( {
+					type: 'desktop-mode-bridge-beforeunload-response',
+					prevent: prevent,
+					message: msg
+				}, _wpdParentOrigin );
+			} catch ( _err ) { /* swallow */ }
+			return;
+		}
+
 		if ( data.type === 'desktop-mode-bridge-handshake' && typeof data.connectionId === 'string' ) {
 			/* The parent's handshake carries the host window id —
 			 * stash it so `wp.desktop.iframe.windowId` and

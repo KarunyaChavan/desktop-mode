@@ -3448,6 +3448,8 @@ These hooks fire only for native windows (`wp.desktop.registerWindow({ native: t
 | `desktop-mode.native-window.after-render` | action | Stable | `{ windowId, body, config }` — fires after the plugin's `render` callback has painted |
 | `desktop-mode.native-window.before-close` | filter | Stable | `( proceed: boolean, ctx: { windowId, config } ) → boolean` — applied when a native window is about to start its close animation; return `false` to cancel the close (any other return, including `undefined`, lets it proceed). Does not apply to iframe windows. |
 
+**Iframe windows have their own, separate pre-close guard** *(since 0.9.4)* — not this filter. Closing an iframe-backed window posts a `desktop-mode-bridge-beforeunload-query` into the iframe and waits (up to 500ms) for a response before destroying; if the page inside has unsaved changes (`window.onbeforeunload` or a `beforeunload` listener sets a message), the user sees a confirm dialog first. See [`bridge-protocol.md`](./bridge-protocol.md#pre-close-unsaved-changes-query--desktop-mode-bridge-beforeunload-) for the full message shape — there's no plugin-facing filter for this path, it's automatic for every iframe window.
+
 #### Window body resize
 
 | Hook | Kind | Status | Payload |

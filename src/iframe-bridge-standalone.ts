@@ -284,6 +284,63 @@ interface IframeWp {
 			return;
 		}
 
+		if ( data.type === 'desktop-mode-bridge-beforeunload-query' ) {
+			let prevent = false;
+			let msg = '';
+
+			const shimReturnValue = ( e: Event ) => {
+				const self = e as unknown as Record<string, unknown>;
+				Object.defineProperty( e, 'returnValue', {
+					get() {
+						return self._returnValue || '';
+					},
+					set( v ) {
+						self._returnValue = v;
+					},
+				} );
+			};
+
+			const checkPrevent = ( event: Event, result: unknown ) => {
+				const retVal: unknown = ( event as unknown as Record<string, unknown> ).returnValue;
+				const hasResult = typeof result === 'string' && result !== '';
+				const hasRetVal = typeof retVal === 'string' && retVal !== '';
+				if ( event.defaultPrevented || hasResult || hasRetVal ) {
+					prevent = true;
+					if ( hasResult ) {
+						msg = result as string;
+					} else if ( hasRetVal ) {
+						msg = retVal as string;
+					}
+				}
+			};
+
+			if ( typeof window.onbeforeunload === 'function' ) {
+				const unloadEvent = new Event( 'beforeunload', { cancelable: true } ) as Event & { returnValue?: unknown };
+				shimReturnValue( unloadEvent );
+				const res = window.onbeforeunload( unloadEvent );
+				checkPrevent( unloadEvent, res );
+			}
+			if ( ! prevent ) {
+				const dispatchEvent = new Event( 'beforeunload', { cancelable: true } ) as Event & { returnValue?: unknown };
+				shimReturnValue( dispatchEvent );
+				window.dispatchEvent( dispatchEvent );
+				checkPrevent( dispatchEvent, null );
+			}
+			try {
+				window.parent.postMessage(
+					{
+						type: 'desktop-mode-bridge-beforeunload-response',
+						prevent,
+						message: msg,
+					},
+					parentOrigin,
+				);
+			} catch {
+				/* swallow */
+			}
+			return;
+		}
+
 		if (
 			data.type === 'desktop-mode-bridge-publish' &&
 			typeof data.topic === 'string'

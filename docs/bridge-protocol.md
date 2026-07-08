@@ -90,6 +90,24 @@ The forwarder listens in **bubble phase** at the iframe's `document`, so any in-
 
 Only drops where neither bail fires (the empty page background, or an inner handler that never called `preventDefault()`) escalate to the shell.
 
+### Pre-close unsaved-changes query — `desktop-mode-bridge-beforeunload-*`
+
+*(since 0.9.4)* Before tearing down an iframe-backed (non-native) window, `Window.close()` gives the page inside a chance to veto — the same protection a real browser tab close gets from the page's `beforeunload` handler, which a same-origin admin iframe never triggers on its own (there's no real navigation happening).
+
+| Type | Direction | Carries | Purpose |
+|---|---|---|---|
+| `desktop-mode-bridge-beforeunload-query` | parent → iframe | *(none)* | Sent once `close()` is called on a window whose bridge has announced readiness (`desktop-mode-ready` already fired). |
+| `desktop-mode-bridge-beforeunload-response` | iframe → parent | `{ prevent: boolean, message?: string }` | Reply. `prevent: true` means the iframe's own `beforeunload` handling (`window.onbeforeunload` or an `addEventListener('beforeunload', …)` listener) set a message or called `preventDefault()`. |
+
+Flow:
+
+1. `close()` checks `win._iframeBridgeReady` — a window whose iframe never announced readiness (still loading, or a non-desktop-mode page) skips the query entirely and destroys immediately, same as before this feature existed.
+2. Otherwise it posts the query, sets `win._closePending = true`, and returns **without** destroying — a 500ms safety timer (`win._iframeCloseTimeout`) forces the close through if no response arrives (a hung or unresponsive iframe can't block closing forever).
+3. Both bridge implementations (the inline PHP script in `includes/render/chromeless-bridge.php` and the standalone `src/iframe-bridge-standalone.ts`) answer the query the same way: synthesize a `beforeunload` `Event`, invoke `window.onbeforeunload` with it if set, then (if not already prevented) dispatch a real `beforeunload` event so `addEventListener('beforeunload', …)` listeners run too. Whichever mechanism sets `event.returnValue` or calls `preventDefault()` flips `prevent: true`, carrying the handler's message string through if one was set.
+4. On the parent side, `prevent: false` destroys the window immediately. `prevent: true` shows a `<wpd-confirm-dialog>` (title = the iframe's message, or a generic fallback) — the window is only destroyed if the user confirms.
+
+Native windows are untouched — they still use the synchronous `desktop-mode.native-window.before-close` filter (see [`javascript-reference.md`](./javascript-reference.md#native-window-lifecycle)), not this postMessage round-trip.
+
 ## Lifecycle walkthrough — parent-initiated connection
 
 1. **Plugin calls** `wp.desktop.connect( 'edit-post', { topics: [ 'gutenberg:content' ] } )`.

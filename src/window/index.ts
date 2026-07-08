@@ -395,6 +395,31 @@ export class Window {
 	public _isFinalized: boolean = false;
 
 	/**
+	 * Tracks whether the iframe bridge has announced readiness.
+	 * Required to know if we can safely send the pre-close query.
+	 *
+	 * @internal
+	 */
+	public _iframeBridgeReady: boolean = false;
+
+	/**
+	 * Safety-net timer for the pre-close iframe query. If the iframe
+	 * bridge fails to ack, this timer forces the close to proceed.
+	 *
+	 * @internal
+	 */
+	public _iframeCloseTimeout: ReturnType< typeof setTimeout > | null = null;
+
+	/**
+	 * Guards against re-entering the iframe pre-close query while one is
+	 * in-flight. Prevents duplicate queries and orphaned safety timers
+	 * when `close()` is called multiple times before a response arrives.
+	 *
+	 * @internal
+	 */
+	public _closePending: boolean = false;
+
+	/**
 	 * Which tab is currently foregrounded: 'primary' or a tab id.
 	 * @internal
 	 */
@@ -2650,9 +2675,6 @@ export class Window {
 		// Cancellable pre-close filter — ONLY for native windows.
 		// Return `false` from the filter to abort the close; any
 		// other return (undefined, true) lets the close proceed.
-		// Iframe windows don't go through this: their close is
-		// typically triggered by the user closing the UI and
-		// cancelling it would be confusing.
 		// `_suppressCloseFilter` is set by `destroy()` so a force-
 		// teardown caller (tests, plugin deactivation) bypasses the
 		// veto.
@@ -2664,6 +2686,35 @@ export class Window {
 			);
 			if ( proceed === false ) {
 				return;
+			}
+		} else if ( ! this.config.native && ! this._suppressCloseFilter && this._iframeBridgeReady && this.iframe ) {
+			if ( this._closePending ) {
+				// A query is already in flight — e.g. the user double-
+				// clicked the close button before the iframe answered.
+				// Falling through to destroy here would bypass the
+				// unsaved-changes check this whole branch exists for.
+				// Let the in-flight query's response (or its safety
+				// timeout below) drive the close instead.
+				return;
+			}
+			this._closePending = true;
+			try {
+				this.iframe.contentWindow?.postMessage(
+					{ type: 'desktop-mode-bridge-beforeunload-query' },
+					location.origin,
+				);
+
+				this._iframeCloseTimeout = setTimeout( () => {
+					if ( this._isDestroyed ) {
+						return;
+					}
+					this._suppressCloseFilter = true;
+					this._closePending = false;
+					this.close();
+				}, 500 );
+				return;
+			} catch {
+				this._closePending = false;
 			}
 		}
 

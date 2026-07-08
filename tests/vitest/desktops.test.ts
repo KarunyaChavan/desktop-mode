@@ -344,4 +344,130 @@ describe( 'WindowManager — virtual desktops', async () => {
 		expect( aEntry.width ).toBe( 640 );
 		expect( aEntry.height ).toBe( 480 );
 	} );
+
+	// -----------------------------------------------------------------
+	// Active-desktop scoping for isActive / isActiveByBaseId /
+	// getAllByBaseIdOnActiveDesktop / minimizeAll / restoreFrom /
+	// toggleShowDesktop.
+	// -----------------------------------------------------------------
+
+	test( 'getAllByBaseIdOnActiveDesktop filters getAllByBaseId to the active desktop', async () => {
+		const a = await manager.open( {
+			id: 'multi-app',
+			baseId: 'multi-app',
+			url: 'http://example.test/wp-admin/multi-app.php',
+			title: 'multi-app',
+			icon: 'dashicons-admin-generic',
+		} );
+		const second = manager.createDesktop();
+		manager.switchDesktop( second.id );
+		const b = await manager.open( {
+			id: 'multi-app',
+			baseId: 'multi-app',
+			url: 'http://example.test/wp-admin/multi-app.php',
+			title: 'multi-app',
+			icon: 'dashicons-admin-generic',
+		} );
+
+		// Sanity: the unfiltered lookup spans every desktop.
+		expect( manager.getAllByBaseId( 'multi-app' ) ).toHaveLength( 2 );
+
+		// On desktop-2 (active): only `b` qualifies.
+		expect( manager.getAllByBaseIdOnActiveDesktop( 'multi-app' ) ).toEqual( [ b ] );
+
+		manager.switchDesktop( 'desktop-1' );
+
+		// Back on desktop-1: only `a` qualifies.
+		expect( manager.getAllByBaseIdOnActiveDesktop( 'multi-app' ) ).toEqual( [ a ] );
+	} );
+
+	test( 'isActive stops reporting true once its desktop is no longer active', async () => {
+		// Regression: switching to a desktop with no windows leaves
+		// `getFocused()` (last entry in the global z-order stack)
+		// still pointing at whatever was focused on the desktop the
+		// user just left — `switchDesktop` only re-focuses when the
+		// new desktop has a window to focus. Without the desktop
+		// check, `isActive('a')` would stay true even though `a` is
+		// no longer visible.
+		const a = await manager.open( openConfig( 'a' ) );
+		expect( manager.isActive( 'a' ) ).toBe( true );
+
+		const second = manager.createDesktop();
+		manager.switchDesktop( second.id );
+
+		expect( manager.isActive( 'a' ) ).toBe( false );
+
+		manager.switchDesktop( 'desktop-1' );
+
+		expect( manager.isActive( 'a' ) ).toBe( true );
+	} );
+
+	test( 'isActiveByBaseId matches any instance of baseId, scoped to the active desktop', async () => {
+		const multiConfig = () => ( {
+			id: 'multi-app',
+			baseId: 'multi-app',
+			url: 'http://example.test/wp-admin/multi-app.php',
+			title: 'multi-app',
+			icon: 'dashicons-admin-generic',
+		} );
+		const a = await manager.open( multiConfig() );
+		expect( manager.isActiveByBaseId( 'multi-app' ) ).toBe( true );
+
+		// Empty second desktop — `a` is still the last-focused window
+		// globally, but it lives on desktop-1, not the new active one.
+		const second = manager.createDesktop();
+		manager.switchDesktop( second.id );
+		expect( manager.isActiveByBaseId( 'multi-app' ) ).toBe( false );
+
+		// A second instance opened here becomes focused on the active
+		// desktop — baseId now reads active again, via a different id.
+		const b = await manager.open( multiConfig() );
+		expect( b.id ).not.toBe( a.id );
+		expect( manager.isActiveByBaseId( 'multi-app' ) ).toBe( true );
+	} );
+
+	test( 'minimizeAll only minimizes windows on the active desktop', async () => {
+		const a = await manager.open( openConfig( 'a' ) );
+		const second = manager.createDesktop();
+		manager.switchDesktop( second.id );
+		const b = await manager.open( openConfig( 'b' ) );
+
+		const minimized = manager.minimizeAll();
+
+		expect( minimized ).toEqual( [ b ] );
+		expect( b.state ).toBe( 'minimized' );
+		expect( a.state ).toBe( 'normal' );
+	} );
+
+	test( 'restoreFrom skips windows whose desktop is no longer active', async () => {
+		const a = await manager.open( openConfig( 'a' ) );
+		a.minimize();
+		expect( a.state ).toBe( 'minimized' );
+
+		const second = manager.createDesktop();
+		manager.switchDesktop( second.id );
+
+		// `a` lives on desktop-1, which isn't active — restoreFrom
+		// must leave it minimized even though it's in the list.
+		manager.restoreFrom( [ a ] );
+		expect( a.state ).toBe( 'minimized' );
+
+		manager.switchDesktop( 'desktop-1' );
+		manager.restoreFrom( [ a ] );
+		expect( a.state ).toBe( 'normal' );
+	} );
+
+	test( 'toggleShowDesktop only affects windows on the active desktop', async () => {
+		const a = await manager.open( openConfig( 'a' ) );
+		const second = manager.createDesktop();
+		manager.switchDesktop( second.id );
+		const b = await manager.open( openConfig( 'b' ) );
+
+		expect( manager.toggleShowDesktop() ).toBe( true );
+		expect( b.state ).toBe( 'minimized' );
+		expect( a.state ).toBe( 'normal' );
+
+		expect( manager.toggleShowDesktop() ).toBe( false );
+		expect( b.state ).toBe( 'normal' );
+	} );
 } );

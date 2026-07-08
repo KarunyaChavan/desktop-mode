@@ -575,8 +575,12 @@ manager.focus( win: Window ): void;
 // Lookup
 manager.getById( id: string ): Window | undefined;
 manager.getByBaseId( baseId: string ): Window | undefined;
+manager.getAllByBaseId( baseId: string ): Window[];                      // every instance sharing baseId, any desktop
+manager.getAllByBaseIdOnActiveDesktop( baseId: string ): Window[];       // since 0.9.4 — same, filtered to the active desktop
 manager.getAll(): Window[];
 manager.getFocused(): Window | undefined;
+manager.isActive( id: string ): boolean;                                 // exists, not minimized, focused, on the active desktop
+manager.isActiveByBaseId( baseId: string ): boolean;                     // since 0.9.4 — isActive() for any instance sharing baseId
 
 // Snapshot / surface
 manager.snapshot(): Session;
@@ -623,7 +627,7 @@ manager.closeDesktop( id: string ): void;                                // sinc
 
 **`config.submenu`** — when present, the shell renders the array as an in-window tab strip below the title bar so the user can navigate child pages without leaving the window. Pass `item.submenu` whenever you open a window from a dock context — `openItem` and `openSubmenuPick` (in custom rail renderers) propagate it for you. Skip it for native windows that don't have admin sub-pages. The shell strips WordPress's auto-prepended self-link entry server-side, so `submenu.length > 0` reliably means "has real children" (no defensive filtering needed in your code). Since 0.6.x the shell prepends a synthetic "back to parent" tab (label = `config.title`, URL = `config.url`) as the first tab so the user can return to the parent listing without closing the window. If a caller-supplied submenu entry already points at `config.url` the synthetic tab is suppressed to avoid two tabs claiming the same URL.
 
-**`minimizeAll()` / `restoreFrom( windows )` / `toggleShowDesktop()`** — the "Show Desktop" gesture decomposed into reusable primitives. `minimizeAll()` returns the windows it actually minimized (skipping windows already in the `'minimized'` state), so you can pair it with a later `restoreFrom( minimizedSet )` that touches only what you minimized. `toggleShowDesktop()` is the higher-level call mirroring the wallpaper-click behaviour exactly — minimize when anything is visible, restore when everything's hidden. Returns `true` when the new state is "showing the desktop."
+**`minimizeAll()` / `restoreFrom( windows )` / `toggleShowDesktop()`** — the "Show Desktop" gesture decomposed into reusable primitives. `minimizeAll()` returns the windows it actually minimized (skipping windows already in the `'minimized'` state), so you can pair it with a later `restoreFrom( minimizedSet )` that touches only what you minimized. `toggleShowDesktop()` is the higher-level call mirroring the wallpaper-click behaviour exactly — minimize when anything is visible, restore when everything's hidden. Returns `true` when the new state is "showing the desktop." Since 0.9.4, all three are scoped to the **active virtual desktop only** — a window parked on a Space the user isn't currently viewing is left alone, unlike `closeAll()` below, which still acts across every desktop.
 
 ```js
 // Plugin building an expand/collapse UI.
@@ -673,7 +677,7 @@ Calling `open()` with an id (or `baseId`) that's already on screen focuses the e
 
 **Dock hover-peek.** Multi-capable dock tiles render a hover-reveal *peek* popover instead of the legacy "+" chip. Hovering a multi tile that has at least one open instance fans out a stack of cards next to the tile (works on left, right, and bottom dock orientations):
 
-- **Instance cards** — one per currently open window of this dock item, styled as miniature windows: faux titlebar with traffic-light dots, the page icon, the live window title (titlebar background uses `--desktop-mode-titlebar-bg-focused` so the mini-window matches the real window's chrome), plus a hash-tinted body. **Hovering an instance card raises that window to front** ("scrub through windows" — Mission Control / Aero Peek). **Clicking** focuses the window through `document.startViewTransition()` so the card morphs into the window position.
+- **Instance cards** — one per currently open window of this dock item **on the active virtual desktop** (since 0.9.4 — an instance parked on another Space doesn't clutter the peek for a desktop it isn't on), styled as miniature windows: faux titlebar with traffic-light dots, the page icon, the live window title (titlebar background uses `--desktop-mode-titlebar-bg-focused` so the mini-window matches the real window's chrome), plus a hash-tinted body. **Hovering an instance card raises that window to front** ("scrub through windows" — Mission Control / Aero Peek). **Clicking** focuses the window through `document.startViewTransition()` so the card morphs into the window position.
 - **Ghost Card** — the trailing card with a dashed outline and a slow breathing pulse. Clicking it calls `windowManager.openNew()` for this tile, also animated through `startViewTransition()` (graceful fade fallback otherwise).
 
 The popover caps at `min(80vh, 480px)` and **scrolls internally** when more cards exist than fit. After mount, JS measures and clamps the popover position so it never overflows the viewport edges (top/bottom/sides).
@@ -1054,7 +1058,7 @@ Filter receives `( defaultId: string, desktops: Desktop[] )` and must return a s
 manager.closeAll( options?: { exceptIds?: string[] } ): number;
 ```
 
-Closes every open window (across all desktops) and returns the number actually closed. Optional `exceptIds` skips specific windows entirely — never even passed to the filter.
+Closes every open window (across all desktops) and returns the number actually closed. Optional `exceptIds` skips specific windows entirely — never even passed to the filter. Unlike `minimizeAll()` / `restoreFrom()` / `toggleShowDesktop()` (above, active-desktop-only since 0.9.4), `closeAll()` is not desktop-scoped.
 
 **Hook chain:**
 

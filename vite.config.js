@@ -440,6 +440,33 @@ const TARGETS = {
 		fileBase: 'widget-heartbeat',
 		iifeName: 'desktopModeHeartbeatWidget',
 	},
+	'widget-recent-comments': {
+		entry:    'src/plugins/recent-comments-widget/index.ts',
+		fileBase: 'widget-recent-comments',
+		iifeName: 'desktopModeRecentCommentsWidget',
+	},
+	'widget-post-stats': {
+		entry:    'src/plugins/post-stats-widget/index.ts',
+		fileBase: 'widget-post-stats',
+		iifeName: 'desktopModePostStatsWidget',
+	},
+	'widget-site-views': {
+		entry:    'src/plugins/site-views-widget/index.ts',
+		fileBase: 'widget-site-views',
+		iifeName: 'desktopModeSiteViewsWidget',
+	},
+
+	'widget-jazz-quote': {
+		entry:    'src/plugins/jazz-quote-widget/index.ts',
+		fileBase: 'widget-jazz-quote',
+		iifeName: 'desktopModeJazzQuoteWidget',
+	},
+	'widget-starter': {
+		entry:    'src/plugins/starter-widget/index.ts',
+		fileBase: 'widget-starter',
+		iifeName: 'desktopModeStarterWidget',
+	},
+
 };
 
 export default defineConfig( ( { mode } ) => {

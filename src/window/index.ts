@@ -2687,7 +2687,16 @@ export class Window {
 			if ( proceed === false ) {
 				return;
 			}
-		} else if ( ! this.config.native && ! this._suppressCloseFilter && ! this._closePending && this._iframeBridgeReady && this.iframe ) {
+		} else if ( ! this.config.native && ! this._suppressCloseFilter && this._iframeBridgeReady && this.iframe ) {
+			if ( this._closePending ) {
+				// A query is already in flight — e.g. the user double-
+				// clicked the close button before the iframe answered.
+				// Falling through to destroy here would bypass the
+				// unsaved-changes check this whole branch exists for.
+				// Let the in-flight query's response (or its safety
+				// timeout below) drive the close instead.
+				return;
+			}
 			this._closePending = true;
 			try {
 				this.iframe.contentWindow?.postMessage(

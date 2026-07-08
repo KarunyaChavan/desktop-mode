@@ -23,6 +23,11 @@ import {
 	type FakeWpHooks,
 } from '../../tests/vitest/helpers/hooks-stub';
 
+const { wpdConfirm } = vi.hoisted( () => ( { wpdConfirm: vi.fn() } ) );
+vi.mock( '../ui/components/wpd-confirm-dialog/wpd-confirm-dialog', () => ( {
+	wpdConfirm,
+} ) );
+
 function mockWindow( overrides: Partial< Window > = {} ): Window {
 	const iframe = document.createElement( 'iframe' );
 	const element = document.createElement( 'div' );
@@ -32,6 +37,10 @@ function mockWindow( overrides: Partial< Window > = {} ): Window {
 		iframe,
 		onFocusRequest: null,
 		setTitle: vi.fn(),
+		destroy: vi.fn(),
+		_isDestroyed: false,
+		_closePending: false,
+		_iframeCloseTimeout: null,
 		...overrides,
 	} as unknown as Window;
 }
@@ -658,5 +667,114 @@ describe( 'iframe-bridge: foreign events', () => {
 		);
 
 		expect( setTitleSpy ).not.toHaveBeenCalled();
+	} );
+} );
+
+describe( 'iframe-bridge: desktop-mode-bridge-beforeunload-response', () => {
+	beforeEach( () => {
+		installHooksStub();
+		wpdConfirm.mockReset();
+	} );
+	afterEach( () => clearHooksStub() );
+
+	test( 'prevent: false destroys the window without showing a dialog', async () => {
+		const win = mockWindow();
+
+		postToWindow( win, {
+			type: 'desktop-mode-bridge-beforeunload-response',
+			prevent: false,
+		} );
+		await vi.dynamicImportSettled();
+
+		expect( wpdConfirm ).not.toHaveBeenCalled();
+		expect( win.destroy ).toHaveBeenCalledTimes( 1 );
+		expect( win._closePending ).toBe( false );
+	} );
+
+	test( 'prevent: true, user confirms — destroys the window', async () => {
+		const win = mockWindow();
+		wpdConfirm.mockResolvedValue( true );
+
+		postToWindow( win, {
+			type: 'desktop-mode-bridge-beforeunload-response',
+			prevent: true,
+			message: 'You have unsaved edits.',
+		} );
+		await vi.dynamicImportSettled();
+		await vi.waitFor( () => expect( win.destroy ).toHaveBeenCalledTimes( 1 ) );
+
+		expect( wpdConfirm ).toHaveBeenCalledWith(
+			expect.objectContaining( { title: 'You have unsaved edits.', danger: true } ),
+		);
+	} );
+
+	test( 'prevent: true, user cancels — window stays open', async () => {
+		const win = mockWindow();
+		wpdConfirm.mockResolvedValue( false );
+
+		postToWindow( win, {
+			type: 'desktop-mode-bridge-beforeunload-response',
+			prevent: true,
+		} );
+		await vi.dynamicImportSettled();
+		await vi.waitFor( () => expect( wpdConfirm ).toHaveBeenCalledTimes( 1 ) );
+
+		expect( win.destroy ).not.toHaveBeenCalled();
+	} );
+
+	test( 'prevent: true, missing message — falls back to a default dialog title', async () => {
+		const win = mockWindow();
+		wpdConfirm.mockResolvedValue( false );
+
+		postToWindow( win, {
+			type: 'desktop-mode-bridge-beforeunload-response',
+			prevent: true,
+		} );
+		await vi.dynamicImportSettled();
+
+		expect( wpdConfirm ).toHaveBeenCalledWith(
+			expect.objectContaining( { title: 'Unsaved changes' } ),
+		);
+	} );
+
+	test( 'confirm dialog import failing still destroys the window (fail safe)', async () => {
+		const win = mockWindow();
+		wpdConfirm.mockRejectedValue( new Error( 'boom' ) );
+
+		postToWindow( win, {
+			type: 'desktop-mode-bridge-beforeunload-response',
+			prevent: true,
+		} );
+		await vi.dynamicImportSettled();
+		await vi.waitFor( () => expect( win.destroy ).toHaveBeenCalledTimes( 1 ) );
+	} );
+
+	test( 'ignores the response entirely if the window is already destroyed', async () => {
+		const win = mockWindow( { _isDestroyed: true } );
+
+		postToWindow( win, {
+			type: 'desktop-mode-bridge-beforeunload-response',
+			prevent: false,
+		} );
+		await vi.dynamicImportSettled();
+
+		expect( win.destroy ).not.toHaveBeenCalled();
+		expect( wpdConfirm ).not.toHaveBeenCalled();
+	} );
+
+	test( 'clears the pending safety timeout on any response', () => {
+		vi.useFakeTimers();
+		const clearSpy = vi.spyOn( global, 'clearTimeout' );
+		const timeoutId = setTimeout( () => {}, 500 );
+		const win = mockWindow( { _iframeCloseTimeout: timeoutId } );
+
+		postToWindow( win, {
+			type: 'desktop-mode-bridge-beforeunload-response',
+			prevent: false,
+		} );
+
+		expect( clearSpy ).toHaveBeenCalledWith( timeoutId );
+		expect( win._iframeCloseTimeout ).toBeNull();
+		vi.useRealTimers();
 	} );
 } );

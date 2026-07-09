@@ -11,6 +11,7 @@
  */
 
 import { doAction, HOOKS } from '../hooks';
+import { __ } from '../i18n';
 import { showToast } from '../toast';
 import { addExternalTab } from './tabs';
 import type { Window } from './index';
@@ -26,7 +27,7 @@ import { openUserFootprintWindow } from '../my-wordpress/footprint-target';
  * relax the same-origin check — we always compare against the value
  * that was valid when the shell booted.
  *
- * @since 0.11.0
+ * @since 0.5.0
  */
 const INITIAL_ORIGIN = window.location.origin;
 
@@ -186,10 +187,44 @@ export function handleWindowMessage( win: Window, event: MessageEvent ): void {
 	// `load` event fires BEFORE our bridge attaches, which makes
 	// listener-timing a known footgun otherwise).
 	if ( data.type === 'desktop-mode-ready' ) {
+		win._iframeBridgeReady = true;
 		// Bridge announced — anything queued via `Window.send()`
 		// before this point flushes now in FIFO order.
 		markWindowContentReady( win.id );
 		doAction( HOOKS.IFRAME_READY, { windowId: win.id } );
+	}
+
+	// Response to the parent's pre-close query for unsaved changes.
+	if ( data.type === 'desktop-mode-bridge-beforeunload-response' ) {
+		if ( win._isDestroyed ) {
+			return;
+		}
+		win._closePending = false;
+		if ( win._iframeCloseTimeout ) {
+			clearTimeout( win._iframeCloseTimeout );
+			win._iframeCloseTimeout = null;
+		}
+		if ( data.prevent ) {
+			import( '../ui/components/wpd-confirm-dialog/wpd-confirm-dialog' )
+				.then( ( { wpdConfirm } ) =>
+					wpdConfirm( {
+						title: typeof data.message === 'string' && data.message ? data.message : __( 'Unsaved changes' ),
+						message: __( 'You have unsaved changes. Are you sure you want to close this window?' ),
+						confirmLabel: __( 'Close window' ),
+						danger: true,
+					} ),
+				)
+				.then( ( confirmed ) => {
+					if ( confirmed ) {
+						win.destroy();
+					}
+				} )
+				.catch( () => {
+					win.destroy();
+				} );
+		} else {
+			win.destroy();
+		}
 	}
 
 	// Iframe-initiated navigation. Two modes:
@@ -340,12 +375,6 @@ export function handleWindowMessage( win: Window, event: MessageEvent ): void {
 		} );
 	}
 
-	// Iframe network completion — bridged from the fetch + XHR
-	// wrappers inside the chromeless iframe. Every completed call
-	// (success or failure) fires here. `status === 0` indicates a
-	// network-level failure before a response arrived; `failed` is
-	// pre-computed server-side so subscribers don't have to re-derive
-	// the success / 4xx / 5xx / network boundary.
 	// Layer-1 theme — iframe content can re-theme its own window
 	// via the bridge. `tokens` is a CSS-variable map; `setAppearanceTheme`
 	// validates inline overrides match the framework's shape.
@@ -411,6 +440,13 @@ export function handleWindowMessage( win: Window, event: MessageEvent ): void {
 		}
 	}
 
+	// Iframe network completion — bridged from the fetch + XHR
+	// wrappers inside the chromeless iframe. Every completed call
+	// (success or failure) fires here. `status === 0` indicates a
+	// network-level failure before a response arrived; `failed` is
+	// pre-computed inside the iframe (by the chromeless bridge's
+	// fetch/XHR wrappers) so subscribers don't have to re-derive
+	// the success / 4xx / 5xx / network boundary.
 	if ( data.type === 'desktop-mode-iframe-network' ) {
 		const networkPayload: Record< string, unknown > = {
 			windowId: win.id,

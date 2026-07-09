@@ -19,7 +19,7 @@
  * should. Kept `public` at the TypeScript level only because `private`
  * prevents sibling modules from seeing them.
  *
- * @since 6.9.0
+ * @since 0.5.0
  */
 
 import { HOOKS, doAction, applyFilters } from '../hooks';
@@ -79,7 +79,7 @@ const CASCADE_OFFSET = 30;
  * being baked into the `WindowConfig`.
  *
  * @public
- * @since 0.25.0
+ * @since 0.8.6
  */
 export interface ResolvedWindowGeometry {
 	x: number;
@@ -120,7 +120,7 @@ export interface ResolvedWindowGeometry {
  *     `callerPinned: true` does not mean "leave it alone."
  *
  * @public
- * @since 0.25.0
+ * @since 0.8.6
  */
 export interface WindowGeometryContext {
 	windowId: string;
@@ -1120,6 +1120,16 @@ export class WindowManager {
 			.sort( ( a, b ) => instanceSlot( a.id ) - instanceSlot( b.id ) );
 	}
 
+	/**
+	 * Get every open window sharing the given baseId on the active desktop,
+	 * ordered by instance slot.
+	 */
+	public getAllByBaseIdOnActiveDesktop( baseId: string ): Window[] {
+		return this.getAllByBaseId( baseId ).filter(
+			( w ) => ( w.config.desktopId || this._activeDesktopId ) === this._activeDesktopId,
+		);
+	}
+
 	/** Get all open windows. */
 	public getAll(): Window[] {
 		return [ ...this._stack ];
@@ -1174,8 +1184,31 @@ export class WindowManager {
 		if ( win.state === 'minimized' ) {
 			return false;
 		}
+		const winDesktop = win.config.desktopId || this._activeDesktopId;
+		if ( winDesktop !== this._activeDesktopId ) {
+			return false;
+		}
 		const focused = this.getFocused();
 		return !! focused && focused.id === id;
+	}
+
+	/**
+	 * Like {@link isActive}, but returns true if *any* window with the
+	 * given baseId is currently active.
+	 */
+	public isActiveByBaseId( baseId: string ): boolean {
+		const focused = this.getFocused();
+		if ( ! focused ) {
+			return false;
+		}
+		if ( focused.state === 'minimized' ) {
+			return false;
+		}
+		const winDesktop = focused.config.desktopId || this._activeDesktopId;
+		if ( winDesktop !== this._activeDesktopId ) {
+			return false;
+		}
+		return ( focused.config.baseId || focused.id ) === baseId;
 	}
 
 	// ---- Virtual desktop delegations ----
@@ -1209,7 +1242,7 @@ export class WindowManager {
 	 * different convention (e.g. a pinned "Inbox" desktop) can override
 	 * without having to fork the manager.
 	 *
-	 * @since 0.14.0
+	 * @since 0.5.0
 	 */
 	public getPrimaryDesktopId(): string {
 		const all = this.getDesktops();
@@ -1250,7 +1283,7 @@ export class WindowManager {
 	 *   4. `desktop-mode.windows.after-close-all` — action. Detail:
 	 *      `{ closed: number, skipped: Window[] }`.
 	 *
-	 * @since 0.14.0
+	 * @since 0.5.0
 	 *
 	 * @param options           Close options.
 	 * @param options.exceptIds Window ids to skip even before the filter runs.
@@ -1312,11 +1345,15 @@ export class WindowManager {
 	 * rolling the loop themselves.
 	 *
 	 * @public
-	 * @since 0.18.0
+	 * @since 0.6.0
 	 */
 	public minimizeAll(): Window[] {
 		const minimized: Window[] = [];
 		for ( const win of this._stack.slice() ) {
+			const winDesktop = win.config.desktopId || this._activeDesktopId;
+			if ( winDesktop !== this._activeDesktopId ) {
+				continue;
+			}
 			if ( win.state === 'minimized' ) {
 				continue;
 			}
@@ -1347,7 +1384,7 @@ export class WindowManager {
 	 * selectively.
 	 *
 	 * @public
-	 * @since 0.18.0
+	 * @since 0.6.0
 	 */
 	public restoreFrom( windows: Window[] ): void {
 		if ( ! Array.isArray( windows ) ) {
@@ -1356,6 +1393,10 @@ export class WindowManager {
 		const live = new Set( this._stack );
 		for ( const win of windows ) {
 			if ( ! live.has( win ) ) {
+				continue;
+			}
+			const winDesktop = win.config.desktopId || this._activeDesktopId;
+			if ( winDesktop !== this._activeDesktopId ) {
 				continue;
 			}
 			if ( win.state !== 'minimized' ) {
@@ -1385,10 +1426,12 @@ export class WindowManager {
 	 * Mirrors the wallpaper-click gesture exactly, in one call.
 	 *
 	 * @public
-	 * @since 0.18.0
+	 * @since 0.6.0
 	 */
 	public toggleShowDesktop(): boolean {
-		const all = this._stack.slice();
+		const all = this._stack.filter(
+			( w ) => ( w.config.desktopId || this._activeDesktopId ) === this._activeDesktopId,
+		);
 		if ( all.length === 0 ) {
 			return false;
 		}

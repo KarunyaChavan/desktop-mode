@@ -80,6 +80,32 @@ export function enterOverview( mgr: WindowManager ): void {
 
 	doAction( HOOKS.OVERVIEW_ENTERING, {} );
 
+	// Make background left admin bar and the Dock inert so Tab focus doesn't traverse them.
+	// We deliberately leave the top admin bar (wpadminbar) active and reachable.
+	const bgElements = [ 'adminmenuwrap', 'adminmenumain', 'desktop-mode-dock', 'desktop-mode-side-dock', 'wpfooter' ];
+	for ( const id of bgElements ) {
+		const el = document.getElementById( id );
+		if ( el ) {
+			( el as HTMLElement & { inert: boolean } ).inert = true;
+			el.setAttribute( 'inert', 'true' );
+		}
+	}
+	// Make all siblings of the shell inside wpbody-content inert
+	// so focus doesn't land on hidden screen options / help buttons.
+	const shellEl = document.getElementById( 'desktop-mode-shell' );
+	const wpBodyContent = document.getElementById( 'wpbody-content' );
+	if ( wpBodyContent && shellEl ) {
+		for ( const child of Array.from( wpBodyContent.children ) ) {
+			if ( child !== shellEl ) {
+				( child as HTMLElement & { inert: boolean } ).inert = true;
+				child.setAttribute( 'inert', 'true' );
+			}
+		}
+	}
+	for ( const w of mgr._stack ) {
+		w.element.setAttribute( 'inert', '' );
+	}
+
 	// Snapshot current transform + transition so exit can restore
 	// exactly — matters when plugins have applied custom transforms
 	// of their own.
@@ -274,6 +300,13 @@ export function enterOverview( mgr: WindowManager ): void {
 		//                 desktop (arrow keys keep that in sync as the
 		//                 cursor moves through tiles).
 		if ( e.key === 'Enter' ) {
+			// If the user is parked on an explicit button (like the close X or desktop tile),
+			// let the native click event handle it.
+			const target = e.target as HTMLElement | null;
+			const doc = target?.ownerDocument || document;
+			if ( doc.activeElement && doc.activeElement.tagName === 'BUTTON' ) {
+				return;
+			}
 			e.preventDefault();
 			if ( mgr._overviewAddTileFocused ) {
 				commitAddTile( mgr );
@@ -407,6 +440,9 @@ export function commitAddTile( mgr: WindowManager ): void {
 
 /** Build a single desktop tile for the overview top bar. */
 function buildDesktopTile( mgr: WindowManager, d: Desktop ): HTMLElement {
+	const wrapper = document.createElement( 'div' );
+	wrapper.className = 'desktop-mode-overview-top-bar__tile-wrapper';
+
 	const tile = document.createElement( 'button' );
 	tile.type = 'button';
 	tile.className = 'desktop-mode-overview-top-bar__tile';
@@ -445,35 +481,37 @@ function buildDesktopTile( mgr: WindowManager, d: Desktop ): HTMLElement {
 	label.textContent = d.label;
 	tile.appendChild( label );
 
-	// Close X — hidden via CSS when only one desktop exists, so users
-	// can't soft-lock themselves out of the last one. We still render
-	// the button (rather than omitting) so its presence/absence
-	// doesn't reflow the tile.
-	const closeBtn = document.createElement( 'span' );
-	closeBtn.className = 'desktop-mode-overview-top-bar__tile-close';
-	closeBtn.setAttribute( 'role', 'button' );
-	closeBtn.setAttribute( 'tabindex', '0' );
-	// translators: %s is the desktop label
-	closeBtn.setAttribute( 'aria-label', sprintf( __( 'Close %s' ), d.label ) );
-	closeBtn.innerHTML =
-		'<svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
-	closeBtn.addEventListener( 'click', ( e: MouseEvent ) => {
-		// stopPropagation so the parent tile's click handler doesn't
-		// ALSO fire (which would switch + exit on top of the close).
-		e.preventDefault();
-		e.stopPropagation();
-		closeDesktop( mgr, d.id );
-		refreshOverviewTopBar( mgr );
-	} );
-	tile.appendChild( closeBtn );
-
 	tile.addEventListener( 'click', ( e: MouseEvent ) => {
 		e.preventDefault();
 		e.stopPropagation();
 		exitOverviewToDesktop( mgr, d.id );
 	} );
 
-	return tile;
+	// Close X — hidden via CSS when only one desktop exists, so users
+	// can't soft-lock themselves out of the last one. We still render
+	// the button (rather than omitting) so its presence/absence
+	// doesn't reflow the tile.
+	const closeBtn = document.createElement( 'button' );
+	closeBtn.type = 'button';
+	closeBtn.className = 'desktop-mode-overview-top-bar__tile-close';
+	closeBtn.setAttribute( 'tabindex', '0' );
+	// translators: %s is the desktop label
+	closeBtn.setAttribute( 'aria-label', sprintf( __( 'Close %s' ), d.label ) );
+	closeBtn.innerHTML =
+		'<svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
+	closeBtn.addEventListener( 'click', ( e: MouseEvent ) => {
+		// stopPropagation so the wrapper's layout doesn't trigger
+		// anything, though the tile is a sibling, not a parent.
+		e.preventDefault();
+		e.stopPropagation();
+		closeDesktop( mgr, d.id );
+		refreshOverviewTopBar( mgr );
+	} );
+
+	wrapper.appendChild( tile );
+	wrapper.appendChild( closeBtn );
+
+	return wrapper;
 }
 
 /**
@@ -599,6 +637,27 @@ export function exitOverview(
 	mgr._desktop.classList.remove( 'desktop-mode-area--overview' );
 	const shell = document.getElementById( 'desktop-mode-shell' );
 	shell?.classList.remove( 'desktop-mode-shell--overview' );
+
+	const bgElements = [ 'adminmenuwrap', 'adminmenumain', 'desktop-mode-dock', 'desktop-mode-side-dock', 'wpfooter' ];
+	for ( const id of bgElements ) {
+		const el = document.getElementById( id );
+		if ( el ) {
+			( el as HTMLElement & { inert: boolean } ).inert = false;
+			el.removeAttribute( 'inert' );
+		}
+	}
+	const wpBodyContent = document.getElementById( 'wpbody-content' );
+	if ( wpBodyContent && shell ) {
+		for ( const child of Array.from( wpBodyContent.children ) ) {
+			if ( child !== shell ) {
+				( child as HTMLElement & { inert: boolean } ).inert = false;
+				child.removeAttribute( 'inert' );
+			}
+		}
+	}
+	for ( const w of mgr._stack ) {
+		w.element.removeAttribute( 'inert' );
+	}
 
 	// Unselected windows: transform → '' (snaps back to their
 	// pre-overview inline geometry). Selected window (if any):

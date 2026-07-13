@@ -26,6 +26,40 @@ import type { Window } from '../window';
 import type { WindowManager } from './index';
 
 /**
+ * Element IDs of background chrome to make inert during overview.
+ *
+ * These elements sit in the DOM between `#wpadminbar` (deliberately
+ * left active) and the overview-top-bar tiles. Without inert the
+ * browser's Tab order would traverse them before reaching any
+ * visible tile, wasting keyboard-user keystrokes on hidden UI
+ * (admin menu, dock buttons, widget controls ).
+ *
+ * Each element is restored to non-inert on overview exit.
+ */
+const OVERVIEW_INERT_ELEMENTS = [
+	'adminmenumain',
+	'adminmenuback',
+	'desktop-mode-dock',
+	'desktop-mode-side-dock',
+	'desktop-mode-widgets',
+];
+
+/**
+ * Toggle inert on every direct child of #wpbody-content so focus
+ * can't land on hidden screen-options, help panels, or admin
+ * notices during overview.
+ */
+function inertWpBodyContentChildren( inactive: boolean ): void {
+	const content = document.getElementById( 'wpbody-content' );
+	if ( ! content ) {
+		return;
+	}
+	for ( const child of Array.from( content.children ) ) {
+		( child as HTMLElement & { inert: boolean } ).inert = inactive;
+	}
+}
+
+/**
  * Enter overview mode — animate every eligible window to a grid
  * thumbnail layout. Clicking a thumbnail exits overview and
  * fullscreens the clicked window. Pressing Escape or clicking the
@@ -82,28 +116,17 @@ export function enterOverview( mgr: WindowManager ): void {
 
 	// Make background left admin bar and the Dock inert so Tab focus doesn't traverse them.
 	// We deliberately leave the top admin bar (wpadminbar) active and reachable.
-	const bgElements = [ 'adminmenuwrap', 'adminmenumain', 'desktop-mode-dock', 'desktop-mode-side-dock', 'wpfooter' ];
-	for ( const id of bgElements ) {
+	for ( const id of OVERVIEW_INERT_ELEMENTS ) {
 		const el = document.getElementById( id );
 		if ( el ) {
 			( el as HTMLElement & { inert: boolean } ).inert = true;
-			el.setAttribute( 'inert', 'true' );
 		}
 	}
 	// Make all siblings of the shell inside wpbody-content inert
 	// so focus doesn't land on hidden screen options / help buttons.
-	const shellEl = document.getElementById( 'desktop-mode-shell' );
-	const wpBodyContent = document.getElementById( 'wpbody-content' );
-	if ( wpBodyContent && shellEl ) {
-		for ( const child of Array.from( wpBodyContent.children ) ) {
-			if ( child !== shellEl ) {
-				( child as HTMLElement & { inert: boolean } ).inert = true;
-				child.setAttribute( 'inert', 'true' );
-			}
-		}
-	}
+	inertWpBodyContentChildren( true );
 	for ( const w of mgr._stack ) {
-		w.element.setAttribute( 'inert', '' );
+		( w.element as HTMLElement & { inert: boolean } ).inert = true;
 	}
 
 	// Snapshot current transform + transition so exit can restore
@@ -494,7 +517,6 @@ function buildDesktopTile( mgr: WindowManager, d: Desktop ): HTMLElement {
 	const closeBtn = document.createElement( 'button' );
 	closeBtn.type = 'button';
 	closeBtn.className = 'desktop-mode-overview-top-bar__tile-close';
-	closeBtn.setAttribute( 'tabindex', '0' );
 	// translators: %s is the desktop label
 	closeBtn.setAttribute( 'aria-label', sprintf( __( 'Close %s' ), d.label ) );
 	closeBtn.innerHTML =
@@ -638,25 +660,15 @@ export function exitOverview(
 	const shell = document.getElementById( 'desktop-mode-shell' );
 	shell?.classList.remove( 'desktop-mode-shell--overview' );
 
-	const bgElements = [ 'adminmenuwrap', 'adminmenumain', 'desktop-mode-dock', 'desktop-mode-side-dock', 'wpfooter' ];
-	for ( const id of bgElements ) {
+	for ( const id of OVERVIEW_INERT_ELEMENTS ) {
 		const el = document.getElementById( id );
 		if ( el ) {
 			( el as HTMLElement & { inert: boolean } ).inert = false;
-			el.removeAttribute( 'inert' );
 		}
 	}
-	const wpBodyContent = document.getElementById( 'wpbody-content' );
-	if ( wpBodyContent && shell ) {
-		for ( const child of Array.from( wpBodyContent.children ) ) {
-			if ( child !== shell ) {
-				( child as HTMLElement & { inert: boolean } ).inert = false;
-				child.removeAttribute( 'inert' );
-			}
-		}
-	}
+	inertWpBodyContentChildren( false );
 	for ( const w of mgr._stack ) {
-		w.element.removeAttribute( 'inert' );
+		( w.element as HTMLElement & { inert: boolean } ).inert = false;
 	}
 
 	// Unselected windows: transform → '' (snaps back to their

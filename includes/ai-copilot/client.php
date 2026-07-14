@@ -6,10 +6,9 @@
  * and the comment-scoring job use to generate. Credentials are injected by
  * Core from the configured Connector — nothing here ever handles an API key.
  *
- * The search loop keeps its own tool registry for now (built-in +
- * `desktop_mode_register_ai_tool()` + client command tools), passed to the
- * model as raw function declarations and dispatched by the loop itself. A
- * follow-up change migrates those tools to the Abilities API.
+ * The search loop advertises its tools — built-in WordPress Abilities (see
+ * abilities.php) plus client command tools — as function declarations, and
+ * dispatches ability calls through `wp_get_ability()->execute()`.
  *
  * All SDK classes referenced here ship with WordPress 7.0+. The `use`
  * statements are compile-time aliases only; every call site is reached solely
@@ -19,6 +18,7 @@
  * @package WPDesktopMode
  */
 
+use WordPress\AiClient\Messages\DTO\Message;
 use WordPress\AiClient\Messages\DTO\MessagePart;
 use WordPress\AiClient\Messages\DTO\UserMessage;
 use WordPress\AiClient\Tools\DTO\FunctionCall;
@@ -91,13 +91,51 @@ function desktop_mode_ai_tool_result_message( array $tool_outputs ) {
 }
 
 /**
+ * Strips thought-channel parts from a message before it re-enters history.
+ *
+ * Providers cannot reliably round-trip reasoning blocks: the Anthropic
+ * provider drops the cryptographic `signature` when parsing a `thinking`
+ * block, and the API rejects any replayed thinking block without one
+ * (`thinking.signature: Field required`). Thought parts carry no information
+ * the next turn needs — the model re-reasons from the visible conversation —
+ * so the agentic loop replays assistant turns without them.
+ *
+ * If every part is a thought (no text, no function call), the message is
+ * returned unchanged rather than emptied; the loop never replays such a
+ * turn anyway.
+ *
+ * @since 0.9.4
+ *
+ * @param Message $message Assistant message as returned by the AI Client.
+ * @return Message Message safe to append to the conversation history.
+ */
+function desktop_mode_ai_strip_thought_parts( Message $message ) {
+	$kept     = array();
+	$stripped = false;
+	foreach ( $message->getParts() as $part ) {
+		if ( $part->getChannel()->isThought() ) {
+			$stripped = true;
+			continue;
+		}
+		$kept[] = $part;
+	}
+
+	if ( ! $stripped || empty( $kept ) ) {
+		return $message;
+	}
+
+	return new Message( $message->getRole(), $kept );
+}
+
+/**
  * Runs one generation turn through the AI Client.
  *
  * Rebuilds the prompt from the full ordered message list each turn (the
  * builder's `with_history()` prepends, so it can't append turns in a loop),
  * advertises the tools as function declarations, and constrains the final
  * answer to `$answer_schema` when given. Returns the assistant turn normalized
- * to the shape the loop consumes.
+ * to the shape the loop consumes; `message` has thought-channel parts stripped
+ * ({@see desktop_mode_ai_strip_thought_parts()}) so it is safe to replay.
  *
  * @since 0.9.4
  *
@@ -109,7 +147,7 @@ function desktop_mode_ai_tool_result_message( array $tool_outputs ) {
  * @param array      $tool_defs     Tool definitions to advertise.
  * @param array|null $answer_schema JSON Schema for the final answer, or null.
  * @param string     $instructions  System instruction.
- * @return array{ text: ?string, function_calls: array, message: mixed }|WP_Error
+ * @return array{ text: ?string, function_calls: array, message: mixed, usage: ?array, model: ?array }|WP_Error
  */
 function desktop_mode_ai_client_generate( $user_id, array $messages, array $tool_defs, $answer_schema, $instructions ) {
 	$builder = wp_ai_client_prompt( $messages );
@@ -118,9 +156,8 @@ function desktop_mode_ai_client_generate( $user_id, array $messages, array $tool
 		$builder = $builder->using_system_instruction( $instructions );
 	}
 
-	// Provider + model selection is delegated entirely to the Core AI Client;
-	// Desktop Mode does not pin either. Credentials come from the configured
-	// Connector, injected by Core.
+	// Provider + model selection is delegated entirely to the Core AI Client
+	// (Connector-backed); Desktop Mode pins neither.
 
 	$declarations = desktop_mode_ai_build_function_declarations( $tool_defs );
 	if ( ! empty( $declarations ) ) {
@@ -166,6 +203,49 @@ function desktop_mode_ai_client_generate( $user_id, array $messages, array $tool
 	return array(
 		'text'           => $text,
 		'function_calls' => $function_calls,
-		'message'        => $message,
+		'message'        => desktop_mode_ai_strip_thought_parts( $message ),
+		'usage'          => desktop_mode_ai_result_token_usage( $result ),
+		'model'          => desktop_mode_ai_result_model_metadata( $result ),
 	);
+}
+
+/**
+ * Extracts normalized token usage from a generation result.
+ *
+ * @since 0.9.4
+ *
+ * @param mixed $result GenerativeAiResult.
+ * @return array{ prompt: int, completion: int, total: int }|null
+ */
+function desktop_mode_ai_result_token_usage( $result ) {
+	try {
+		$usage = $result->getTokenUsage();
+		return array(
+			'prompt'     => (int) $usage->getPromptTokens(),
+			'completion' => (int) $usage->getCompletionTokens(),
+			'total'      => (int) $usage->getTotalTokens(),
+		);
+	} catch ( \Throwable $e ) {
+		return null;
+	}
+}
+
+/**
+ * Extracts the resolved model's id + name from a generation result.
+ *
+ * @since 0.9.4
+ *
+ * @param mixed $result GenerativeAiResult.
+ * @return array{ id: string, name: string }|null
+ */
+function desktop_mode_ai_result_model_metadata( $result ) {
+	try {
+		$model = $result->getModelMetadata();
+		return array(
+			'id'   => (string) $model->getId(),
+			'name' => (string) $model->getName(),
+		);
+	} catch ( \Throwable $e ) {
+		return null;
+	}
 }

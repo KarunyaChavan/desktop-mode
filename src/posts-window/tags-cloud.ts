@@ -29,7 +29,7 @@
  * @since 0.7.2
  */
 
-import { __, sprintf } from '../i18n';
+import { __, _n, sprintf } from '../i18n';
 import { joinRestUrl } from '../rest-url';
 import { trackedFetch } from '../tracked-fetch';
 import {
@@ -1861,7 +1861,11 @@ export async function mountTagsCloud(
 		meta.className = 'wpd-tagcloud__sidebar-meta';
 		meta.textContent = sprintf(
 			/* translators: %d: post count. */
-			__( '%d posts tagged with this.' ),
+			_n(
+				'%d post tagged with this.',
+				'%d posts tagged with this.',
+				box.count,
+			),
 			box.count,
 		);
 		sidebar.appendChild( meta );
@@ -2327,7 +2331,7 @@ export async function mountTagsCloud(
 			countEl.className = 'wpd-tagcloud__search-meta';
 			countEl.textContent = sprintf(
 				/* translators: %d: number of posts assigned to a tag. */
-				__( '%d posts' ),
+				_n( '%d post', '%d posts', t.count ),
 				t.count,
 			);
 			btn.appendChild( nameEl );

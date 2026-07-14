@@ -78,7 +78,7 @@
 }
 
 /* Stacked card hint on hover — a second card peeks from behind the
-   icon when the tile has minimized windows. Only visible on hover so
+   icon when the tile has multiple open windows. Only visible on hover so
    it never conflicts with focused tiles. */
 .desktop-mode-dock__item--stacked:hover .desktop-mode-dock__item-primary::before,
 .desktop-mode-dock__item--stacked[data-peek-active] .desktop-mode-dock__item-primary::before {
@@ -97,7 +97,7 @@
 
 /* Suppress the active indicator (dot/pill/ring) on hover when the
    stack is shown — the stacked card behind the icon already
-   communicates "multiple windows tucked away." */
+   communicates "multiple windows here." */
 .desktop-mode-dock[ data-desktop-mode-dock-placement ]
 	.desktop-mode-dock__item--stacked:hover::before,
 .desktop-mode-dock[ data-desktop-mode-dock-placement ]

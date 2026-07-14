@@ -2081,10 +2081,9 @@ export class Dock {
 				'desktop-mode-dock__item--all-minimized',
 				allMinimized,
 			);
-			const minimizedCount = instances.filter( isMinimized ).length;
 			tile.classList.toggle(
 				'desktop-mode-dock__item--stacked',
-				isOpen && minimizedCount > 1,
+				isOpen && instances.length > 1,
 			);
 		}
 

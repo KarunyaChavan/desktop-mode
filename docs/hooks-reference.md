@@ -1103,7 +1103,9 @@ add_filter( 'desktop_mode_default_wallpaper', fn () => 'aurora' );
 
 ### `desktop_mode_wallpapers` — Stable
 
-Last-chance filter over the full wallpaper registry before it ships to the shell as `config.serverWallpapers`. Each entry is the shape stored by `desktop_mode_register_wallpaper()` (`id`, `label`, `preview`, `type`, `value`, `script`). Use this to reorder, rename, remove, or override wallpaper entries — including the built-in presets.
+Last-chance filter over the full wallpaper registry before it ships to the shell as `config.serverWallpapers`. Each entry is the shape stored by `desktop_mode_register_wallpaper()` (`id`, `label`, `preview`, `type`, `value`, `script`, `description`). Use this to reorder, rename, remove, or override wallpaper entries — including the built-in presets.
+
+`description` — *Experimental (since 0.9.4).* Optional plain-text copy shown in OS Settings when the wallpaper is the active selection (a styled card under the picker grid). Sanitized with `sanitize_textarea_field()` at registration; the shell renders it as text, never HTML. When the wallpaper's JS def also sets `description`, the JS value wins — the server value is an overlay for defs that don't carry one.
 
 Mirrors the client-side `desktop-mode.wallpapers` JS filter but runs earlier, before any wallpaper reaches the browser.
 
@@ -2662,6 +2664,58 @@ apply_filters( 'desktop_mode_content_graph_icon_args',   array $icon_args ): arr
 ```
 
 Tweak the args passed to `desktop_mode_register_window()` / `desktop_mode_register_icon()` for the Content Graph — dimensions, dashicon, icon position, or the `config` blob (REST endpoints, edit-URL bases, post-type descriptors).
+
+---
+
+## Living Tree wallpaper (since 0.9.4)
+
+The `wp-living-tree` canvas wallpaper renders the site as a growing plant organism. WordPress emits only *hormones* (age, vigour, health, diversity, bloom…) via a compact REST snapshot; the JS growth simulator decides all geometry. The full algorithm is documented in [`living-tree-algorithm.md`](./living-tree-algorithm.md).
+
+Server module: `includes/living-tree/`. Exposes one REST route and one gate filter.
+
+### REST — `GET desktop-mode/v1/living-tree/snapshot` — Experimental
+
+Returns the compact site DNA (the `TreeSnapshot` shape): aggregate counts, install epoch, a small tag co-occurrence edge list, and per-year branch hints — never the full post list. Cached in the `desktop_mode_living_tree_snapshot` transient (TTL 6h), invalidated on `save_post` / `deleted_post` / `comment_post`.
+
+### `desktop_mode_living_tree_user_can_use` — Experimental (filter)
+
+```php
+apply_filters( 'desktop_mode_living_tree_user_can_use', bool $can ): bool
+```
+
+Permission gate for the snapshot endpoint. Default `current_user_can( 'read' )` — anyone who can see the admin can see their own site's wallpaper. Widen or restrict as needed.
+
+### `desktop_mode_living_tree_snapshot` — Experimental (filter)
+
+```php
+apply_filters( 'desktop_mode_living_tree_snapshot', array $snapshot ): array
+```
+
+The full snapshot before it is cached and served. Keep the shape intact — the JS client trusts this contract — and keep it aggregates-only (the golden rule: hormones, never geometry).
+
+### `desktop_mode_living_tree_seo_health` — Experimental (filter)
+
+```php
+apply_filters( 'desktop_mode_living_tree_seo_health', float $health ); // default 0.7
+```
+
+The SEO-health hormone (0..1) — drives the canopy's colour temperature: green → yellow → red → grey. **Known gap:** unlike `traffic` and `performance`, this hormone has no first-party source yet — WordPress ships nothing SEO-shaped to read, so it sits at a neutral 0.7 unless a plugin hooks this filter. The planned future source is aggregating the per-post scores SEO plugins keep in post-meta into a site-wide average; until that lands, this filter is the only integration point. Values are clamped to [0, 1].
+
+### `desktop_mode_living_tree_performance` — Experimental (filter)
+
+```php
+apply_filters( 'desktop_mode_living_tree_performance', float $performance );
+```
+
+The growth-vigour hormone (0..1). *(Since 0.9.5)* the default is derived from core's own **Site Health** tallies: WordPress runs every Site Health test on a weekly cron and persists the counts in the `health-check-site-status-result` transient; the tree starts at 1.0, subtracts 0.15 per critical issue and 0.04 per recommendation, clamped to [0.2, 1] — a clean install grows vigorously, a neglected one visibly slows but never fully stalls. When the transient doesn't exist yet (brand-new site, weekly cron hasn't fired, Site Health never opened) the default falls back to 0.8. Note Site Health measures broad install health (PHP version, HTTPS, updates, object caching…), not raw runtime speed — the right flavour for growth vigour. Monitoring plugins with real telemetry can hook this filter as the final word; values are clamped to [0, 1].
+
+### `desktop_mode_living_tree_traffic` — Experimental (filter)
+
+```php
+apply_filters( 'desktop_mode_living_tree_traffic', int $views ): int
+```
+
+The recent-traffic hormone (drives the wind — canopy sway amplitude and frequency). The default value follows the same source ladder as the site-views widget: **Jetpack Stats** (last 14 days of visits via `WPCOM_Stats::get_visits()`) when Jetpack is available, else the sum of the `_post_views_YYYY-MM-DD` post-meta convention over the same window, else `0` (a windless day). Analytics plugins with their own counters should hook this and return their real 14-day view count; the value is clamped non-negative. *(Since 0.9.5 — before that, only the post-views meta was read.)*
 
 ---
 

@@ -16,6 +16,10 @@ import {
 import type { OsSettingsState, SettingsCtx } from '../types';
 import { isPromise } from '../utils';
 import { buildCustomImageSection } from './custom-image';
+import {
+	createWallpaperPreviewManager,
+	type WallpaperPreviewManager,
+} from './wallpaper-previews';
 
 /** Compose the current custom-gradient CSS value from state. */
 export function customGradientCss( state: OsSettingsState ): string {
@@ -37,12 +41,16 @@ export function customGradientCss( state: OsSettingsState ): string {
  * editor onto the existing registration ("late registrations win"
  * per `wallpapers/registry.ts`).
  */
+const CUSTOM_GRADIENT_DESCRIPTION = (): string =>
+	__( 'Mix your own two-colour gradient and set the angle — your desk, your palette.' );
+
 export function registerCustomGradient( ctx: SettingsCtx ): void {
 	registry.register( {
 		id: CUSTOM_GRADIENT_ID,
 		label: __( 'Custom gradient' ),
 		type: 'css',
 		preview: customGradientCss( ctx.state ),
+		description: CUSTOM_GRADIENT_DESCRIPTION(),
 		resolveValue: () => customGradientCss( ctx.state ),
 	} );
 }
@@ -59,6 +67,7 @@ export function attachCustomGradientEditor( ctx: SettingsCtx ): void {
 		label: __( 'Custom gradient' ),
 		type: 'css',
 		preview: customGradientCss( ctx.state ),
+		description: CUSTOM_GRADIENT_DESCRIPTION(),
 		resolveValue: () => customGradientCss( ctx.state ),
 		renderEditor: ( container ) =>
 			renderCustomGradientEditor( ctx, container ),
@@ -83,12 +92,16 @@ export function registerCustomImageIfPresent( state: OsSettingsState ): void {
 		type: 'css',
 		value,
 		preview: value,
+		description: __(
+			'Any image from your media library or an upload, sized to cover the whole desk.',
+		),
 	} );
 }
 
 /**
  * Select a wallpaper by id. Updates state, persists, applies to the
- * shell, and refreshes the grid's aria-pressed attributes.
+ * shell, refreshes the grid's aria-pressed attributes, and swaps the
+ * description card to the new selection.
  */
 export function selectWallpaper(
 	ctx: SettingsCtx,
@@ -99,6 +112,53 @@ export function selectWallpaper(
 	ctx.save();
 	ctx.apply();
 	refreshWallpaperPressedState( ctx, body );
+	const slot = body.querySelector<HTMLElement>(
+		'.desktop-mode-os-settings__wallpaper-description-slot',
+	);
+	if ( slot ) {
+		syncWallpaperDescription( ctx, slot );
+	}
+}
+
+/**
+ * Render the active wallpaper's description card into its slot — the
+ * "what am I looking at?" a swatch can't tell. Collapses when the
+ * selection carries no description; expands with the same
+ * grid-template-rows animation the editor slot uses.
+ *
+ * The card is `<wpd-*>`-built: an icon column beside the wallpaper's
+ * name and its story, on a `wpd-panel`-rhythm surface.
+ */
+export function syncWallpaperDescription(
+	ctx: SettingsCtx,
+	slot: HTMLElement,
+): void {
+	const inner = slot.firstElementChild as HTMLElement | null;
+	if ( ! inner ) {
+		return;
+	}
+	const def = registry.get( ctx.state.wallpaper );
+	const text = ( def?.description ?? '' ).trim();
+	if ( ! def || ! text ) {
+		slot.dataset.expanded = 'false';
+		return;
+	}
+	render(
+		html`
+			<div class="desktop-mode-os-settings__wallpaper-description">
+				<div class="desktop-mode-os-settings__wallpaper-description-header">
+					<wpd-icon
+						class="desktop-mode-os-settings__wallpaper-description-icon"
+						name=${ def.type === 'canvas' ? 'star-filled' : 'art' }
+					></wpd-icon>
+					<strong>${ def.label }</strong>
+				</div>
+				<p>${ text }</p>
+			</div>
+		`,
+		inner,
+	);
+	slot.dataset.expanded = 'true';
 }
 
 /**
@@ -277,6 +337,15 @@ function syncGradientPreviewSwatch(
 	}
 }
 
+/**
+ * The live-preview manager for the CURRENT wallpaper section build.
+ * Module-level so a panel re-render (Reset to defaults, tab registry
+ * change) disposes the previous build's previews before creating the
+ * next — the old wrapper is silently dropped from the DOM on that
+ * path, and nothing else would release its WebGL contexts.
+ */
+let activePreviewManager: WallpaperPreviewManager | null = null;
+
 export function buildWallpaperSection(
 	ctx: SettingsCtx,
 	body: HTMLElement,
@@ -295,6 +364,17 @@ export function buildWallpaperSection(
 	editorInner.className = 'desktop-mode-os-settings__editor-slot-inner';
 	editorSlot.appendChild( editorInner );
 
+	// Description slot: same collapsing pattern, hosting the selected
+	// wallpaper's description card (see syncWallpaperDescription).
+	const descriptionSlot = document.createElement( 'div' );
+	descriptionSlot.className =
+		'desktop-mode-os-settings__wallpaper-description-slot';
+	descriptionSlot.dataset.expanded = 'false';
+	const descriptionInner = document.createElement( 'div' );
+	descriptionInner.className =
+		'desktop-mode-os-settings__wallpaper-description-slot-inner';
+	descriptionSlot.appendChild( descriptionInner );
+
 	const onPick = ( e: Event ): void => {
 		const id = ( ( e as CustomEvent ).detail?.value ?? '' ) as string;
 		const def = registry.get( id );
@@ -310,6 +390,13 @@ export function buildWallpaperSection(
 	// section are DOM refs threaded in as nodes.
 	const customImageSection = buildCustomImageSection( ctx, body );
 	const wrapper = document.createElement( 'div' );
+
+	// One preview manager per section build; the previous build's
+	// manager (if any) is disposed so its previews can't leak.
+	activePreviewManager?.dispose();
+	const previewManager = createWallpaperPreviewManager( wrapper );
+	activePreviewManager = previewManager;
+
 	const paint = (): void =>
 		render(
 			html`
@@ -341,20 +428,22 @@ export function buildWallpaperSection(
 								</wpd-swatch>`,
 		) }
 					</div>
-					${ editorSlot } ${ customImageSection }
+					${ descriptionSlot } ${ editorSlot } ${ customImageSection }
 				</wpd-section>
 			`,
 			wrapper,
 		);
 	paint();
+	previewManager.sync();
 
-	// Initial editor state — mount the editor for the active wallpaper
-	// before the section enters the live DOM so the expansion doesn't
-	// animate on panel open.
+	// Initial editor + description state — mounted for the active
+	// wallpaper before the section enters the live DOM so the expansion
+	// doesn't animate on panel open.
 	const active = registry.get( ctx.state.wallpaper );
 	if ( active ) {
 		syncEditorSlot( ctx, editorSlot, editorInner, active );
 	}
+	syncWallpaperDescription( ctx, descriptionSlot );
 
 	// Live-update when plugins register or unregister wallpapers
 	// mid-session. The server-sync module fires register()/unregister()
@@ -368,16 +457,20 @@ export function buildWallpaperSection(
 	const unsubscribe = registry.subscribe( () => {
 		if ( ! wrapper.isConnected ) {
 			unsubscribe();
+			previewManager.dispose();
 			return;
 		}
 		paint();
-		// Re-sync the editor slot too, in case the currently active
-		// wallpaper's def just arrived (plugin activation with the
-		// user's saved selection pointing at the new wallpaper).
+		previewManager.sync();
+		// Re-sync the editor + description slots too, in case the
+		// currently active wallpaper's def just arrived (plugin
+		// activation with the user's saved selection pointing at the
+		// new wallpaper).
 		const now = registry.get( ctx.state.wallpaper );
 		if ( now ) {
 			syncEditorSlot( ctx, editorSlot, editorInner, now );
 		}
+		syncWallpaperDescription( ctx, descriptionSlot );
 	} );
 
 	return wrapper;

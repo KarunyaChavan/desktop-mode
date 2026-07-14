@@ -2081,34 +2081,11 @@ export class Dock {
 				'desktop-mode-dock__item--all-minimized',
 				allMinimized,
 			);
-
 			const minimizedCount = instances.filter( isMinimized ).length;
-			if ( minimizedCount > 0 ) {
-				tile.setAttribute( 'data-minimized-count', String( minimizedCount ) );
-			} else {
-				tile.removeAttribute( 'data-minimized-count' );
-			}
-
-			const primary = tile.querySelector< HTMLElement >(
-				'.desktop-mode-dock__item-primary',
+			tile.classList.toggle(
+				'desktop-mode-dock__item--stacked',
+				isOpen && minimizedCount > 1,
 			);
-			if ( primary ) {
-				primary.setAttribute(
-					'aria-label',
-					minimizedCount > 0
-						? sprintf(
-							// translators: 1: dock item title, 2: number of minimized windows.
-							_n(
-								'%s, %d minimized window',
-								'%s, %d minimized windows',
-								minimizedCount,
-							),
-							item.title,
-							minimizedCount,
-						)
-						: item.title,
-				);
-			}
 		}
 
 		// System items — active dot driven by the caller's predicate. No

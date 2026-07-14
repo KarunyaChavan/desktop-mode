@@ -301,7 +301,8 @@ describe( 'dock-peek', () => {
 		expect( focus ).toHaveBeenCalledWith( winB );
 	} );
 
-	test( 'hovering a minimized instance card does not focus an invisible window', () => {
+	// Hover-focus on minimized cards (no guard — hover always raises).
+	test( 'hovering a minimized instance card focuses the window', () => {
 		const tile = makeTile( true );
 		const win = makeWindowStub( 'All Posts', 'edit-php', 'minimized' );
 		const focus = vi.fn();
@@ -322,7 +323,30 @@ describe( 'dock-peek', () => {
 			'.desktop-mode-dock-peek__card--instance',
 		)!;
 		pointerEnter( card );
-		expect( focus ).not.toHaveBeenCalled();
+		expect( focus ).toHaveBeenCalledWith( win );
+	} );
+
+	// Collapsed preview: minimized cards get data-state="minimized" for CSS.
+	test( 'minimized instance card gets data-state="minimized" attribute', () => {
+		const tile = makeTile( true );
+		const win = makeWindowStub( 'All Posts', 'edit-php', 'minimized' );
+		attachDockPeek(
+			makeDeps( {
+				tile,
+				getInstances: () => [ win ],
+				windowManager: {
+					getFocused: () => undefined,
+					focus: vi.fn(),
+				} as unknown as Deps[ 'windowManager' ],
+			} ),
+		);
+		pointerEnter( tile );
+		vi.advanceTimersByTime( 500 );
+
+		const card = document.querySelector< HTMLElement >(
+			'.desktop-mode-dock-peek__card--instance',
+		)!;
+		expect( card.dataset.state ).toBe( 'minimized' );
 	} );
 
 	test( 'whole-card filter can replace the entire card', () => {

@@ -141,7 +141,23 @@ describe( 'Dock — minimized window indicator', () => {
 		).toBe( false );
 	} );
 
-	test( 'partial minimize paints a numeric tucked-window count even while another instance is focused', () => {
+	test( 'partial minimize sets --stacked only when ≥2 windows are minimized', () => {
+		const normal = makeWin( 'edit-php', 'edit-php', 'normal' );
+		const minimized = makeWin( 'edit-php-2', 'edit-php', 'minimized' );
+		const minimized2 = makeWin( 'edit-php-3', 'edit-php', 'minimized' );
+		const manager = makeManager( [ normal, minimized, minimized2 ], normal );
+		const { container } = mount( manager );
+		document.dispatchEvent( new CustomEvent( 'desktop-mode-window-opened' ) );
+
+		const tile = tileFor( container, 'menu-posts' );
+		expect( tile.classList.contains( 'desktop-mode-dock__item--focused' ) ).toBe( true );
+		expect( tile.classList.contains( 'desktop-mode-dock__item--stacked' ) ).toBe( true );
+		expect(
+			tile.classList.contains( 'desktop-mode-dock__item--all-minimized' ),
+		).toBe( false );
+	} );
+
+	test( 'single minimized window does not set --stacked', () => {
 		const normal = makeWin( 'edit-php', 'edit-php', 'normal' );
 		const minimized = makeWin( 'edit-php-2', 'edit-php', 'minimized' );
 		const manager = makeManager( [ normal, minimized ], normal );
@@ -149,33 +165,25 @@ describe( 'Dock — minimized window indicator', () => {
 		document.dispatchEvent( new CustomEvent( 'desktop-mode-window-opened' ) );
 
 		const tile = tileFor( container, 'menu-posts' );
-		const primary = tile.querySelector< HTMLElement >(
-			'.desktop-mode-dock__item-primary',
-		);
-		expect( tile.classList.contains( 'desktop-mode-dock__item--focused' ) ).toBe( true );
-		expect( tile.getAttribute( 'data-minimized-count' ) ).toBe( '1' );
-		expect( primary?.getAttribute( 'aria-label' ) ).toBe(
-			'Posts, 1 minimized window',
-		);
+		expect( tile.classList.contains( 'desktop-mode-dock__item--stacked' ) ).toBe( false );
 	} );
 
-	test( 'minimized count clears when no instances are minimized', () => {
-		const win = makeWin( 'edit-php', 'edit-php', 'minimized' );
-		const manager = makeManager( [ win ] );
+	test( '--stacked clears when all windows are restored', () => {
+		const win1 = makeWin( 'edit-php', 'edit-php', 'minimized' );
+		const win2 = makeWin( 'edit-php-2', 'edit-php', 'minimized' );
+		const manager = makeManager( [ win1, win2 ] );
 		const { container } = mount( manager );
 		document.dispatchEvent( new CustomEvent( 'desktop-mode-window-opened' ) );
 
 		const tile = tileFor( container, 'menu-posts' );
-		const primary = tile.querySelector< HTMLElement >(
-			'.desktop-mode-dock__item-primary',
-		);
-		expect( tile.getAttribute( 'data-minimized-count' ) ).toBe( '1' );
+		expect( tile.classList.contains( 'desktop-mode-dock__item--stacked' ) ).toBe( true );
 
-		win.state = 'normal';
-		window.wp?.hooks?.doAction?.( HOOKS.WINDOW_RESTORED, { windowId: 'edit-php' } );
+		win1.state = 'normal';
+		win2.state = 'normal';
+		window.wp?.hooks?.doAction?.( HOOKS.WINDOW_RESTORED );
+		document.dispatchEvent( new CustomEvent( 'desktop-mode-window-restored' ) );
 
-		expect( tile.hasAttribute( 'data-minimized-count' ) ).toBe( false );
-		expect( primary?.getAttribute( 'aria-label' ) ).toBe( 'Posts' );
+		expect( tile.classList.contains( 'desktop-mode-dock__item--stacked' ) ).toBe( false );
 	} );
 
 	test( 'focused tile loses --focused when its window is minimized', () => {

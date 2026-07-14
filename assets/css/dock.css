@@ -77,6 +77,34 @@
 	outline-offset: 2px;
 }
 
+/* Stacked card hint on hover — a second card peeks from behind the
+   icon when the tile has minimized windows. Only visible on hover so
+   it never conflicts with focused tiles. */
+.desktop-mode-dock__item--stacked:hover .desktop-mode-dock__item-primary::before,
+.desktop-mode-dock__item--stacked[data-peek-active] .desktop-mode-dock__item-primary::before {
+	content: "";
+	position: absolute;
+	top: -4px;
+	left: -4px;
+	width: 100%;
+	height: 100%;
+	border-radius: inherit;
+	background: rgba( 255, 255, 255, 0.06 );
+	border: 1px solid rgba( 255, 255, 255, 0.10 );
+	z-index: -1;
+	pointer-events: none;
+}
+
+/* Suppress the active indicator (dot/pill/ring) on hover when the
+   stack is shown — the stacked card behind the icon already
+   communicates "multiple windows tucked away." */
+.desktop-mode-dock[ data-desktop-mode-dock-placement ]
+	.desktop-mode-dock__item--stacked:hover::before,
+.desktop-mode-dock[ data-desktop-mode-dock-placement ]
+	.desktop-mode-dock__item--stacked[data-peek-active]::before {
+	opacity: 0;
+}
+
 /* Dashicon inside dock item. */
 .desktop-mode-dock__item .dashicons {
 	font-size: var( --desktop-mode-dock-icon-size, 20px );
@@ -202,42 +230,6 @@
 	transition: transform 0.15s ease;
 	top: -3px;
 	inset-inline-end: -3px;
-}
-
-/* Minimized windows count chip — tucked into its own lower corner so
- * it does not collide with app notification badges at the top. */
-.desktop-mode-dock__item[data-minimized-count]::after {
-	content: attr(data-minimized-count);
-	position: absolute;
-	min-width: 16px;
-	height: 16px;
-	padding: 0 4px;
-	box-sizing: border-box;
-	border-radius: 999px;
-	background: var( --desktop-mode-dock-bg, rgba( 0, 0, 0, 0.4 ) );
-	color: rgba( 255, 255, 255, 0.85 );
-	border: 1px solid rgba( 255, 255, 255, 0.85 );
-	font-size: 10px;
-	font-weight: 700;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	font-variant-numeric: tabular-nums;
-	line-height: 1;
-	pointer-events: none;
-	transition: transform 0.15s ease;
-	inset-inline-end: -4px;
-	bottom: 0;
-	z-index: 2;
-}
-
-.desktop-mode-dock__item:hover .desktop-mode-dock__badge {
-	transform: scale( 1.05 );
-	top: -4px;
-}
-
-.desktop-mode-dock__item:hover[data-minimized-count]::after {
-	transform: scale( 1.05 );
 }
 
 /*
@@ -612,6 +604,11 @@
 	display: none;
 }
 
+.desktop-mode-dock[ data-desktop-mode-dock-placement ]
+	.desktop-mode-dock__scroll:not(:has( .desktop-mode-dock__item )) {
+	display: none;
+}
+
 /* Tooltip — anchor modifiers are applied directly to the tooltip
  * element (NOT via a descendant selector on `.desktop-mode-dock`)
  * because the tooltip lives in `document.body`. JS writes the
@@ -813,7 +810,7 @@ body.desktop-mode-show-desktop-active
 	   intrinsic height, leaving the hairline effectively invisible.
 	   28px matches the dock tile inner glyph area. */
 	height: 28px;
-	margin: auto 4px auto 8px;
+	margin: auto 6px;
 	background: var( --desktop-mode-dock-border );
 	flex-shrink: 0;
 }

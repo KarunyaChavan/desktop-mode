@@ -114,6 +114,7 @@ export function attachDockPeek( deps: DockPeekDeps ): () => void {
 	const tearDown = (): void => {
 		cancelShow();
 		cancelHide();
+		tile.removeAttribute( 'data-peek-active' );
 		if ( popover ) {
 			popover.remove();
 			popover = null;
@@ -168,6 +169,7 @@ export function attachDockPeek( deps: DockPeekDeps ): () => void {
 
 	const showPeek = (): void => {
 		deps.suppressTooltip( true );
+		tile.setAttribute( 'data-peek-active', '' );
 		popover = buildPopover( deps, () => tearDown() );
 		document.body.appendChild( popover );
 		// Inherit the user's WP color-scheme variables. The popover is
@@ -357,10 +359,11 @@ function buildInstanceCard(
 	// Control on macOS, Windows 7 Aero Peek. Skip if the target is
 	// already focused so a re-enter into the same card doesn't churn
 	// the focus stack and re-fire window-focused listeners.
+	if ( win.state === 'minimized' ) {
+		card.dataset.state = 'minimized';
+	}
+
 	card.addEventListener( 'pointerenter', () => {
-		if ( win.state === 'minimized' ) {
-			return;
-		}
 		if ( deps.windowManager.getFocused() === win ) {
 			return;
 		}

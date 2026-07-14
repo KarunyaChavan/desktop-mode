@@ -463,6 +463,73 @@ The built-in effects (`darken`, `frost`, `grayscale`) are registered through the
 
 ---
 
+### `desktop_mode_window_content_identity` — Experimental (since 0.9.4)
+
+Filters the content identity the chromeless bridge announces for the current admin screen — the "which object does this page show" record behind [window links](./examples/window-links.md) (visual ties between related windows). Runs inside the iframe's `admin_footer`, in real admin context, so relations the URL can't answer (comment → parent post) resolve here.
+
+```php
+apply_filters(
+    'desktop_mode_window_content_identity',
+    array|null $identity,   // null when the screen shows no single object
+    WP_Screen|null $screen
+);
+```
+
+`$identity` shape (mirrors the JS `WindowContentRef`): `type` (lowercase object-type slug; namespace yours `vendor/order`), `id` (int|string), optional `label`, optional `root => array( 'type', 'id' )`, optional `links => array( array( 'type', 'id', 'rel'? ), … )`. A ref **without** `root` is itself a root (the post a comment window points back to); a ref **with** `root` joins that root's relation group as a child (an edge pointing at the root — the built-in renderer marks the target end with its larger endpoint dot). `links` declare outbound ties: the default (`rel` omitted) is a `reference` — an edge FROM this window TO the linked object ("my content points at that"); `rel => 'child'` reverses it — the linked object BELONGS TO this content (a post's embedded media), drawn exactly like a root tie. Mutual references merge into one bidirectional edge. One reading everywhere: **the edge points at what its source belongs to or refers to** — relational structure, never navigation history.
+
+Built-in detection covers `post.php` (post/page/CPT edit → root, with `links` extracted from the content's internal hyperlinks, its embedded media — `wp-image-{id}`, which catches inserted-but-unattached images — its featured image, and its assigned public-taxonomy terms as `term/{taxonomy}` refs), attachment edit — both the classic `post.php` screen and the `upload.php?item=N` Media Library grid detail — (`media`, rooted at `post_parent` when attached), `comment.php` (`comment`, rooted at the parent post), and `term.php` (`term/{taxonomy}` → root, which assigned posts reference). Use this filter to add identities for your own admin screens, or return `null` to suppress detection:
+
+```php
+add_filter( 'desktop_mode_window_content_identity', function ( $identity, $screen ) {
+    if ( $screen && 'acme_order_page' === $screen->id && isset( $_GET['order'] ) ) {
+        $order = acme_get_order( absint( $_GET['order'] ) );
+        if ( $order ) {
+            return array(
+                'type'  => 'acme/order',
+                'id'    => $order->id,
+                'label' => $order->title,
+                'root'  => array( 'type' => 'acme/customer', 'id' => $order->customer_id ),
+            );
+        }
+    }
+    return $identity;
+}, 10, 2 );
+```
+
+---
+
+### `desktop_mode_window_link_renderer_script_registered` — Experimental (since 0.9.4)
+
+Fires after `desktop_mode_register_window_link_renderer_script()` stores a window-link renderer script handle.
+
+```php
+do_action( 'desktop_mode_window_link_renderer_script_registered', string $handle );
+```
+
+### `desktop_mode_register_window_link_renderer_script( $handle )` — Experimental (PHP function, since 0.9.4)
+
+Declares a WP-registered script handle as a window-link renderer provider. The shell injects the resolved URL on plugin activation so `wp.desktop.registerWindowLinkRenderer()` calls made by the plugin's JS surface in **OS Settings → Effects → Window links** **without a page reload**.
+
+```php
+add_action( 'admin_enqueue_scripts', function () {
+    wp_register_script(
+        'my-plugin-link-renderer',
+        plugins_url( 'js/link-renderer.js', __FILE__ ),
+        array( 'desktop-mode' ),
+        '1.0.0',
+        true
+    );
+    wp_enqueue_script( 'my-plugin-link-renderer' );
+} );
+desktop_mode_register_window_link_renderer_script( 'my-plugin-link-renderer' );
+```
+
+For live unregistration on deactivation, set `owner: 'my-plugin-link-renderer'` on each `registerWindowLinkRenderer` call. Untagged renderers survive past deactivation until the next page reload; should the *active* renderer depart, the render host falls back to the built-in `svg-splines`.
+
+The built-in `svg-splines` renderer is registered through the same JS hook — there is no PHP for it.
+
+---
+
 ### `desktop_mode_settings_tab_script_registered` — Stable *(since 0.5.2)*
 
 Fires after `desktop_mode_register_settings_tab_script()` stores an OS Settings tab script handle. Also fires when `desktop_mode_register_settings_tab()` implicitly registers its `script` argument (it routes through `desktop_mode_register_settings_tab_script()`).

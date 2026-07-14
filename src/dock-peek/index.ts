@@ -350,24 +350,23 @@ function buildInstanceCard(
 	}
 	card.appendChild( body );
 
-	card.addEventListener( 'click', () => {
-		spawnFocusViewTransition( deps, win, card, dismiss );
-	} );
-
-	// Hover-to-raise: bringing the live window forward on pointerenter
-	// gives the peek a "scrub through my windows" feel — Mission
-	// Control on macOS, Windows 7 Aero Peek. Skip if the target is
-	// already focused so a re-enter into the same card doesn't churn
-	// the focus stack and re-fire window-focused listeners.
+	// Mark minimized cards for collapsed CSS.
 	if ( win.state === 'minimized' ) {
 		card.dataset.state = 'minimized';
 	}
 
+	card.addEventListener( 'click', () => {
+		spawnFocusViewTransition( deps, win, card, dismiss );
+	} );
+
+	// Restore minimized windows on hover so peek cards actually show
+	// the window. Non-minimized windows use the existing scrub-to-focus.
 	card.addEventListener( 'pointerenter', () => {
-		if ( deps.windowManager.getFocused() === win ) {
-			return;
+		if ( win.state === 'minimized' ) {
+			win.restore();
+		} else if ( deps.windowManager.getFocused() !== win ) {
+			deps.windowManager.focus( win );
 		}
-		deps.windowManager.focus( win );
 	} );
 
 	// Apply the whole-card filter LAST so plugins can wrap or replace
@@ -404,10 +403,10 @@ function spawnFocusViewTransition(
 	const vtName = `desktop-mode-peek-card-${ win.id }`;
 	const focus = (): void => {
 		dismiss();
-		deps.windowManager.focus( win );
 		if ( win.state === 'minimized' ) {
 			win.restore();
 		}
+		deps.windowManager.focus( win );
 	};
 	if ( typeof doc.startViewTransition !== 'function' ) {
 		focus();

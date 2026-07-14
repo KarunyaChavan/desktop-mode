@@ -301,8 +301,8 @@ describe( 'dock-peek', () => {
 		expect( focus ).toHaveBeenCalledWith( winB );
 	} );
 
-	// Hover-focus on minimized cards (no guard — hover always raises).
-	test( 'hovering a minimized instance card focuses the window', () => {
+	// Hovering a minimized card restores it so the user can see it.
+	test( 'hovering a minimized instance card restores the window', () => {
 		const tile = makeTile( true );
 		const win = makeWindowStub( 'All Posts', 'edit-php', 'minimized' );
 		const focus = vi.fn();
@@ -323,7 +323,8 @@ describe( 'dock-peek', () => {
 			'.desktop-mode-dock-peek__card--instance',
 		)!;
 		pointerEnter( card );
-		expect( focus ).toHaveBeenCalledWith( win );
+		expect( win.restore ).toHaveBeenCalledTimes( 1 );
+		expect( focus ).not.toHaveBeenCalled();
 	} );
 
 	// Collapsed preview: minimized cards get data-state="minimized" for CSS.

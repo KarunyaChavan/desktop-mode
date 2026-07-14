@@ -11,6 +11,7 @@
  */
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { WindowManager } from '../../src/window-manager';
+import { closeDesktop } from '../../src/window-manager/desktops';
 import {
 	clearHooksStub,
 	installHooksStub,
@@ -475,6 +476,152 @@ describe( 'WindowManager — virtual desktops', async () => {
 
 		expect( manager.toggleShowDesktop() ).toBe( false );
 		expect( b.state ).toBe( 'normal' );
+	} );
+
+	describe( 'Overview inert + tile structure', () => {
+		// Background chrome (admin sidebar, dock, widgets) and all windows
+		// are made inert on overview enter so Tab focus doesn't waste
+		// keystrokes navigating hidden UI behind the overview layer.
+		// The top admin bar (wpadminbar) is deliberately left active.
+		// Siblings inside wpbody-content (screen options, help, notices)
+		// are also inerted via inertWpBodyContentChildren.
+		test( 'enterOverview inerts background chrome, exitOverview restores it', async () => {
+			const toRemove: HTMLElement[] = [];
+
+			try {
+				const adminMenu = document.createElement( 'div' );
+				adminMenu.id = 'adminmenumain';
+				document.body.appendChild( adminMenu );
+				toRemove.push( adminMenu );
+				const adminBack = document.createElement( 'div' );
+				adminBack.id = 'adminmenuback';
+				document.body.appendChild( adminBack );
+				toRemove.push( adminBack );
+				const dock = document.createElement( 'div' );
+				dock.id = 'desktop-mode-dock';
+				document.body.appendChild( dock );
+				toRemove.push( dock );
+				const sideDock = document.createElement( 'div' );
+				sideDock.id = 'desktop-mode-side-dock';
+				document.body.appendChild( sideDock );
+				toRemove.push( sideDock );
+				const widgets = document.createElement( 'div' );
+				widgets.id = 'desktop-mode-widgets';
+				document.body.appendChild( widgets );
+				toRemove.push( widgets );
+
+				const wpbody = document.createElement( 'div' );
+				wpbody.id = 'wpbody-content';
+				document.body.appendChild( wpbody );
+				toRemove.push( wpbody );
+				const notice = document.createElement( 'div' );
+				notice.className = 'notice';
+				wpbody.appendChild( notice );
+
+				const a = await manager.open( openConfig( 'a' ) );
+				const b = await manager.open( openConfig( 'b' ) );
+
+				expect( a.element.inert ).toBeFalsy();
+
+				manager.enterOverview();
+
+				expect( adminMenu.inert ).toBe( true );
+				expect( adminBack.inert ).toBe( true );
+				expect( dock.inert ).toBe( true );
+				expect( sideDock.inert ).toBe( true );
+				expect( widgets.inert ).toBe( true );
+				expect( notice.inert ).toBe( true );
+				expect( a.element.inert ).toBe( true );
+				expect( b.element.inert ).toBe( true );
+
+				manager.exitOverview();
+
+				expect( adminMenu.inert ).toBe( false );
+				expect( adminBack.inert ).toBe( false );
+				expect( dock.inert ).toBe( false );
+				expect( sideDock.inert ).toBe( false );
+				expect( widgets.inert ).toBe( false );
+				expect( notice.inert ).toBe( false );
+				expect( a.element.inert ).toBe( false );
+				expect( b.element.inert ).toBe( false );
+			} finally {
+				for ( const el of toRemove ) {
+					el.remove();
+				}
+			}
+		} );
+
+		// Each desktop tile was a single <button>; the close X was a child
+		// inside it, making it unreachable by Tab. Fix: wrap the tile <button>
+		// and a sibling close <button> in a <div> wrapper so both are independently
+		// focusable. The "+" create-tile stays as a direct child (no close X).
+		test( 'each desktop tile has a wrapper with two sibling buttons', async () => {
+			const extraDesktops = [ manager.createDesktop(), manager.createDesktop() ];
+			try {
+				await manager.open( openConfig( 'a' ) );
+				manager.enterOverview();
+
+				const wrappers = manager._overviewTopBar!.querySelectorAll(
+					'.desktop-mode-overview-top-bar__tile-wrapper',
+				);
+
+				// 3 desktops = 3 wrappers (the "+" tile is a direct child, not wrapped)
+				expect( wrappers ).toHaveLength( 3 );
+
+				for ( const wrapper of wrappers ) {
+					const buttons = wrapper.querySelectorAll( 'button' );
+					expect( buttons ).toHaveLength( 2 );
+
+					const tile = buttons[ 0 ];
+					expect(
+						tile.classList.contains( 'desktop-mode-overview-top-bar__tile' ),
+					).toBe( true );
+
+					const close = buttons[ 1 ];
+					expect(
+						close.classList.contains(
+							'desktop-mode-overview-top-bar__tile-close',
+						),
+					).toBe( true );
+					expect( close.tagName ).toBe( 'BUTTON' );
+				}
+			} finally {
+				for ( const d of extraDesktops ) {
+					closeDesktop( manager, d.id );
+				}
+			}
+		} );
+
+		// The global Enter handler must not exit overview when the user
+		// is focused on an explicit <button> (close X, desktop tile).
+		// Regression guard for BUG-4: prior behaviour intercepted every
+		// Enter as "commit", making the close X inaccessible by keyboard.
+		test( 'Enter on a focused button does not exit overview', async () => {
+			await manager.open( openConfig( 'a' ) );
+			manager.enterOverview();
+
+			const closeBtn = manager._overviewTopBar!.querySelector< HTMLElement >(
+				'.desktop-mode-overview-top-bar__tile-close',
+			)!;
+			closeBtn.focus();
+			expect( document.activeElement ).toBe( closeBtn );
+
+			document.dispatchEvent(
+				new KeyboardEvent( 'keydown', { key: 'Enter' } ),
+			);
+
+			expect( manager._overviewActive ).toBe( true );
+			manager.exitOverview();
+		} );
+
+		// inertWpBodyContentChildren returns early when #wpbody-content
+		// is absent from the DOM. Verify enterOverview still completes
+		// without throwing.
+		test( 'enterOverview tolerates missing wpbody-content', async () => {
+			await manager.open( openConfig( 'a' ) );
+			expect( () => manager.enterOverview() ).not.toThrow();
+			manager.exitOverview();
+		} );
 	} );
 } );
 

@@ -95,16 +95,6 @@
 	pointer-events: none;
 }
 
-/* Suppress the active indicator (dot/pill/ring) on hover when the
-   stack is shown — the stacked card behind the icon already
-   communicates "multiple windows here." */
-.desktop-mode-dock[ data-desktop-mode-dock-placement ]
-	.desktop-mode-dock__item--stacked:hover::before,
-.desktop-mode-dock[ data-desktop-mode-dock-placement ]
-	.desktop-mode-dock__item--stacked[data-peek-active]::before {
-	opacity: 0;
-}
-
 /* Dashicon inside dock item. */
 .desktop-mode-dock__item .dashicons {
 	font-size: var( --desktop-mode-dock-icon-size, 20px );
@@ -230,6 +220,11 @@
 	transition: transform 0.15s ease;
 	top: -3px;
 	inset-inline-end: -3px;
+}
+
+.desktop-mode-dock__item:hover .desktop-mode-dock__badge {
+	transform: scale( 1.05 );
+	top: -4px;
 }
 
 /*

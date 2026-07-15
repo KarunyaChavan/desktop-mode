@@ -2911,6 +2911,14 @@ Actions / filters:
 
 See [`docs/examples/window-notice.md`](examples/window-notice.md).
 
+### Core-update notice — `desktop_mode_show_core_update_notice` — Experimental (filter) *(since 0.9.4)*
+
+Return `false` to turn off the desktop core-update notification (defaults to `true`):
+
+```php
+add_filter( 'desktop_mode_show_core_update_notice', '__return_false' );
+```
+
 ---
 
 ## Progressive Web App (since 0.8.0)

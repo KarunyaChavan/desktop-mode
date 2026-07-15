@@ -1974,6 +1974,24 @@ export interface DesktopConfig {
 	 */
 	toastTypes?: ToastTypeDef[];
 	/**
+	 * Pending WordPress core update (from `desktop_mode_get_core_update()`),
+	 * or `null`/omitted when none is pending. The shell resolves the art
+	 * and renders it — see `src/update-notice.ts`.
+	 *
+	 * @since 0.9.4
+	 */
+	coreUpdate?: {
+		/** Version shown in the message — major branch when crossing, else exact. */
+		version: string;
+		/** Exact available version — the dismissal key (a newer point release re-notifies). */
+		available?: string;
+		/** Major branch (e.g. `7.0`) — the art key. */
+		branch?: string;
+		url: string;
+		/** True when moving into a new major (the shell then shows the codename). */
+		crossing?: boolean;
+	} | null;
+	/**
 	 * Wallpaper slug applied on first boot for a new user. Filterable
 	 * server-side via `desktop_mode_default_wallpaper`. Optional — an
 	 * empty string falls back to the TS default.

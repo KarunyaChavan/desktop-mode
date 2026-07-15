@@ -24,31 +24,6 @@ const DESKTOP_MODE_OS_SETTINGS_DOCK_SIZES = array( 'compact', 'default', 'large'
 const DESKTOP_MODE_OS_SETTINGS_DESKTOP_LAYOUTS = array( 'classic', 'unified', 'spatial' );
 
 /**
- * Valid AI live-progress transports — mirrors the TS `AI_TRANSPORTS` constant.
- *
- * - `sse` — Server-Sent Events; real-time progress ticks. Requires the host
- *   to allow long-lived `text/event-stream` connections.
- * - `off` — single request, no progress ticks. Works everywhere; the user
- *   sees "Thinking…" until the final answer.
- *
- * Default is `off` because some hosts (locked-down shared environments,
- * proxies that buffer responses) silently drop SSE mid-stream, which surfaces
- * to the user as "Lost connection to the assistant".
- */
-const DESKTOP_MODE_OS_SETTINGS_AI_TRANSPORTS = array( 'sse', 'off' );
-
-/**
- * Built-in AI provider IDs.
- *
- * Other providers register themselves via {@see desktop_mode_register_ai_provider()};
- * sanitization no longer gates the field against this list (the active-provider
- * resolver does the existence check at lookup time).
- *
- * @deprecated 0.5.2 Kept for backwards compatibility; use the provider registry.
- */
-const DESKTOP_MODE_OS_SETTINGS_AI_PROVIDERS = array( 'openai' );
-
-/**
  * Returns a well-shaped default OS settings array.
  *
  * Mirrors the TypeScript `DEFAULTS` constant so a fresh user account
@@ -74,11 +49,7 @@ function desktop_mode_default_os_settings() {
 		'customImage'                 => null,
 		'libraryHdOnly'               => true,
 		'ai'                          => array(
-			'enabled'   => false,
-			'provider'  => 'openai',
-			'apiKey'    => '',     // Legacy field — treated as the OpenAI key for backwards compat.
-			'apiKeys'   => array(), // Per-provider keys: { [provider_id]: string }.
-			'transport' => 'off',   // Live-progress transport: 'sse' | 'off'. Default off — see DESKTOP_MODE_OS_SETTINGS_AI_TRANSPORTS.
+			'enabled' => false,    // AI assistant is opt-in; enabled from OS Settings → Features once a provider is configured.
 		),
 		// Per-user opt-IN for the native Posts window. When true,
 		// clicking the Posts dock tile opens the `<wpd-table>`-driven
@@ -128,6 +99,12 @@ function desktop_mode_default_os_settings() {
 		// scheduled). On by default — surfaces unpublished work at
 		// a glance. Per-user.
 		'showPostStatusRibbons'       => true,
+		// Unlocks developer-facing surfaces meant for plugin
+		// authors: the Starter Widget appears in the add-widget
+		// picker, and the OS Settings → Components tab runs its
+		// intentional missing-import-warner demo. Off by default.
+		// Per-user.
+		'developerModeEnabled'        => false,
 		// Per-user opt-OUT for the folder-sharing feature. Defaults
 		// ON. When false:
 		// - The Share button, share-settings modal, "Leave shared
@@ -313,56 +290,14 @@ function desktop_mode_sanitize_os_settings( $raw ) {
 	// Library HD only — boolean.
 	$library_hd_only = isset( $raw['libraryHdOnly'] ) ? (bool) $raw['libraryHdOnly'] : $defaults['libraryHdOnly'];
 
-	// AI settings.
+	// AI settings — just the per-user on/off toggle. Provider + model selection
+	// is delegated to the Core AI Client, so there is no preference to persist.
 	$ai = $defaults['ai'];
 	if ( isset( $raw['ai'] ) && is_array( $raw['ai'] ) ) {
 		$raw_ai = $raw['ai'];
 
 		if ( isset( $raw_ai['enabled'] ) ) {
 			$ai['enabled'] = (bool) $raw_ai['enabled'];
-		}
-
-		// Provider — accept any sanitize_key()-clean string. We don't gate
-		// on the registry here because providers register on `init` and
-		// sanitize may run earlier (REST boot). Existence is checked at
-		// lookup time by `desktop_mode_ai_get_active_provider_id()`.
-		if ( isset( $raw_ai['provider'] ) && is_string( $raw_ai['provider'] ) ) {
-			$slug = sanitize_key( $raw_ai['provider'] );
-			if ( '' !== $slug ) {
-				$ai['provider'] = $slug;
-			}
-		}
-
-		// API key — strip tags and limit length. The key is opaque to us;
-		// we just store what the user gives. 512 chars is generous for any
-		// real API key while preventing runaway meta writes.
-		if ( isset( $raw_ai['apiKey'] ) && is_string( $raw_ai['apiKey'] ) ) {
-			$ai['apiKey'] = substr( sanitize_text_field( $raw_ai['apiKey'] ), 0, 512 );
-		}
-
-		// Live-progress transport — must be one of the known values.
-		if (
-			isset( $raw_ai['transport'] )
-			&& is_string( $raw_ai['transport'] )
-			&& in_array( $raw_ai['transport'], DESKTOP_MODE_OS_SETTINGS_AI_TRANSPORTS, true )
-		) {
-			$ai['transport'] = $raw_ai['transport'];
-		}
-
-		// Per-provider keys map. Limited to 32 entries to bound storage.
-		if ( isset( $raw_ai['apiKeys'] ) && is_array( $raw_ai['apiKeys'] ) ) {
-			$keys = array();
-			foreach ( $raw_ai['apiKeys'] as $pid => $val ) {
-				if ( count( $keys ) >= 32 ) {
-					break;
-				}
-				$slug = sanitize_key( (string) $pid );
-				if ( '' === $slug || ! is_string( $val ) ) {
-					continue;
-				}
-				$keys[ $slug ] = substr( sanitize_text_field( $val ), 0, 512 );
-			}
-			$ai['apiKeys'] = $keys;
 		}
 	}
 
@@ -429,6 +364,10 @@ function desktop_mode_sanitize_os_settings( $raw ) {
 	$show_post_status_ribbons = isset( $raw['showPostStatusRibbons'] )
 		? (bool) $raw['showPostStatusRibbons']
 		: $defaults['showPostStatusRibbons'];
+
+	$developer_mode_enabled = isset( $raw['developerModeEnabled'] )
+		? (bool) $raw['developerModeEnabled']
+		: $defaults['developerModeEnabled'];
 
 	$folders_sharing_enabled = isset( $raw['foldersSharingEnabled'] )
 		? (bool) $raw['foldersSharingEnabled']
@@ -547,6 +486,7 @@ function desktop_mode_sanitize_os_settings( $raw ) {
 		'nativeCommentsEnabled'       => $native_comments_enabled,
 		'showDesktopOnWallpaperClick' => $show_desktop_on_wallpaper_click,
 		'showPostStatusRibbons'       => $show_post_status_ribbons,
+		'developerModeEnabled'        => $developer_mode_enabled,
 		'foldersSharingEnabled'       => $folders_sharing_enabled,
 		'itemVisibility'              => $item_visibility,
 		'dockOrder'                   => $dock_order,

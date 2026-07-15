@@ -170,6 +170,7 @@ import { bootStickyNotes } from './sticky-notes';
 // boot-time consumer reaches the same captured value — see the import
 // further down for the canonical reference.
 import { registerBuiltInWidgets } from './widgets/built-in';
+import { setupDevModeWidgetGate } from './widgets/dev-mode-gate';
 import {
 	installDefaultDockRailRenderer,
 	type DockRailRenderer,
@@ -1810,8 +1811,6 @@ function init(): void {
 			restNonce: config.restNonce,
 			canUpload: !! config.canUpload,
 			isAdmin: !! config.currentUserIsAdmin,
-			aiPlatformSettings: config.aiPlatformSettings ?? null,
-			aiPlatformSettingsUrl: config.aiPlatformSettingsUrl ?? '',
 			extendedOptions: config.extendedOptions ?? null,
 			extendedOptionsUrl: config.extendedOptionsUrl ?? '',
 			osSettingsPanelBundleUrl: config.osSettingsPanelBundleUrl ?? '',
@@ -1819,6 +1818,14 @@ function init(): void {
 		wallpaperLayer ?? new WallpaperLayer( document.createElement( 'div' ), pluginUrl ),
 	);
 	osSettings.apply();
+
+	// Starter Widget developer-mode gate — must install its
+	// `desktop-mode.widgets` filter before `widgetLayer.hydrate()`
+	// runs below so a previously-placed Starter instance doesn't
+	// mount when developer mode is off.
+	if ( widgetLayer ) {
+		setupDevModeWidgetGate( { osSettings, layer: widgetLayer } );
+	}
 
 	// AI Assistant — main bundle ships a tiny stub matching the same
 	// AiAssistantApi contract. The 38 kB implementation lives in its
@@ -1833,10 +1840,10 @@ function init(): void {
 			aiSearchUrl: config.aiSearchUrl ?? '',
 			aiSearchStreamUrl: config.aiSearchStreamUrl ?? '',
 			restNonce: config.restNonce,
-			// Transport picker lives in OS Settings → AI Settings. Read
-			// live (not captured at construction) so a change applies on
-			// the next search without a page reload.
-			getTransport: () => osSettings.getOsSettingsSnapshot().ai.transport,
+			// Progress streaming is on by default now that the per-user
+			// transport picker is gone; the assistant falls back gracefully
+			// if the host drops the SSE connection.
+			getTransport: () => 'sse',
 		},
 		config.aiAssistantBundleUrl ?? '',
 	);
@@ -1957,13 +1964,45 @@ function init(): void {
 	// and install the single global shortcut. Other plugins can register
 	// more palettes via wp.desktop.registerPalette and Cmd+K cycles
 	// through them in registration order.
-	registerPalette( {
-		id: 'desktop-mode-ai-assistant',
-		label: 'AI Assistant',
-		open: () => aiAssistant.open(),
-		close: () => aiAssistant.close(),
-		isOpen: () => aiAssistant.isOpen,
-	} );
+	//
+	// The assistant is *active* only when the Core AI primitives are present, a
+	// provider is configured in Settings → Connectors, AND the per-user toggle
+	// is on. Both the Cmd+K palette and the admin-bar "Ask AI" icon follow this
+	// live (no reload): we register/unregister the palette and toggle the
+	// `desktop-mode-ai-enabled` body class (which controls the icon's CSS
+	// visibility) whenever the toggle changes or a provider is (dis)connected.
+	const aiAvailable = config.aiAssistant?.available === true;
+	const isAiAssistantActive = () =>
+		aiAvailable &&
+		config.aiAssistant?.assistantProviderConfigured === true &&
+		osSettings.getOsSettingsSnapshot().ai.enabled !== false;
+
+	let unregisterAiPalette: ( () => void ) | null = null;
+	const syncAiAssistant = () => {
+		const active = isAiAssistantActive();
+		document.body.classList.toggle( 'desktop-mode-ai-enabled', active );
+		if ( active && ! unregisterAiPalette ) {
+			unregisterAiPalette = registerPalette( {
+				id: 'desktop-mode-ai-assistant',
+				label: 'AI Assistant',
+				open: () => aiAssistant.open(),
+				close: () => aiAssistant.close(),
+				isOpen: () => aiAssistant.isOpen,
+			} );
+		} else if ( ! active && unregisterAiPalette ) {
+			aiAssistant.close();
+			unregisterAiPalette();
+			unregisterAiPalette = null;
+		}
+	};
+	syncAiAssistant();
+	// Re-sync when the user flips the assistant toggle in OS Settings, or when
+	// a provider is connected/disconnected (Features tab dispatches this after
+	// re-probing provider status).
+	osSettings.subscribeOsSettings( () => syncAiAssistant() );
+	document.addEventListener( 'desktop-mode-ai-status-changed', () =>
+		syncAiAssistant(),
+	);
 	installPaletteShortcut();
 	installWindowSwitcherShortcut( manager );
 	installDesktopArrowShortcuts( manager );
@@ -2001,6 +2040,9 @@ function init(): void {
 	// palette that happens to be open is dismissed first — matches the
 	// single-palette-at-a-time invariant the cycle maintains.
 	document.addEventListener( 'desktop-mode-open-ai', () => {
+		if ( ! isAiAssistantActive() ) {
+			return;
+		}
 		openPaletteOnly( 'desktop-mode-ai-assistant' );
 	} );
 
@@ -3013,6 +3055,14 @@ function init(): void {
 		syncServerUnfocusEffects,
 		syncServerDockRailRenderers,
 		renderIcons,
+		syncShortcuts: () => {
+			const snapshot = osSettings.getOsSettingsSnapshot();
+			syncShortcutsWithVisibility(
+				snapshot.itemVisibility,
+				snapshot.dockPromotedPositions,
+				snapshot.desktopLayout,
+			);
+		},
 	} );
 
 	// Live desktop-layout sync: when the user picks a new layout
@@ -3049,10 +3099,14 @@ function init(): void {
 		}
 		// Bring the files-layer placements in line with the new
 		// visibility map — promotes dock items onto the wallpaper
-		// and removes hidden server icons from the grid.
+		// and removes hidden server icons from the grid. Passing the
+		// layout lets Spatial synthesize its core-menu icons onto the
+		// same visible surface (and removes them again on switching
+		// away from Spatial).
 		syncShortcutsWithVisibility(
 			snapshot.itemVisibility,
 			snapshot.dockPromotedPositions,
+			snapshot.desktopLayout,
 		);
 		// Cross-bundle SSOT publish — feature bundles + third-party
 		// plugins that imported `@layout` see the change without
@@ -3067,6 +3121,7 @@ function init(): void {
 	installShortcutsSync(
 		() => osSettings.getOsSettingsSnapshot().itemVisibility,
 		() => osSettings.getOsSettingsSnapshot().dockPromotedPositions,
+		() => osSettings.getOsSettingsSnapshot().desktopLayout,
 	);
 
 	// Initial publish so any consumer that reads `getCurrentLayout()`

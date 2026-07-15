@@ -60,18 +60,17 @@ export interface OsSettingsSnapshot {
 	 * @since 0.9.1
 	 */
 	unfocusEffect: string;
+	/**
+	 * AI assistant preference. `enabled` is the per-user on/off toggle
+	 * (opt-in, default off). Credentials live in WordPress Core's Settings →
+	 * Connectors and provider + model selection is delegated to the Core AI
+	 * Client, so no preference is carried here.
+	 *
+	 * @since 0.9.4 Dropped `apiKey` / `transport` (and the short-lived
+	 *        `provider` / `model` preferences).
+	 */
 	ai: {
 		enabled: boolean;
-		provider: string;
-		apiKey: string;
-		/**
-		 * Live-progress transport for AI search: `'sse' | 'off'`. Default
-		 * `'off'`. Surfaced so a third-party AI tab can read the user's
-		 * preferred transport without rebuilding the picker.
-		 *
-		 * @since 0.6.0
-		 */
-		transport: 'sse' | 'off';
 	};
 	/**
 	 * Per-user opt-in for the native Posts window. When true, clicking
@@ -132,6 +131,15 @@ export interface OsSettingsSnapshot {
 	 * @since 0.8.5
 	 */
 	foldersSharingEnabled: boolean;
+	/**
+	 * When true, unlocks developer-facing surfaces meant for plugin
+	 * authors: the Starter Widget appears in the add-widget picker,
+	 * and the OS Settings → Components tab runs its intentional
+	 * missing-import-warner demo. Defaults to `false`. Per-user.
+	 *
+	 * @since 0.9.4
+	 */
+	developerModeEnabled: boolean;
 	/**
 	 * Per-item placement preferences. Map of item id → one of
 	 * `'both' | 'dock' | 'desktop' | 'hidden'`. Missing keys mean

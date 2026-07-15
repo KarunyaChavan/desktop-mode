@@ -114,30 +114,43 @@ class Tests_DesktopMode_OsSettings extends WP_UnitTestCase {
 	/**
 	 * @covers ::desktop_mode_default_os_settings
 	 */
-	public function test_default_ai_transport_is_off() {
+	public function test_default_ai_assistant_is_opt_in() {
 		$defaults = desktop_mode_default_os_settings();
-		$this->assertArrayHasKey( 'transport', $defaults['ai'] );
-		$this->assertSame( 'off', $defaults['ai']['transport'] );
+		$this->assertFalse( $defaults['ai']['enabled'] );
 	}
 
 	/**
 	 * @covers ::desktop_mode_sanitize_os_settings
 	 */
-	public function test_sanitize_keeps_known_ai_transport() {
+	public function test_sanitize_keeps_ai_enabled_toggle() {
 		$clean = desktop_mode_sanitize_os_settings(
-			array( 'ai' => array( 'transport' => 'sse' ) )
+			array( 'ai' => array( 'enabled' => true ) )
 		);
-		$this->assertSame( 'sse', $clean['ai']['transport'] );
+		$this->assertTrue( $clean['ai']['enabled'] );
 	}
 
 	/**
 	 * @covers ::desktop_mode_sanitize_os_settings
 	 */
-	public function test_sanitize_rejects_unknown_ai_transport() {
+	public function test_sanitize_drops_legacy_ai_credential_and_preference_fields() {
 		$clean = desktop_mode_sanitize_os_settings(
-			array( 'ai' => array( 'transport' => 'websocket' ) )
+			array(
+				'ai' => array(
+					'enabled'   => true,
+					'apiKey'    => 'sk-secret',
+					'apiKeys'   => array( 'openai' => 'sk-x' ),
+					'transport' => 'sse',
+					'provider'  => 'openai',
+					'model'     => 'gpt-4o',
+				),
+			)
 		);
-		$this->assertSame( 'off', $clean['ai']['transport'] );
+		$this->assertTrue( $clean['ai']['enabled'] );
+		$this->assertArrayNotHasKey( 'apiKey', $clean['ai'] );
+		$this->assertArrayNotHasKey( 'apiKeys', $clean['ai'] );
+		$this->assertArrayNotHasKey( 'transport', $clean['ai'] );
+		$this->assertArrayNotHasKey( 'provider', $clean['ai'] );
+		$this->assertArrayNotHasKey( 'model', $clean['ai'] );
 	}
 
 	// ────────────────────────────────────────────────────────────────
@@ -294,5 +307,50 @@ class Tests_DesktopMode_OsSettings extends WP_UnitTestCase {
 			array( 'editphp', 'scriptx', 'desktop:my-icon' ),
 			$clean['dockOrder']
 		);
+	}
+
+	// ────────────────────────────────────────────────────────────────
+	// developerModeEnabled — per-user gate for developer-facing
+	// surfaces (Starter Widget in the add-widget picker, Components
+	// tab missing-import-warner demo). Off by default.
+	// ────────────────────────────────────────────────────────────────
+
+	/**
+	 * @covers ::desktop_mode_default_os_settings
+	 */
+	public function test_default_developer_mode_is_off() {
+		$defaults = desktop_mode_default_os_settings();
+		$this->assertArrayHasKey( 'developerModeEnabled', $defaults );
+		$this->assertFalse( $defaults['developerModeEnabled'] );
+	}
+
+	/**
+	 * @covers ::desktop_mode_sanitize_os_settings
+	 */
+	public function test_sanitize_keeps_developer_mode_enabled_true() {
+		$clean = desktop_mode_sanitize_os_settings( array( 'developerModeEnabled' => true ) );
+		$this->assertTrue( $clean['developerModeEnabled'] );
+	}
+
+	/**
+	 * @covers ::desktop_mode_sanitize_os_settings
+	 */
+	public function test_sanitize_falls_back_to_default_when_developer_mode_missing() {
+		$clean = desktop_mode_sanitize_os_settings( array( 'wallpaper' => 'dark' ) );
+		$this->assertFalse( $clean['developerModeEnabled'] );
+	}
+
+	/**
+	 * @covers ::desktop_mode_save_os_settings
+	 * @covers ::desktop_mode_get_os_settings
+	 */
+	public function test_user_meta_round_trip_keeps_developer_mode_enabled() {
+		$user_id = self::factory()->user->create();
+		desktop_mode_save_os_settings(
+			$user_id,
+			array( 'developerModeEnabled' => true )
+		);
+		$loaded = desktop_mode_get_os_settings( $user_id );
+		$this->assertTrue( $loaded['developerModeEnabled'] );
 	}
 }

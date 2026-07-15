@@ -63,7 +63,14 @@ import {
 } from './title-bar-buttons/registry';
 import { createTitleBarButtonRegistrySync } from './title-bar-buttons/server-sync';
 import { type UnfocusEffectDef } from './effects/types';
+import { startWindowLinksEngine } from './window-links/engine';
+import { startWindowLinkRenderHost } from './window-links/render-host';
+import type {
+	WindowLinkRendererDef,
+	WindowRelationsApi,
+} from './window-links/types';
 import { createUnfocusEffectRegistrySync } from './effects/server-sync';
+import { createWindowLinkRendererRegistrySync } from './window-links/server-sync';
 import { startUnfocusEngine } from './effects/unfocus-engine';
 import { createDockRailRendererSync } from './dock-rail/server-sync';
 import {
@@ -133,6 +140,7 @@ import { type KeyedListOptions } from './ui/util/keyed-list';
 import { DragBridge, type DragBridgeApi } from './drag-bridge';
 import { DragManager, type DragManagerApi, DRAG_EVENTS } from './drag';
 import { installIframeDropTargets } from './drag/iframe-drop-targets';
+import { installFocusWindowOnDragHover } from './drag/focus-window-on-drag-hover';
 import {
 	type DesktopCommand,
 } from './commands';
@@ -906,7 +914,7 @@ export interface WpDesktopPublicApi {
 	 * ```
 	 *
 	 * Built-in tab orders for reference: appearance=10, ai=20,
-	 * apps-icons=22, features=25, effects=27, extended=30, help=40
+	 * apps-icons=22, features=25, effects=27, help=40
 	 * (About is pinned last with a sentinel order).
 	 *
 	 * @since 0.5.1
@@ -1144,6 +1152,49 @@ export interface WpDesktopPublicApi {
 	unregisterUnfocusEffect: ( id: string ) => void;
 	/** Snapshot of registered unfocus effects (filter applied). @since 0.9.1 */
 	listUnfocusEffects: () => UnfocusEffectDef[];
+	/**
+	 * Window content relations — which piece of content each window
+	 * shows and how windows group around a shared root (a comment
+	 * window belongs to its post's window). Read with `get` /
+	 * `groups` / `groupOf` / `related`, declare with `set` (or the
+	 * open-time `WindowConfig.content` field), react with
+	 * `subscribe` or the `desktop-mode.window-links.*` hooks. The
+	 * chromeless bridge announces identities for admin iframe pages
+	 * automatically.
+	 *
+	 * @example
+	 * ```js
+	 * wp.desktop.relations.set( windowId, {
+	 *     type: 'acme/order',
+	 *     id: 77,
+	 *     root: { type: 'acme/customer', id: 12 },
+	 * } );
+	 * wp.desktop.relations.related( windowId ); // sibling window ids
+	 * ```
+	 *
+	 * @since 0.9.4
+	 */
+	relations: WindowRelationsApi;
+	/**
+	 * Register (or replace) a window-link renderer — how the relation
+	 * ties between related windows are drawn on the desktop. The
+	 * definition's `mount( ctx )` receives the shell's link layer plus
+	 * a frame stream of live window rects and returns a teardown; both
+	 * SVG/DOM and canvas/Pixi implementations are first-class. The
+	 * built-in `svg-splines` registers through this same API. Set
+	 * `owner` to the script handle for live unregistration on
+	 * deactivation. The user picks the active renderer in OS Settings
+	 * → Effects → Window links.
+	 *
+	 * Throws a `RegistrationError` on validation failure.
+	 *
+	 * @since 0.9.4
+	 */
+	registerWindowLinkRenderer: ( def: WindowLinkRendererDef ) => void;
+	/** Remove a previously registered window-link renderer. @since 0.9.4 */
+	unregisterWindowLinkRenderer: ( id: string ) => void;
+	/** Snapshot of registered window-link renderers (filter applied). @since 0.9.4 */
+	listWindowLinkRenderers: () => WindowLinkRendererDef[];
 	/**
 	 * Register (or replace) a per-window theme — a CSS-variable map
 	 * applied to every matching window's outer element. The shell
@@ -1942,6 +1993,12 @@ function init(): void {
 	// drags something, which can't happen before init() returns.
 	scheduleIdleBoot( () => installIframeDropTargets( dragManager ) );
 
+	// Focus-on-drag-hover — raises the window under the cursor after
+	// a short dwell during a drag, so the drop target comes forward.
+	// Listens to the DRAG_EVENTS CustomEvents; only needs the
+	// WindowManager as its focus host, not the DragManager.
+	scheduleIdleBoot( () => installFocusWindowOnDragHover( manager ) );
+
 	// Surface a toast when an iframe receiver (Gutenberg drop-
 	// receiver today) reports a failed insert — most commonly a
 	// timeout waiting for `wp.data` in a window where the editor
@@ -2417,6 +2474,11 @@ function init(): void {
 	 * @since 0.5.2
 	 */
 	function openOsSettings( opts: { tabId?: string } = {} ): void {
+		// The Extended Options tab merged into Features in 0.9.5 —
+		// keep documented deep-links to the old tab id working.
+		if ( opts.tabId === 'extended' ) {
+			opts = { ...opts, tabId: 'features' };
+		}
 		if ( opts.tabId ) {
 			osSettings.activeTabId = opts.tabId;
 		}
@@ -2785,11 +2847,34 @@ function init(): void {
 			: [],
 	);
 
+	// Window-link renderer sync — same pattern. Loads opted-in scripts
+	// so a plugin's `registerWindowLinkRenderer()` lands and surfaces
+	// in OS Settings → Effects → Window links; deactivation drops
+	// renderers by `owner` tag and the render host falls back to the
+	// built-in `svg-splines` if the active pick departed.
+	const syncServerWindowLinkRenderers = createWindowLinkRendererRegistrySync();
+	void syncServerWindowLinkRenderers(
+		Array.isArray( config.serverWindowLinkRendererScripts )
+			? config.serverWindowLinkRendererScripts
+			: [],
+	);
+
 	// Unfocus-effect engine — applies the user's chosen effect to every
 	// unfocused window and keeps it in sync with focus changes, the
 	// effect registry, and the OS Settings selection. Purely additive:
 	// it only listens to existing window-lifecycle events.
 	startUnfocusEngine( { manager, osSettings } );
+
+	// Window-links relations engine — tracks per-window content
+	// identity and relation groups. Pure state + events; the link
+	// render host below owns the visuals.
+	startWindowLinksEngine( { manager } );
+
+	// Window-link render host — mounts the user's chosen link renderer
+	// (built-in `svg-splines` by default) into a lazy overlay layer
+	// whenever a relation group is renderable, and applies the
+	// `windowLinkVisibility` policy + related-window chrome highlight.
+	startWindowLinkRenderHost( { manager, osSettings } );
 
 	// Dock rail renderer sync — loads plugin renderer scripts on
 	// activation so OS Settings → Dock style surfaces them
@@ -3053,6 +3138,7 @@ function init(): void {
 		syncServerSettingsTabs,
 		syncServerTitleBarButtons,
 		syncServerUnfocusEffects,
+		syncServerWindowLinkRenderers,
 		syncServerDockRailRenderers,
 		renderIcons,
 		syncShortcuts: () => {

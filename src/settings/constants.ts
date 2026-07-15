@@ -152,12 +152,18 @@ export const DEFAULTS: OsSettingsState = {
 	desktopLayout: 'classic',
 	dockRailRenderer: 'default',
 	unfocusEffect: 'darken',
+	windowLinkRenderer: 'svg-splines',
+	windowLinkVisibility: 'always',
+	windowLinksEnabled: true,
+	windowLinkRaiseOnFocus: true,
+	windowLinkHighlight: true,
 	customGradient: {
 		from: '#2271b1',
 		to: '#7c3aed',
 		angle: 135,
 	},
 	customImage: null,
+	wallpaperSettings: {},
 	libraryHdOnly: true,
 	ai: {
 		enabled: false,

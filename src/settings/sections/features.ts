@@ -1,17 +1,19 @@
 /**
  * Features section — per-user opt-ins for Desktop Mode behaviors.
  *
- * Visible to every user (no admin gate at the tab level), unlike the
- * Extended Options tab which is admin-only. Toggles here mutate
- * `OsSettingsState` via `ctx.save()` — no dedicated REST endpoint;
- * the existing OS-settings sync debounces the write to user meta.
+ * Visible to every user (no admin gate at the tab level). Toggles here
+ * mutate `OsSettingsState` via `ctx.save()` — no dedicated REST
+ * endpoint; the existing OS-settings sync debounces the write to user
+ * meta.
  *
  * The tab renders two sections: the general "Features" group first,
  * then a "Beta features" group below it holding the opt-in
  * native-window toggles (Posts, Pages, Users, Plugins, Comments — all
  * off by default as of 0.9.1). As more per-user feature flags land they
  * slot into the matching section so the tab grows by one row at a
- * time, not one tab at a time.
+ * time, not one tab at a time. For admins the panel appends a third,
+ * admin-only "Extended options" section (site-wide toggles — see
+ * `./extended`) below these two.
  *
  * The save indicator (`<wpd-save-status auto>`) hooks the same
  * `desktop-mode-os-settings-save-lifecycle` CustomEvent the panel
@@ -126,6 +128,30 @@ export function buildFeaturesSection( ctx: SettingsCtx ): HTMLElement {
 		const checked = ( e as CustomEvent ).detail?.checked === true;
 		ctx.state.showDesktopOnWallpaperClick = checked;
 		ctx.save();
+		paint();
+	};
+
+	const onWindowLinksToggle = ( e: Event ): void => {
+		const checked = ( e as CustomEvent ).detail?.checked === true;
+		ctx.state.windowLinksEnabled = checked;
+		ctx.save();
+		ctx.apply();
+		paint();
+	};
+
+	const onWindowLinkRaiseToggle = ( e: Event ): void => {
+		const checked = ( e as CustomEvent ).detail?.checked === true;
+		ctx.state.windowLinkRaiseOnFocus = checked;
+		ctx.save();
+		ctx.apply();
+		paint();
+	};
+
+	const onWindowLinkHighlightToggle = ( e: Event ): void => {
+		const checked = ( e as CustomEvent ).detail?.checked === true;
+		ctx.state.windowLinkHighlight = checked;
+		ctx.save();
+		ctx.apply();
 		paint();
 	};
 
@@ -461,7 +487,7 @@ export function buildFeaturesSection( ctx: SettingsCtx ): HTMLElement {
 									></wpd-checkbox-label>
 									<p class="desktop-mode-features__hint">
 										${ __(
-											'Adds an assistant powered by AI that finds your content and navigates wp-admin with plain-language questions. Off by default.',
+											'Adds an assistant powered by AI that finds your content, gets around wp-admin, and answers questions about your site — all in plain language. Off by default.',
 										) }
 									</p>
 									${ ! shellCfg.aiAssistant.assistantProviderConfigured
@@ -520,6 +546,44 @@ export function buildFeaturesSection( ctx: SettingsCtx ): HTMLElement {
 							</div>
 						`
 						: '' }
+					<div class="desktop-mode-features__item">
+						<wpd-checkbox-label
+							label=${ __( 'Window links' ) }
+							?checked=${ ctx.state.windowLinksEnabled }
+							@wpd-checkbox-change=${ onWindowLinksToggle }
+						></wpd-checkbox-label>
+						<p class="desktop-mode-features__hint">
+							${ __(
+								'Draws arrowed connector lines between windows showing related content — a post and its comments or media, or two posts that link to each other. The line style and when the lines show live in Effects → Window links. On by default.',
+							) }
+						</p>
+						<div class="desktop-mode-features__item">
+							<wpd-checkbox-label
+								label=${ __( 'Bring related windows to front' ) }
+								?checked=${ ctx.state.windowLinkRaiseOnFocus }
+								?disabled=${ ! ctx.state.windowLinksEnabled }
+								@wpd-checkbox-change=${ onWindowLinkRaiseToggle }
+							></wpd-checkbox-label>
+							<p class="desktop-mode-features__hint">
+								${ __(
+									'Clicking a window surfaces the windows directly tied to it — a parent brings up all of its children, a child brings up its parent — rising to just below the one you clicked, without stealing focus.',
+								) }
+							</p>
+						</div>
+						<div class="desktop-mode-features__item">
+							<wpd-checkbox-label
+								label=${ __( 'Highlight related windows' ) }
+								?checked=${ ctx.state.windowLinkHighlight }
+								?disabled=${ ! ctx.state.windowLinksEnabled }
+								@wpd-checkbox-change=${ onWindowLinkHighlightToggle }
+							></wpd-checkbox-label>
+							<p class="desktop-mode-features__hint">
+								${ __(
+									'While a group member is focused, its related windows get an accent outline and a soft glow so the family is recognizable at a glance.',
+								) }
+							</p>
+						</div>
+					</div>
 					<div class="desktop-mode-features__item">
 						<wpd-checkbox-label
 							label=${ __(

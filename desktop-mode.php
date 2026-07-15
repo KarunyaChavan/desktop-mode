@@ -68,6 +68,7 @@ require_once DESKTOP_MODE_DIR . 'includes/settings-tabs.php';
 require_once DESKTOP_MODE_DIR . 'includes/dock-rail-renderer.php';
 require_once DESKTOP_MODE_DIR . 'includes/title-bar-buttons.php';
 require_once DESKTOP_MODE_DIR . 'includes/unfocus-effects.php';
+require_once DESKTOP_MODE_DIR . 'includes/window-links.php';
 require_once DESKTOP_MODE_DIR . 'includes/window-chrome.php';
 require_once DESKTOP_MODE_DIR . 'includes/window-notices.php';
 require_once DESKTOP_MODE_DIR . 'includes/wallpapers.php';
@@ -92,6 +93,7 @@ require_once DESKTOP_MODE_DIR . 'includes/plugins-window/bootstrap.php';
 require_once DESKTOP_MODE_DIR . 'includes/comments-window/bootstrap.php';
 require_once DESKTOP_MODE_DIR . 'includes/my-wordpress/bootstrap.php';
 require_once DESKTOP_MODE_DIR . 'includes/content-graph/bootstrap.php';
+require_once DESKTOP_MODE_DIR . 'includes/living-tree/bootstrap.php';
 require_once DESKTOP_MODE_DIR . 'includes/pwa.php';
 require_once DESKTOP_MODE_DIR . 'includes/compat/divi.php';
 

@@ -106,8 +106,60 @@ export interface OsSettingsState {
 	 * @since 0.9.1
 	 */
 	unfocusEffect: string;
+	/**
+	 * Active window-link renderer id. Resolves through the window-link
+	 * renderer registry; `'none'` disables the visuals, an unknown id
+	 * falls back to the built-in `'svg-splines'`.
+	 *
+	 * @since 0.9.4
+	 */
+	windowLinkRenderer: string;
+	/**
+	 * When window-link ties are visible: `'always'` (the default),
+	 * `'focus'` (only while a relation-group member is focused), or
+	 * `'off'`.
+	 *
+	 * @since 0.9.4
+	 */
+	windowLinkVisibility: 'focus' | 'always' | 'off';
+	/**
+	 * Master switch for the window-links feature (OS Settings →
+	 * Features). Off unmounts the visuals and disables the group
+	 * behaviors; the style knobs keep their values. Default on.
+	 *
+	 * @since 0.9.4
+	 */
+	windowLinksEnabled: boolean;
+	/**
+	 * Focusing a relation-group member raises its related windows to
+	 * just below it. Default on.
+	 *
+	 * @since 0.9.4
+	 */
+	windowLinkRaiseOnFocus: boolean;
+	/**
+	 * Related windows of the focused member get a subtle outline.
+	 * Default on.
+	 *
+	 * @since 0.9.4
+	 */
+	windowLinkHighlight: boolean;
 	customGradient: CustomGradient;
 	customImage: CustomImage | null;
+	/**
+	 * Per-wallpaper settings bags, keyed by wallpaper id — the values a
+	 * wallpaper's `renderConfig` dialog writes (e.g. the Snow
+	 * wallpaper's wind / particle count / flake size / background).
+	 * Scalar values only; the wallpaper owns the keys' meaning. Missing
+	 * ids mean "never configured" — the wallpaper uses its defaults.
+	 * Capped at 64 wallpapers × 32 keys.
+	 *
+	 * @since 0.9.5
+	 */
+	wallpaperSettings: Record<
+		string,
+		Record< string, string | number | boolean >
+	>;
 	/**
 	 * Whether the Media Library picker filters out small images. Default
 	 * on — smaller images are icons/avatars that look terrible stretched

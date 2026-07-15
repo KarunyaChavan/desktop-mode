@@ -62,6 +62,14 @@ Both sides validate `event.origin` against `window.location.origin` (or the ifra
 
 Native (non-iframe) windows skip postMessage entirely — `Window.send` and the render's `windowApi.send` reach the parent / native channel-bus registries directly. Plugin authors don't need to know the window's render strategy; the framework picks the right delivery path.
 
+### Content-identity announcement — `desktop-mode-content-identity` *(since 0.9.4)*
+
+| Type | Direction | Carries | Purpose |
+|---|---|---|---|
+| `desktop-mode-content-identity` | iframe → parent | `{ identity: WindowContentRef \| null }` | Which object this admin page shows — `{ type, id, label?, root?, links? }`, resolved server-side in real admin context (post/page/CPT editors are roots and carry their content's internal hyperlinks as `links`; comment-edit and attached-media screens arrive pre-rooted at their parent post; the `desktop_mode_window_content_identity` PHP filter extends detection). Feeds `wp.desktop.relations` and the window-link visuals. |
+
+Emitted on **every** chromeless page load, **including `identity: null`** — a full-page navigation away from an identified screen must clear the stale identity, and since every iframe navigation re-runs `admin_footer`, that same emission doubles as the re-announce-on-navigate path. It fires at the very TOP of the bridge script (right after the top-frame escape hatch, before any feature block) so a page-specific runtime failure elsewhere in the bridge can never cost the shell its window relations — unlike `desktop-mode-ready`, which intentionally posts last. See [`docs/examples/window-links.md`](./examples/window-links.md).
+
 ### Connection bridge — `desktop-mode-bridge-*`
 
 | Type | Direction | Carries | Purpose |
@@ -89,6 +97,14 @@ The forwarder listens in **bubble phase** at the iframe's `document`, so any in-
 2. **`event.defaultPrevented === true`** — any inner handler that called `preventDefault()` on `dragover` or `drop` is signalling ownership per the HTML5 drag-and-drop contract. The forwarder yields. Third-party plugin drop zones (e.g. "Administrador de archivos WP") that already work in classic admin keep working untouched inside desktop-mode iframes — no opt-in required.
 
 Only drops where neither bail fires (the empty page background, or an inner handler that never called `preventDefault()`) escalate to the shell.
+
+### Drag-hover heartbeat — `desktop-mode-drag-hover`
+
+*(since 0.9.4)* Native drag events don't cross iframe boundaries, so when the user holds any drag (an OS file, an image lifted off another admin page, a text selection) over an iframe window, the parent shell can't see the hover. Both bridges (inline chromeless + standalone) forward a throttled heartbeat while `dragover` fires inside the iframe, so the shell's focus-on-drag-hover module can raise the hovered window after its ~250 ms dwell (see the `desktop-mode.window.focus-on-drag-hover` filter in `javascript-reference.md`).
+
+| Type | Direction | Carries | Purpose |
+|---|---|---|---|
+| `desktop-mode-drag-hover` | iframe → parent | `{ payloadType: 'os-file' \| 'external' }` | "A drag is currently hovering me." Throttled to one message per 150 ms. Purely observational — the forwarder never calls `preventDefault()` and carries no coordinates or payload data; the parent resolves the hovered window from `MessageEvent.source` (the sender iframe **is** the hovered window). The parent resets its hover state when heartbeats stop (~1 s watchdog), so no end message exists or is needed. |
 
 ### Pre-close unsaved-changes query — `desktop-mode-bridge-beforeunload-*`
 

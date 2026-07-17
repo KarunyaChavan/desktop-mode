@@ -2923,6 +2923,38 @@ Return `false` to turn off the desktop core-update notification (defaults to `tr
 add_filter( 'desktop_mode_show_core_update_notice', '__return_false' );
 ```
 
+### Core notices — `desktop_mode_core_notices` — Experimental (filter) *(since 0.9.6)*
+
+The other global WordPress Core admin notices (maintenance / failed update,
+recovery mode, default-password, force-deactivated plugins, paused
+plugins/themes) are detached inside desktop windows and re-derived from server
+state so the shell surfaces each **once** as a toast. This filter receives the
+array of descriptors (`{ id, title, message, actionLabel, actionUrl }`) —
+return an empty array to suppress them all, or unset entries by `id`.
+
+```php
+// Drop the "you're using an auto-generated password" notice only.
+add_filter( 'desktop_mode_core_notices', static function ( array $notices ) {
+    return array_values( array_filter(
+        $notices,
+        static fn ( $n ) => 'default-password' !== $n['id']
+    ) );
+} );
+```
+
+### Plugin/library notices — `desktop_mode_plugin_notices` — Experimental (filter) *(since 0.9.6)*
+
+A small opt-in allowlist of shared **library** notices that also render globally
+(e.g. Action Scheduler's "past-due actions" warning, bundled by WooCommerce and
+others) gets the same treatment: detached in-window, re-derived from state,
+surfaced once. Arbitrary plugin `admin_notices` are *not* touched — only the
+allowlisted libraries. Same descriptor shape as `desktop_mode_core_notices`;
+return an empty array to suppress them all.
+
+```php
+add_filter( 'desktop_mode_plugin_notices', '__return_empty_array' );
+```
+
 ---
 
 ## Progressive Web App (since 0.8.0)

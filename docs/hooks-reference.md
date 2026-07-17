@@ -1780,12 +1780,16 @@ The Recycle Bin stamps who-deleted-what-when metadata on posts, pages, attachmen
 
 ### `desktop_mode_recycle_bin_capture_post_types` — Experimental (filter)
 
-Post types whose deletions the bin tracks. Defaults to `[ 'post', 'page', 'attachment' ]`. Returning a list excluding `attachment` stops the bin from stamping and listing trashed attachments; it does not change how WordPress deletes media (that is governed by `MEDIA_TRASH`).
+Post types whose deletions the bin tracks. Defaults to `[ 'post', 'page', 'attachment' ]` **plus every non-builtin post type registered with `show_ui => true`** (since 0.9.6) — so custom post types with an admin UI surface in the bin out of the box, with their own singular label and menu Dashicon on the row. Per-item visibility still gates on `edit_post`, so the list never shows a user rows they couldn't manage.
+
+Remove a type here to keep its trash out of the bin, or add a headless (`show_ui => false`) type to opt it in — the pinned-notes feature opts its `wpd_note` CPT in exactly this way (with owner-only gates layered via `desktop_mode_recycle_bin_user_can_view` / `_restore` / `_purge`; see `includes/notes/recycle-bin.php` for the reference wiring).
+
+Returning a list excluding `attachment` stops the bin from stamping and listing trashed attachments; it does not change how WordPress deletes media (that is governed by `MEDIA_TRASH`).
 
 ```php
+// Keep a state-machine CPT's trash out of the bin.
 add_filter( 'desktop_mode_recycle_bin_capture_post_types', function ( $types ) {
-    $types[] = 'product';
-    return $types;
+    return array_diff( $types, array( 'shop_order' ) );
 } );
 ```
 
@@ -3052,6 +3056,73 @@ add_filter( 'desktop_mode_sticky_notes_available', '__return_false' );
 
 - **Param** `bool $available` — whether the guideline CPT + taxonomy are registered.
 - **Return** `bool` — coerced with `(bool)`.
+
+---
+
+## Pinned notes (since 0.9.6)
+
+Pinned notes are the plugin-owned paper notes composed in the **Note
+Pad** widget and pinned to the wallpaper with a pushpin. They are
+backed by the `wpd_note` CPT (non-public, custom REST controller at
+`/desktop-mode/v1/notes`) — a separate feature from the
+Guidelines-backed sticky notes above. Visibility maps to post status:
+`private` (default, owner-only) or `publish` ("public" — read-only on
+every other desktop-mode user's wallpaper). Only the owner can edit,
+move, recolor, or delete a note; administrators do not bypass
+ownership through this controller.
+
+### `desktop_mode_notes_user_can_create` — Experimental *(filter, since 0.9.6)*
+
+Filters whether the current user may create a note. Defaults to
+`true` for every logged-in desktop-mode user, which includes
+publishing PUBLIC notes onto every other user's wallpaper. Sites
+that want to restrict that gate here — by role, capability, or the
+request itself (e.g. only restrict `public: true` creates).
+
+```php
+apply_filters( 'desktop_mode_notes_user_can_create', bool $can_create, int $user_id, WP_REST_Request $request );
+```
+
+**Example — only editors may share public notes:**
+
+```php
+add_filter( 'desktop_mode_notes_user_can_create', static function ( $can, $user_id, $request ) {
+	if ( $request['public'] && ! user_can( $user_id, 'edit_others_posts' ) ) {
+		return false;
+	}
+	return $can;
+}, 10, 3 );
+```
+
+- **Param** `bool $can_create` — whether creation is allowed. Default `true`.
+- **Param** `int $user_id` — current user id.
+- **Param** `WP_REST_Request $request` — the create request (`text`, `color`, `x`, `y`, `public`, `seed`).
+- **Return** `bool` — `false` makes the route return 403 `desktop_mode_notes_forbidden`.
+
+### `desktop_mode_notes_colors` — Experimental *(filter, since 0.9.6)*
+
+Filters the pastel paper color slugs a note may use. Slugs added here
+must also ship CSS custom properties (`--dm-note-paper`,
+`--dm-note-paper-deep`, `--dm-note-ink`) for a
+`[data-note-color="<slug>"]` selector — otherwise notes using them
+fall back to the default paper (`butter`). The whitelist is enforced
+on every REST write and on meta sanitization.
+
+```php
+apply_filters( 'desktop_mode_notes_colors', string[] $colors );
+```
+
+**Example — add a paper color:**
+
+```php
+add_filter( 'desktop_mode_notes_colors', static function ( $colors ) {
+	$colors[] = 'seafoam';
+	return $colors;
+} );
+```
+
+- **Param** `string[] $colors` — allowed slugs. Default `butter`, `blush`, `sky`, `mint`, `lilac`, `peach`.
+- **Return** `string[]` — each entry passes through `sanitize_key()`; empties are dropped.
 
 ---
 

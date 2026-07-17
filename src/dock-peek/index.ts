@@ -253,6 +253,20 @@ function buildPopover( deps: DockPeekDeps, dismiss: () => void ): HTMLElement {
 }
 
 /**
+ * Restores `win` if it's minimized, clearing the peek card's collapsed
+ * `data-state` along with it so the CSS stops hiding the card's body.
+ */
+function restoreIfMinimized( win: WPWindow, card?: HTMLElement ): void {
+	if ( win.state !== 'minimized' ) {
+		return;
+	}
+	win.restore();
+	if ( card ) {
+		delete card.dataset.state;
+	}
+}
+
+/**
  * A card representing one open window of this dock item — styled
  * like a miniature window: faux titlebar with traffic-light dots +
  * the page icon + the window's live title, and a body tinted by the
@@ -363,7 +377,7 @@ function buildInstanceCard(
 	// the window. Non-minimized windows use the existing scrub-to-focus.
 	card.addEventListener( 'pointerenter', () => {
 		if ( win.state === 'minimized' ) {
-			win.restore();
+			restoreIfMinimized( win, card );
 		} else if ( deps.windowManager.getFocused() !== win ) {
 			deps.windowManager.focus( win );
 		}
@@ -403,9 +417,7 @@ function spawnFocusViewTransition(
 	const vtName = `desktop-mode-peek-card-${ win.id }`;
 	const focus = (): void => {
 		dismiss();
-		if ( win.state === 'minimized' ) {
-			win.restore();
-		}
+		restoreIfMinimized( win, card );
 		deps.windowManager.focus( win );
 	};
 	if ( typeof doc.startViewTransition !== 'function' ) {

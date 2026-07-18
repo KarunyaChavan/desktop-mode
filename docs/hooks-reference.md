@@ -134,6 +134,76 @@ do_action( 'desktop_mode_icon_registered', string $id, array $entry );
 
 ---
 
+### `desktop_mode_register_game( $id, $args )` — Experimental (PHP function, since 0.9.6)
+
+Register a desktop game with the games framework. The game appears as a launcher tile in the **Games** window and gets a tab in the unified scoreboard; its JS bundle (declared via `script`) is loaded **lazily on first launch** — unlike wallpapers, game scripts are never fetched at boot. The loaded script publishes the full game def (with its `render` callback) on `window.desktopModeGames[ $id ]` — see `docs/examples/register-game.md`.
+
+```php
+desktop_mode_register_game( 'my-plugin-puzzle', array(
+    'title'         => __( 'Puzzle', 'my-plugin' ),        // required
+    'description'   => __( 'Slide the tiles.', 'my-plugin' ),
+    'icon'          => 'dashicons-screenoptions',           // or `icon_svg` (raw <svg>, wins over icon)
+    'script'        => 'my-plugin-puzzle-game',             // required — registered handle
+    'score_columns' => array(                               // scoreboard columns, in order
+        array( 'key' => 'score', 'label' => __( 'Score', 'my-plugin' ), 'type' => 'number' ),
+        array( 'key' => 'time',  'label' => __( 'Time', 'my-plugin' ),  'type' => 'time' ),
+    ),
+    'config'        => array( 'assetUrl' => '…' ),          // arbitrary blob → the game's launch context
+    'capabilities'  => array(),                             // ALL must pass for the registering user
+) );
+```
+
+Returns `true` or `WP_Error` (`desktop_mode_missing_id` / `desktop_mode_missing_title` / `desktop_mode_missing_script` / `desktop_mode_invalid_icon_svg` / `desktop_mode_capability_denied`). Only server-registered games can persist scores and challenges — the REST routes 404 unknown ids. `desktop_mode_unregister_game( $id )` removes an entry.
+
+---
+
+### `desktop_mode_game_registered` — Experimental (since 0.9.6)
+
+Fires after `desktop_mode_register_game()` successfully stores a game. Same contract as the other registration actions — no fire on `WP_Error` return.
+
+```php
+do_action( 'desktop_mode_game_registered', string $id, array $entry );
+```
+
+---
+
+### `desktop_mode_game_score_saved` — Experimental (since 0.9.6)
+
+Fires after a leaderboard score row is written (both free play and challenge completions).
+
+```php
+do_action( 'desktop_mode_game_score_saved', int $score_id, string $game, int $user_id, int $score, array $meta );
+```
+
+---
+
+### `desktop_mode_game_playtime_recorded` — Experimental (since 0.9.7)
+
+Fires after a play-time increment lands. The framework's launcher measures active window time (the clock pauses while the game window is minimized) and flushes increments roughly once a minute plus once on close; lifetime totals accumulate in the `desktop_mode_game_playtime` user-meta map (`game id => whole seconds`), readable via `desktop_mode_games_get_playtime( $user_id, $game = '' )`. Each increment is also bucketed by site-timezone day into `desktop_mode_game_playtime_days` (`game id => array( 'YYYY-MM-DD' => seconds )`, readable via `desktop_mode_games_get_playtime_daily()`), pruned past a rolling window (`desktop_mode_games_playtime_history_days`, default 30) — this backs the hub's Steam-style "last two weeks" figure; the lifetime totals are never pruned.
+
+```php
+do_action( 'desktop_mode_game_playtime_recorded', string $game, int $user_id, int $seconds, int $total );
+```
+
+`$seconds` is the recorded increment (post-clamp), `$total` the user's new total for the game.
+
+---
+
+### Game challenge lifecycle actions — Experimental (since 0.9.6)
+
+One action per state transition of a score-to-beat challenge:
+
+```php
+do_action( 'desktop_mode_game_challenge_created', int $id, array $row );
+do_action( 'desktop_mode_game_challenge_accepted', int $id, array $row );   // $row is pre-transition
+do_action( 'desktop_mode_game_challenge_declined', int $id, array $row );   // $row is pre-transition
+do_action( 'desktop_mode_game_challenge_completed', int $id, string $result, array $row );
+```
+
+`$result` is `'beaten'` or `'not_beaten'`. `desktop_mode_games_schema_installed` also fires after the two games tables (`{$prefix}desktop_mode_game_scores`, `{$prefix}desktop_mode_game_challenges`) install or migrate.
+
+---
+
 ### `desktop_mode_file_type_registered` — Experimental (since 0.9.0)
 
 Fires after `desktop_mode_register_file_type()` successfully stores a desktop file type (used by the Files-on-the-Desktop system — see [files-on-desktop.md](./files-on-desktop.md)). Does NOT fire on `WP_Error`.
@@ -1178,6 +1248,68 @@ Mirrors the client-side `desktop-mode.wallpapers` JS filter but runs earlier, be
 
 ```php
 apply_filters( 'desktop_mode_wallpapers', array $registry );
+```
+
+---
+
+### `desktop_mode_games` — Experimental (since 0.9.6)
+
+Last-chance filter over the full games registry before it ships to the shell as `config.serverGames` — and the same filtered view backs REST validation, so filter-added game ids can persist scores. Each entry is the shape stored by `desktop_mode_register_game()` (`id`, `title`, `description`, `icon`, `script`, `score_columns`, `config`). Mirrors the client-side `desktop-mode.games` JS filter.
+
+```php
+apply_filters( 'desktop_mode_games', array $registry );
+```
+
+---
+
+### Games permission + tuning filters — Experimental (since 0.9.6)
+
+```php
+// Who sees the Games window / icon and may use the games REST surface.
+// Default: logged-in + `read`.
+apply_filters( 'desktop_mode_games_user_can_use', bool $can );
+
+// Base REST verdict on top of the capability gate. Return `false` or a
+// `WP_Error` to lock the whole surface down.
+apply_filters( 'desktop_mode_games_rest_permission', true, int $user_id );
+
+// Veto / short-circuit for score saves — THE anti-cheat extension
+// point (rate limits, plausibility checks). Return a `WP_Error` to
+// reject; `null` proceeds.
+apply_filters( 'desktop_mode_game_score_pre_save', null, string $game, int $user_id, int $score, array $meta );
+
+// Whether $challenger may challenge $recipient at $game. Return
+// `false` or a `WP_Error` to block (do-not-disturb, role policy).
+apply_filters( 'desktop_mode_games_can_challenge', true, int $challenger_id, int $recipient_id, string $game );
+
+// Veto / short-circuit for play-time increments — same contract as
+// the score pre-save filter. Return a `WP_Error` to reject; `null`
+// proceeds.
+apply_filters( 'desktop_mode_game_playtime_pre_record', null, string $game, int $user_id, int $seconds );
+
+// Largest play-time increment (seconds) accepted in one request. The
+// framework flushes roughly once a minute; the clamp bounds what a
+// hostile client can mint per request. Default 900 (15 minutes).
+apply_filters( 'desktop_mode_games_playtime_max_increment', 900, string $game, int $user_id );
+
+// How many days of daily play-time buckets to retain (the hub needs
+// 14 for its "last two weeks" figure). Default 30.
+apply_filters( 'desktop_mode_games_playtime_history_days', 30 );
+
+// WP_User_Query args for the opponent-picker autocomplete.
+apply_filters( 'desktop_mode_games_user_query_args', array $args, array $request_params );
+
+// Per-tick row cap for the challenges Heartbeat channel. Default 50;
+// past it the payload flags `truncated` and clients resync over REST.
+apply_filters( 'desktop_mode_games_heartbeat_max_rows', 50 );
+
+// Registration args for the Games hub window / desktop icon.
+apply_filters( 'desktop_mode_games_window_args', array $window_args );
+apply_filters( 'desktop_mode_games_icon_args', array $icon_args );
+
+// The Games window's template HTML. Keep the
+// `data-desktop-mode-games-*` hooks intact.
+apply_filters( 'desktop_mode_games_template_html', string $html );
 ```
 
 **Example — hide the `sunset` preset from this site:**

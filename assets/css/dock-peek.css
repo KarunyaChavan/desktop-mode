@@ -236,6 +236,15 @@
 	box-shadow: 0 4px 14px -4px rgba( 0, 0, 0, 0.4 );
 }
 
+/* Preview (Aero Peek): accent border + glow signals temporary "borrowed" window. */
+.desktop-mode-dock-peek__card[data-preview],
+.desktop-mode-dock-peek__card[data-preview]:hover {
+	border-color: var( --desktop-mode-accent, #2271b1 );
+	box-shadow:
+		0 0 14px -2px var( --desktop-mode-accent, #2271b1 ),
+		0 4px 14px -4px rgba( 0, 0, 0, 0.4 );
+}
+
 .desktop-mode-dock-peek__card:focus-visible {
 	outline: 2px solid var( --desktop-mode-accent, #2271b1 );
 	outline-offset: 2px;
@@ -603,6 +612,10 @@
 	}
 	.desktop-mode-dock-peek--open .desktop-mode-dock-peek__card {
 		transform: none;
+	}
+	.desktop-mode-dock-peek__card[data-preview],
+	.desktop-mode-dock-peek__card[data-preview]:hover {
+		box-shadow: 0 0 0 2px var( --desktop-mode-accent, #2271b1 );
 	}
 }
 

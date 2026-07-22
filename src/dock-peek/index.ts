@@ -661,11 +661,11 @@ function positionPopover(
 		popover.style.left = `${ rect.left + rect.width / 2 }px`;
 		popover.style.top = `${ rect.top - 12 }px`;
 	} else if ( orientation === 'right' ) {
-		popover.style.top = `${ rect.top + rect.height / 2 }px`;
+		popover.style.top = `${ rect.top }px`;
 		popover.style.left = `${ rect.left - 12 }px`;
 	} else {
 		// Left dock (default).
-		popover.style.top = `${ rect.top + rect.height / 2 }px`;
+		popover.style.top = `${ rect.top }px`;
 		popover.style.left = `${ rect.right + 12 }px`;
 	}
 

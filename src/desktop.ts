@@ -4084,6 +4084,8 @@ function init(): void {
 			config: config.dropConfig,
 			mediaUrl: config.mediaUrl,
 			restNonce: config.restNonce,
+			filesUrl: config.filesUrl,
+			storage: config.desktopStorage,
 		} );
 	} );
 

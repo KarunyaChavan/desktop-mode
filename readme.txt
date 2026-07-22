@@ -122,6 +122,9 @@ The **Inkfall** game's word list (`assets/games/inkfall/words.txt`) is generated
 
 == Changelog ==
 
+= 0.9.6 =
+* Improved button accessibility and visual feedback by implementing the missing busy spinner and aria-busy attributes on the Button component
+
 = 0.9.5 =
 * AI Copilot now uses WordPress 7.0 providers: configure a provider once in Settings → Connectors and the assistant uses it — no more per-plugin keys
 * AI Copilot tools are now WordPress Abilities, so the assistant works across any configured provider; plugin authors add their own tools with the Abilities API (`desktop_mode_register_ai_tool()` was removed)

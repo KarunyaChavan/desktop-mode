@@ -832,6 +832,15 @@ body.desktop-mode-active .desktop-mode-ai__settings-link {
 	letter-spacing: 0;
 }
 
+/* Entity search results (posts, pages) — rendered in the same list as
+   commands but are navigable destinations, not actions. Use regular font
+   (not the monospace used for slash-commands) so they read as content
+   search results, matching the classic command palette UX. */
+.desktop-mode-ai__cmd-item.is-entity-result .desktop-mode-ai__cmd-title {
+	font-family: inherit;
+	letter-spacing: 0;
+}
+
 /* Args mode — a single row showing the locked-in command. Same
    visual language as the list item but with an "Enter to run" hint. */
 .desktop-mode-ai__cmd-active {

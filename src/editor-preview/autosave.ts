@@ -12,8 +12,6 @@
  * Uses its own scoped `message` listener per request (the pattern the
  * relations engine uses) so the editor-preview module stays out of
  * the lazy window-system bundle's bridge dispatcher.
- *
- * @since 0.9.8
  */
 
 /** Statuses the iframe can answer with, plus the parent-side timeout. */

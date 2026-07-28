@@ -31,8 +31,6 @@
  * filters the companion's `WindowConfig`;
  * `HOOKS.EDITOR_PREVIEW_OPENED` / `EDITOR_PREVIEW_CLOSED` (and the
  * matching document CustomEvents) report pairing lifecycle.
- *
- * @since 0.9.8
  */
 
 import { subscribe } from '../broadcast';

@@ -11,8 +11,6 @@
  * folder may touch them, but nothing outside `src/window/` should.
  * Kept `public` at the TypeScript level only because `private`
  * prevents the sibling modules from seeing them.
- *
- * @since 0.5.0
  */
 
 import type { WindowConfig, WindowState } from './../types';
@@ -31,8 +29,8 @@ import {
 	type WindowChannelCb,
 } from './../window-channels';
 // Window-chrome component classes (`<wpd-window-button>`,
-// `<wpd-menu>` + `<wpd-menu-item>`, `<wpd-tab-chip>`) are no
-// longer leaf-imported here as of 0.8.4: the shell pre-loads them
+// `<wpd-menu>` + `<wpd-menu-item>`, `<wpd-tab-chip>`) are not
+// leaf-imported here: the shell pre-loads them
 // via the `shell-overlays[.min].js` bundle right after first paint
 // (see `src/shell-overlays/loader.ts`). By the time the user opens
 // any window and the constructor runs, the custom-element classes
@@ -80,8 +78,6 @@ import {
  * Origin snapshot taken at module load. Same-origin guards in this
  * module compare against this value so a plugin script that mutates
  * `window.location` after boot can't relax the check.
- *
- * @since 0.5.0
  */
 const INITIAL_ORIGIN = window.location.origin;
 import {
@@ -284,7 +280,6 @@ export class Window {
 	 * close so the closed window stops re-applying theme tokens
 	 * when other plugins register / unregister themes.
 	 * @internal
-	 * @since 0.6.0
 	 */
 	public _windowThemesUnsubscribe: ( () => void ) | null = null;
 
@@ -292,7 +287,6 @@ export class Window {
 	 * Unsubscribe handle for the window-control registry. Cleared on
 	 * close.
 	 * @internal
-	 * @since 0.6.0
 	 */
 	public _windowControlsUnsubscribe: ( () => void ) | null = null;
 
@@ -302,7 +296,6 @@ export class Window {
 	 * invokes the last one to drop event listeners on plugin-supplied
 	 * `render` callbacks.
 	 * @internal
-	 * @since 0.6.0
 	 */
 	public _windowControlsTeardown: ( () => void ) | null = null;
 
@@ -310,7 +303,6 @@ export class Window {
 	 * Unsubscribe handle for the window-slot registry. Cleared on
 	 * close.
 	 * @internal
-	 * @since 0.6.0
 	 */
 	public _windowSlotsUnsubscribe: ( () => void ) | null = null;
 
@@ -318,7 +310,6 @@ export class Window {
 	 * Teardown handle returned by the most recent
 	 * {@link paintWindowSlots} call.
 	 * @internal
-	 * @since 0.6.0
 	 */
 	public _windowSlotsTeardown: ( () => void ) | null = null;
 
@@ -329,7 +320,7 @@ export class Window {
 	 * state updates can flow into `handle.update()` and `close()`
 	 * can call `handle.destroy()`.
 	 *
-	 * **Experimental** since 0.6.0.
+	 * **Experimental**.
 	 *
 	 * @internal
 	 */
@@ -339,7 +330,6 @@ export class Window {
 	 * Id of the chrome currently mounted (or `'core/standard'`).
 	 *
 	 * @internal
-	 * @since 0.6.0
 	 */
 	public _chromeId: string = STANDARD_CHROME_ID;
 
@@ -347,7 +337,6 @@ export class Window {
 	 * Unsubscribe handle for the chrome registry. Cleared on close.
 	 *
 	 * @internal
-	 * @since 0.6.0
 	 */
 	public _windowChromesUnsubscribe: ( () => void ) | null = null;
 
@@ -368,7 +357,6 @@ export class Window {
 	 * close BEFORE the user-returned teardown, so async paths see
 	 * the abort first. Set in `hydrateNative()` for native windows.
 	 *
-	 * @since 0.8.2
 	 * @internal
 	 */
 	public _nativeRenderCtxDispose: ( () => void ) | null = null;
@@ -380,7 +368,6 @@ export class Window {
 	 * `_finalizeClose()` can cancel it on the normal path AND so
 	 * `destroy()` can cancel + run finalize synchronously.
 	 *
-	 * @since 0.8.2
 	 * @internal
 	 */
 	public _closeSafetyNetTimer: ReturnType< typeof setTimeout > | null = null;
@@ -391,7 +378,6 @@ export class Window {
 	 * `_finalizeClose()` can detach it (the previous closure-only
 	 * shape couldn't be removed if `destroy()` short-circuited).
 	 *
-	 * @since 0.8.2
 	 * @internal
 	 */
 	public _onCloseTransitionEnd: ( ( e: TransitionEvent ) => void ) | null = null;
@@ -401,7 +387,6 @@ export class Window {
 	 * the safety-net timer + the `transitionend` listener + an
 	 * explicit `destroy()` call all converge to a single finalise.
 	 *
-	 * @since 0.8.2
 	 * @internal
 	 */
 	public _isFinalized: boolean = false;
@@ -670,14 +655,13 @@ export class Window {
 	 *
 	 * No-op for iframe windows.
 	 *
-	 * Per-event contract preserved from 0.5.0:
+	 * Per-event contract:
 	 *   - `NATIVE_WINDOW_BEFORE_RENDER` filter fires, same args.
 	 *   - `NATIVE_WINDOW_AFTER_RENDER` action fires, same args.
 	 *   - `config.autofocus` is honoured with a `requestAnimationFrame`
 	 *     defer so layout side-effects of `render()` settle before
 	 *     `.focus()` resolves.
 	 *
-	 * @since 0.5.0
 	 * @internal
 	 */
 	public hydrateNative(): void {
@@ -704,7 +688,7 @@ export class Window {
 
 		// Build the per-render `NativeRenderContext` — channel API
 		// (`window.send/on`), `markLoading`/`markReady` (also at the
-		// top level since 0.8.2), `signal` that aborts on close, and
+		// top level), `signal` that aborts on close, and
 		// `onResize`/`onHide`/`onShow` subscribers wired to the
 		// per-window hooks. The disposer tears every subscription
 		// down + aborts the controller; we capture it on the
@@ -1007,7 +991,7 @@ export class Window {
 				} );
 			}
 			// "Reload" + "Open in browser tab" moved here from the
-			// title-bar controls cluster in 0.6.2. Both call straight
+			// title-bar controls cluster. Both call straight
 			// into the existing `Window` API — no new manager wiring
 			// needed. Click closes the menu first so the iframe
 			// reload doesn't compete with a still-painted popover.
@@ -1153,7 +1137,6 @@ export class Window {
 	 * cleaned up before the new ones mount.
 	 *
 	 * @internal
-	 * @since 0.6.0
 	 */
 	public repaintWindowControls(): void {
 		const controlsHost = this.element.querySelector< HTMLElement >(
@@ -1186,7 +1169,6 @@ export class Window {
 	 * `desktop-mode-desktop-theme-changed` listener.
 	 *
 	 * @internal
-	 * @since 0.9.7
 	 */
 	public repaintThemedChrome(): void {
 		const iconHost = this.element.querySelector< HTMLElement >(
@@ -1228,8 +1210,6 @@ export class Window {
 	 * Mutates `this.config.appearance.controls` and re-paints. Pass
 	 * `null` or `undefined` to clear the override and fall back to
 	 * the registry-only resolution.
-	 *
-	 * @since 0.6.0
 	 */
 	public setAppearanceControls(
 		override: import( '../types' ).WindowControlsConfig | null | undefined,
@@ -1248,7 +1228,6 @@ export class Window {
 	 * paint.
 	 *
 	 * @internal
-	 * @since 0.6.0
 	 */
 	public repaintWindowSlots(): void {
 		if ( this._windowSlotsTeardown ) {
@@ -1268,7 +1247,6 @@ export class Window {
 	 * `'core/standard'`. Idempotent.
 	 *
 	 * @internal
-	 * @since 0.6.0
 	 */
 	public remountWindowChrome(): void {
 		if ( this._chromeHandle ) {
@@ -1297,7 +1275,7 @@ export class Window {
 	 * Set the chrome id at runtime. Pass `null` / `undefined` to
 	 * fall back to the standard chrome.
 	 *
-	 * **Experimental** since 0.6.0 — the chrome render contract may
+	 * **Experimental** — the chrome render contract may
 	 * change in future minor versions.
 	 */
 	public setAppearanceChrome( chromeId: string | null | undefined ): void {
@@ -1316,7 +1294,6 @@ export class Window {
 	 * keep their visual in sync.
 	 *
 	 * @internal
-	 * @since 0.6.0
 	 */
 	public _notifyChromeStateChanged(): void {
 		// Belt-and-braces: a window mid-close (or fully torn down)
@@ -1343,8 +1320,6 @@ export class Window {
 	 * Apply (or clear) per-window slot overrides at runtime.
 	 * `slot === null` removes the named override; `slots === null`
 	 * clears all per-window slot overrides at once.
-	 *
-	 * @since 0.6.0
 	 */
 	public setAppearanceSlot(
 		slot: import( '../types' ).WindowSlotName,
@@ -1377,8 +1352,6 @@ export class Window {
 	 * Calls through to {@link applyWindowTheme}. The override is
 	 * also written to `this.config.appearance.theme` so the next
 	 * registry-driven re-apply preserves the runtime choice.
-	 *
-	 * @since 0.6.0
 	 */
 	public setAppearanceTheme(
 		override:
@@ -1473,18 +1446,17 @@ export class Window {
 	 * 'snapped-left' | 'snapped-right'`.
 	 *
 	 * @public
-	 * @since 0.5.2
 	 */
 	public isMinimized(): boolean {
 		return this.state === 'minimized';
 	}
 
-	/** Predicate: is this window currently maximized? @since 0.5.2 */
+	/** Predicate: is this window currently maximized? */
 	public isMaximized(): boolean {
 		return this.state === 'maximized';
 	}
 
-	/** Predicate: is this window in fullscreen mode? @since 0.5.2 */
+	/** Predicate: is this window in fullscreen mode? */
 	public isFullscreen(): boolean {
 		return this.state === 'fullscreen';
 	}
@@ -1493,8 +1465,6 @@ export class Window {
 	 * Predicate: is this window currently snapped to a screen edge?
 	 * Returns `true` for both half-screen positions; pass an explicit
 	 * side string if you need to distinguish.
-	 *
-	 * @since 0.5.2
 	 */
 	public isSnapped( side?: 'left' | 'right' ): boolean {
 		if ( side === 'left' ) {
@@ -1512,8 +1482,6 @@ export class Window {
 	 * Predicate: is this window currently the focused (top of stack)
 	 * window? Reads the `desktop-mode-window--focused` class the manager
 	 * toggles in `focus()` so the result matches what's visible.
-	 *
-	 * @since 0.5.2
 	 */
 	public isFocused(): boolean {
 		return this.element.classList.contains( 'desktop-mode-window--focused' );
@@ -2029,8 +1997,6 @@ export class Window {
 	 *
 	 * Returns `true` when a navigation was started, `false` for
 	 * native windows, missing iframes, or cross-origin URLs.
-	 *
-	 * @since 0.9.4
 	 */
 	public navigateTo( url: string ): boolean {
 		if ( this.config.native || ! this.iframe ) {
@@ -2210,8 +2176,6 @@ export class Window {
 	 *    preview frame silently starts at the top).
 	 *  - Fires `HOOKS.WINDOW_RELOADED` with `silent: true` on swap
 	 *    completion.
-	 *
-	 * @since 0.9.8
 	 *
 	 * @param url Optional same-origin URL to load; omit to refresh
 	 *            the current URL in place.
@@ -2470,8 +2434,6 @@ export class Window {
 	 * Plugin authors never branch on window type — same call, same
 	 * channel, same payload.
 	 *
-	 * @since 0.5.5
-	 *
 	 * @param channel Slash- or dot-separated identifier (e.g.
 	 *                `'reload'`, `'editor/insert-block'`).
 	 * @param payload Anything `postMessage` can serialise.
@@ -2532,8 +2494,6 @@ export class Window {
 	 * Use the literal `'*'` to wildcard-subscribe to every channel
 	 * this window publishes.
 	 *
-	 * @since 0.5.5
-	 *
 	 * @return Unsubscribe handle. Idempotent.
 	 */
 	public on< T = unknown >(
@@ -2570,8 +2530,6 @@ export class Window {
 	 *     loading).
 	 *
 	 * Idempotent. Cheap to call repeatedly.
-	 *
-	 * @since 0.6.0
 	 */
 	public markContentLoading(): void {
 		markWindowContentLoading( this.id );
@@ -2595,8 +2553,6 @@ export class Window {
 	 *
 	 * Idempotent. Fires the {@link HOOKS.WINDOW_CONTENT_LOADED}
 	 * action only on a loading → ready transition.
-	 *
-	 * @since 0.6.0
 	 */
 	public markContentLoaded(): void {
 		markWindowContentReady( this.id );
@@ -2621,7 +2577,6 @@ export class Window {
 	 * end up calling {@link markWindowContentReady}.
 	 *
 	 * @public
-	 * @since 0.6.0
 	 */
 	public whenContentReady(): Promise< void > {
 		if ( isWindowContentReady( this.id ) ) {
@@ -2666,8 +2621,6 @@ export class Window {
 	 *
 	 * Idempotent: setting the same phase twice is a no-op except for
 	 * resetting the auto-clear timer.
-	 *
-	 * @since 0.8.0
 	 */
 	public markActivity(
 		phase: 'idle' | 'pending' | 'saving' | 'saved' | 'failed',
@@ -2694,8 +2647,6 @@ export class Window {
 	 * Use `wp.desktop.fetch()` for HTTP requests; reach for this
 	 * directly when you have a Promise from a different source
 	 * (postMessage handshake, IndexedDB transaction, …).
-	 *
-	 * @since 0.8.0
 	 */
 	public trackActivity< T >( promise: Promise< T > ): Promise< T > {
 		this._markActivityStart();
@@ -2875,14 +2826,12 @@ export class Window {
 	 * Animations are gated on `prefers-reduced-motion`; reduced-motion
 	 * users see a static accent ring for the same duration so the
 	 * affordance still works.
-	 *
-	 * @since 0.6.0
 	 */
 	public requestAttention(
 		mode: 'pulse' | 'shake' | 'bounce' | null,
 		opts: WindowAttentionOptions = {},
 	): void {
-		// Primary policy hook (since 0.5.5): plugins filter
+		// Primary policy hook: plugins filter
 		// `desktop-mode/window-attention-requested` to cancel
 		// (`cancel: true`) for DND modes / reduced-motion, scale
 		// `durationMs`/`intensity`, or audit. The pre-0.5.5
@@ -2984,8 +2933,6 @@ export class Window {
 	 * Reduced-motion fallback: a static accent ring for the same
 	 * duration. Authors who want a different visual can listen on
 	 * the JS filter `desktop-mode.window.shake` and return falsy to mute.
-	 *
-	 * @since 0.6.0
 	 */
 	public shake(): void {
 		const filtered = applyFilters< boolean, [ { windowId: string } ] >(
@@ -3024,8 +2971,6 @@ export class Window {
 	 *
 	 * Override the colour per-call via `opts.color`, or globally
 	 * via the `--wp-window-highlight-color` custom property.
-	 *
-	 * @since 0.5.2
 	 */
 	public setHighlight(
 		mode: 'preview' | 'persistent' | null,
@@ -3262,7 +3207,6 @@ export class Window {
 	 * finalise immediately.
 	 *
 	 * @public
-	 * @since 0.8.2
 	 */
 	public destroy(): void {
 		if ( this._isFinalized ) {
@@ -3292,7 +3236,6 @@ export class Window {
 	 * (test cleanup, plugin deactivation) explicitly opts out.
 	 *
 	 * @internal
-	 * @since 0.8.2
 	 */
 	private _suppressCloseFilter: boolean = false;
 
@@ -3303,7 +3246,6 @@ export class Window {
 	 * `transitionend` listener it might have been racing.
 	 *
 	 * @internal
-	 * @since 0.8.2
 	 */
 	private _finalizeClose(): void {
 		if ( this._isFinalized ) {

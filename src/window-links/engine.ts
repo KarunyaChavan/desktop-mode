@@ -17,8 +17,6 @@
  * iframe-bridge message handler) and read from the main shell bundle
  * and the lazy OS-Settings panel — see AGENTS.md → "Cross-bundle
  * state".
- *
- * @since 0.9.4
  */
 
 import { addAction, applyFilters, doAction, HOOKS } from '../hooks';
@@ -42,6 +40,15 @@ import type {
  * @internal
  */
 const MAX_LINKS = 32;
+
+/**
+ * Cap on stored `related` navigation items per identity — mirrors
+ * {@link MAX_LINKS}; the server caps its groups tighter, this is the
+ * engine-side backstop against a runaway filter.
+ *
+ * @internal
+ */
+const MAX_RELATED = 64;
 
 /**
  * Valid content/root type: lower-case alphanum, hyphen, underscore,
@@ -138,6 +145,34 @@ function validateRef( ref: unknown ): string[] {
 				'when present, must be { type, id } with the same shapes as the ref itself',
 		},
 		{
+			field: 'related',
+			valid: ( r ) =>
+				r.related === undefined ||
+				( Array.isArray( r.related ) &&
+					r.related.every(
+						( item ) =>
+							!! item &&
+							typeof item === 'object' &&
+							typeof item.id === 'string' &&
+							item.id.trim() !== '' &&
+							typeof item.group === 'string' &&
+							item.group.trim() !== '' &&
+							typeof item.label === 'string' &&
+							item.label.trim() !== '' &&
+							typeof item.url === 'string' &&
+							item.url.trim() !== '' &&
+							( item.groupLabel === undefined ||
+								typeof item.groupLabel === 'string' ) &&
+							( item.icon === undefined ||
+								typeof item.icon === 'string' ) &&
+							( item.count === undefined ||
+								( typeof item.count === 'number' &&
+									Number.isFinite( item.count ) ) ),
+					) ),
+			message:
+				'when present, must be an array of { id, group, label, url, groupLabel?, icon?, count? } entries with non-empty strings',
+		},
+		{
 			field: 'links',
 			valid: ( r ) =>
 				r.links === undefined ||
@@ -190,7 +225,67 @@ function normalizeRef(
 	if ( typeof ref.label === 'string' && ref.label !== '' ) {
 		next.label = ref.label;
 	}
+	// Same-origin front-end preview URLs only — the bridge payload is
+	// server data, and the editor-preview module loads this URL into a
+	// desktop window iframe. Anything else is silently dropped.
+	if ( typeof ref.previewUrl === 'string' && ref.previewUrl !== '' ) {
+		try {
+			const parsed = new URL( ref.previewUrl, window.location.origin );
+			if ( parsed.origin === window.location.origin ) {
+				next.previewUrl = ref.previewUrl;
+			}
+		} catch {
+			// Unparseable URL — drop it.
+		}
+	}
+	if ( Array.isArray( ref.related ) && ref.related.length > 0 ) {
+		// Field-whitelisted copy — bridge payloads may carry extra keys.
+		next.related = ref.related.slice( 0, MAX_RELATED ).map( ( item ) => {
+			const entry: NonNullable<
+				WindowContentRef[ 'related' ]
+			>[ number ] = {
+				id: item.id,
+				group: item.group,
+				label: item.label,
+				url: item.url,
+			};
+			if ( typeof item.groupLabel === 'string' && item.groupLabel !== '' ) {
+				entry.groupLabel = item.groupLabel;
+			}
+			if ( typeof item.icon === 'string' && item.icon !== '' ) {
+				entry.icon = item.icon;
+			}
+			if ( typeof item.count === 'number' ) {
+				entry.count = item.count;
+			}
+			return entry;
+		} );
+	}
 	return next;
+}
+
+/**
+ * Stable serialization of an identity's `related` list — compared in
+ * {@link setWindowContent} so a related-only change (a new comment
+ * count after an in-window save) still fires `content-changed`.
+ * Deliberately NOT folded into {@link refSignature}: `related` never
+ * affects group membership or edges, so it must not trigger
+ * `groups-changed` broadcasts.
+ */
+function relatedSignature( ref: WindowContentRef | null ): string {
+	if ( ! ref || ! ref.related ) {
+		return '';
+	}
+	return ref.related
+		.map(
+			( item ) =>
+				`${ item.id } ${ item.group } ${ item.label } ${
+					item.url
+				} ${ item.groupLabel ?? '' } ${ item.icon ?? '' } ${
+					item.count ?? ''
+				}`,
+		)
+		.join( '|' );
 }
 
 /** Stable serialization of a ref's relation-relevant parts. */
@@ -278,7 +373,9 @@ export function setWindowContent(
 		next !== null &&
 		previous !== null &&
 		refSignature( next ) === refSignature( previous ) &&
-		next.label === previous.label
+		next.label === previous.label &&
+		next.previewUrl === previous.previewUrl &&
+		relatedSignature( next ) === relatedSignature( previous )
 	) {
 		return;
 	}

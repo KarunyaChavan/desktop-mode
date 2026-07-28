@@ -11,7 +11,6 @@
  * underlying contract).
  *
  * @public
- * @since 0.9.0
  */
 
 import { __, sprintf } from '../i18n';
@@ -540,7 +539,7 @@ export function mountInstalledView( host: HTMLElement ): () => void {
 		link.setAttribute( 'data-wp-action', enabled ? 'disable' : 'enable' );
 		link.style.cssText =
 			'display:inline-flex;align-items:center;gap:6px;' +
-			'color:var(--wp-desktop-accent,#2271b1);text-decoration:none;' +
+			'color:var( --wp-desktop-accent, var( --wpd-accent, #2271b1 ) );text-decoration:none;' +
 			'cursor:pointer;font-size:0.9em;';
 		if ( busy ) {
 			link.style.opacity = '0.6';

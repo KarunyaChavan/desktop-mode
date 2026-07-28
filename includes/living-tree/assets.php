@@ -11,19 +11,16 @@
  * animated-logo block in `includes/assets.php`.
  *
  * @package WPDesktopMode
- * @since   0.9.4
  */
 
 defined( 'ABSPATH' ) || exit;
 
 /**
  * Register the Living Tree wallpaper script handle.
- *
- * @since 0.9.4
  */
 function desktop_mode_living_tree_register_assets() {
 	$version = DESKTOP_MODE_VERSION;
-	$suffix  = defined( 'SCRIPT_DEBUG' ) && SCRIPT_DEBUG ? '' : '.min';
+	$suffix  = desktop_mode_asset_suffix();
 
 	$js_path = DESKTOP_MODE_DIR . 'assets/js/living-tree-wallpaper' . $suffix . '.js';
 	wp_register_script(

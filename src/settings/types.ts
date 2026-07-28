@@ -8,7 +8,7 @@
 
 import type { WallpaperLayer } from '../wallpapers/layer';
 import type { WallpaperTeardown } from '../wallpapers/types';
-import type { DOCK_SIZES } from './constants';
+import type { DOCK_SIZES, WINDOW_RADII } from './constants';
 
 /**
  * Accent id. Historically derived from the built-in `ACCENTS` tuple,
@@ -19,6 +19,7 @@ import type { DOCK_SIZES } from './constants';
  */
 export type AccentId = string;
 export type DockSizeId = ( typeof DOCK_SIZES )[ number ][ 'id' ];
+export type WindowRadiusId = ( typeof WINDOW_RADII )[ number ][ 'id' ];
 export type DockPlacementId = 'left' | 'right' | 'bottom';
 
 /**
@@ -30,8 +31,6 @@ export type DockPlacementId = 'left' | 'right' | 'bottom';
  * - `spatial` — bottom dock with plugin menus + core menus rendered as
  *   icons on the wallpaper. One `Dock` instance, plus synthesized
  *   desktop icons.
- *
- * @since 0.6.0
  */
 export type DesktopLayoutId = 'classic' | 'unified' | 'spatial';
 
@@ -88,60 +87,72 @@ export interface OsSettingsState {
 	wallpaper: string;
 	accent: AccentId;
 	dockSize: DockSizeId;
+	windowRadius: WindowRadiusId;
 	desktopLayout: DesktopLayoutId;
 	/**
 	 * Active dock rail-renderer id. Resolves through the dock-rail
 	 * registry; missing or invalid falls back to `'default'` (the
 	 * built-in icon-strip renderer).
-	 *
-	 * @since 0.6.0
 	 */
 	dockRailRenderer: string;
+	/**
+	 * Active desktop-theme slug, or `''` for the system default.
+	 *
+	 * Resolves through the desktop-theme registry; an unknown slug
+	 * (deleted theme, deactivated plugin) degrades silently to the
+	 * system default rather than erroring — matching what the PHP
+	 * enqueue path does on the same input.
+	 */
+	desktopTheme: string;
+	/**
+	 * Slugs of the desktop themes whose `recommendedOsSettings` have
+	 * already been seeded into this user's settings.
+	 *
+	 * A theme's recommendations are applied ONCE — the first time this
+	 * user activates it — and this list is the record of that. It is
+	 * what makes "a theme never overwrites a choice you made later"
+	 * true: re-picking a theme you have worn before changes nothing.
+	 * The Themes tab's "Apply recommended layout" action is the
+	 * deliberate way back to the author's intended presentation.
+	 *
+	 * Slugs of themes that are no longer installed are kept: a theme
+	 * deleted and reinstalled must not re-seed over settings the user
+	 * has since chosen. Capped at 64.
+	 */
+	appliedThemeRecommendations: string[];
 	/**
 	 * Active unfocused-window effect id. Resolves through the
 	 * unfocus-effect registry; `'none'` means no effect, an unknown id
 	 * is treated as `'none'` by the engine until/if a matching effect
 	 * registers. Default `'darken'`.
-	 *
-	 * @since 0.9.1
 	 */
 	unfocusEffect: string;
 	/**
 	 * Active window-link renderer id. Resolves through the window-link
 	 * renderer registry; `'none'` disables the visuals, an unknown id
 	 * falls back to the built-in `'svg-splines'`.
-	 *
-	 * @since 0.9.4
 	 */
 	windowLinkRenderer: string;
 	/**
 	 * When window-link ties are visible: `'always'` (the default),
 	 * `'focus'` (only while a relation-group member is focused), or
 	 * `'off'`.
-	 *
-	 * @since 0.9.4
 	 */
 	windowLinkVisibility: 'focus' | 'always' | 'off';
 	/**
 	 * Master switch for the window-links feature (OS Settings →
 	 * Features). Off unmounts the visuals and disables the group
 	 * behaviors; the style knobs keep their values. Default on.
-	 *
-	 * @since 0.9.4
 	 */
 	windowLinksEnabled: boolean;
 	/**
 	 * Focusing a relation-group member raises its related windows to
 	 * just below it. Default on.
-	 *
-	 * @since 0.9.4
 	 */
 	windowLinkRaiseOnFocus: boolean;
 	/**
 	 * Related windows of the focused member get a subtle outline.
 	 * Default on.
-	 *
-	 * @since 0.9.4
 	 */
 	windowLinkHighlight: boolean;
 	customGradient: CustomGradient;
@@ -153,8 +164,6 @@ export interface OsSettingsState {
 	 * Scalar values only; the wallpaper owns the keys' meaning. Missing
 	 * ids mean "never configured" — the wallpaper uses its defaults.
 	 * Capped at 64 wallpapers × 32 keys.
-	 *
-	 * @since 0.9.5
 	 */
 	wallpaperSettings: Record<
 		string,
@@ -172,8 +181,6 @@ export interface OsSettingsState {
 	 * the Posts dock tile opens the `<wpd-table>`-driven native window
 	 * instead of the chromeless `edit.php` iframe. Default off so
 	 * existing muscle memory is preserved on upgrade.
-	 *
-	 * @since 0.8.0
 	 */
 	/**
 	 * Per-user override of the WordPress Heartbeat rate, in
@@ -187,8 +194,6 @@ export interface OsSettingsState {
 	 * clamps anything below 15 back up to 15 unless every
 	 * intermediate filter cooperates, and the perceived benefit
 	 * over 15 s is negligible.
-	 *
-	 * @since 0.6.0
 	 */
 	heartbeatRate: 15 | 30 | 45 | 60;
 	nativePostsEnabled: boolean;
@@ -198,8 +203,6 @@ export interface OsSettingsState {
 	 * `'tags'`, `'date'`, plus any plugin-added column keys). The
 	 * sticky `'title'` column is always visible — toggling it is
 	 * blocked at the UI layer. Default empty (all columns visible).
-	 *
-	 * @since 0.8.0
 	 */
 	nativePostsHiddenColumns: string[];
 	/**
@@ -208,8 +211,6 @@ export interface OsSettingsState {
 	 * opens the `<wpd-table>`-driven native window instead of the
 	 * chromeless iframe. Defaults on — see the matching default in
 	 * `constants.ts`.
-	 *
-	 * @since 0.6.0
 	 */
 	nativePagesEnabled: boolean;
 	/**
@@ -220,8 +221,6 @@ export interface OsSettingsState {
 	 * for users with `list_users`); read-only for `list_users`-only
 	 * users, with mutation actions appearing only when the matching
 	 * `edit_users` / `promote_users` / `delete_users` caps are present.
-	 *
-	 * @since 0.6.0
 	 */
 	nativeUsersEnabled: boolean;
 	/**
@@ -233,8 +232,6 @@ export interface OsSettingsState {
 	 * tab is hidden for users without `install_plugins`. The
 	 * `plugin-editor.php` URL is intentionally NOT claimed — it stays
 	 * on the existing code-editor iframe.
-	 *
-	 * @since 0.9.0
 	 */
 	nativePluginsEnabled: boolean;
 	/**
@@ -243,8 +240,6 @@ export interface OsSettingsState {
 	 * `<wpd-table>`-driven moderation queue instead of the chromeless
 	 * iframe. Defaults on. Capability-gated on the server (`edit_posts`);
 	 * bulk + reply actions further cap-gate inside the bundle.
-	 *
-	 * @since 0.8.3
 	 */
 	nativeCommentsEnabled: boolean;
 	/**
@@ -263,8 +258,6 @@ export interface OsSettingsState {
 	 * that a tile won't show up on the front-end yet, so we surface
 	 * it out-of-the-box and let people who find it noisy toggle it
 	 * off.
-	 *
-	 * @since 0.8.6
 	 */
 	showPostStatusRibbons: boolean;
 	/**
@@ -274,8 +267,6 @@ export interface OsSettingsState {
 	 * runs its intentional missing-import-warner demo (console
 	 * banner + three deliberate console.errors). Defaults to
 	 * `false` so regular users don't see developer noise. Per-user.
-	 *
-	 * @since 0.9.4
 	 */
 	developerModeEnabled: boolean;
 	/**
@@ -292,8 +283,6 @@ export interface OsSettingsState {
 	 *
 	 * Independent of the destructive "Delete folder sharing data"
 	 * admin action, which drops the tables site-wide.
-	 *
-	 * @since 0.8.5
 	 */
 	foldersSharingEnabled: boolean;
 	/**
@@ -310,8 +299,6 @@ export interface OsSettingsState {
 	 * (`includes/os-settings.php`, `$allowed_placements`) whitelists
 	 * `'both'`, and the right-click menu stores it explicitly, so a
 	 * "show on both rails" choice survives a reload.
-	 *
-	 * @since 0.8.2
 	 */
 	itemVisibility: Record< string, ItemVisibility >;
 	/**
@@ -319,8 +306,6 @@ export interface OsSettingsState {
 	 * the list keep their server-supplied position and render appended
 	 * after the listed ones. Unknown ids (deactivated plugin) survive
 	 * the round-trip in case the plugin comes back.
-	 *
-	 * @since 0.8.2
 	 */
 	dockOrder: string[];
 	/**
@@ -335,8 +320,6 @@ export interface OsSettingsState {
 	 * to the default top-left grid slot. Unknown ids (a plugin whose
 	 * dock item is no longer registered) survive the round-trip in
 	 * case the plugin reactivates. Capped at 256 entries.
-	 *
-	 * @since 0.8.6
 	 */
 	dockPromotedPositions: Record< string, { x: number; y: number } >;
 }
@@ -344,8 +327,6 @@ export interface OsSettingsState {
 /**
  * Allowed values for {@link OsSettingsState.itemVisibility}. See the
  * field docblock for semantics.
- *
- * @since 0.8.2
  */
 export type ItemVisibility = 'both' | 'dock' | 'desktop' | 'hidden';
 
@@ -379,6 +360,7 @@ export interface OsSettingsConfig {
 	/** Platform-wide extended options — null for non-admins. */
 	extendedOptions: {
 		media_library_enhanced: boolean;
+		games: boolean;
 	} | null;
 	/** REST endpoint for reading/writing extended options. */
 	extendedOptionsUrl: string;
@@ -388,10 +370,20 @@ export interface OsSettingsConfig {
 	 * `renderPanel()` `<script>`-injects it on the user's first
 	 * Settings open; the bundle holds every section renderer + the
 	 * `<wpd-*>` components only the panel needs.
-	 *
-	 * @since 0.8.4
 	 */
 	osSettingsPanelBundleUrl?: string;
+	/**
+	 * Whether this user may upload / delete desktop themes. Gates the
+	 * management controls in the Themes tab; PICKING a theme is
+	 * per-user and available to everyone, so the tab itself is not
+	 * gated.
+	 */
+	canManageDesktopThemes?: boolean;
+	/**
+	 * REST base for the desktop-theme upload / delete routes
+	 * (`desktop-mode/v1/desktop-themes`).
+	 */
+	desktopThemesUrl?: string;
 }
 
 /**

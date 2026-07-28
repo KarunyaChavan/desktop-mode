@@ -12,7 +12,6 @@
  * bundle; this module only consumes them.
  *
  * @public
- * @since 0.8.0
  */
 
 import { __, _n, sprintf } from '../i18n';
@@ -194,8 +193,6 @@ interface RenderState {
 	 * breadcrumb back button pops. Lets the user retrace cross-
 	 * hierarchy jumps (Media-detail → referenced post → back to
 	 * Media-detail), not just walk up the static folder tree.
-	 *
-	 * @since 0.8.6
 	 */
 	history: Route[];
 }
@@ -570,25 +567,60 @@ function renderRoot( state: RenderState ): void {
 	// served via `X-WP-Total`. Failures fall through silently
 	// (the bare label is still useful).
 	cfg.entities.forEach( ( entity ) => {
-		void fetchEntityTotal( entity )
-			.then( ( total ) => {
-				if ( state.route.kind !== 'root' ) {
-					return; // Navigated away — don't paint stale.
-				}
-				const tile = tilesByEntity.get( entity.id );
-				if ( ! tile ) {
-					return;
-				}
-				const label = tile.querySelector< HTMLElement >(
-					'.desktop-mode-file-tile__label',
-				);
-				if ( label ) {
-					label.textContent = `${ entity.label } · ${ total.toLocaleString() }`;
-				}
-			} )
-			.catch( () => {
-				// Silent — the unsuffixed label still works.
-			} );
+		let fetchTimer: number | null = null;
+		const updateCount = () => {
+			void fetchEntityTotal( entity )
+				.then( ( total ) => {
+					if ( state.route.kind !== 'root' ) {
+						return; // Navigated away — don't paint stale.
+					}
+					const tile = tilesByEntity.get( entity.id );
+					if ( ! tile ) {
+						return;
+					}
+					const label = tile.querySelector< HTMLElement >(
+						'.desktop-mode-file-tile__label',
+					);
+					if ( label ) {
+						label.textContent = `${ entity.label } · ${ total.toLocaleString() }`;
+					}
+				} )
+				.catch( () => {
+					// Silent — the unsuffixed label still works.
+				} );
+		};
+		updateCount();
+
+		// Subscribe to cross-window broadcast change signals so the root
+		// folder counters refresh reactively when items are mutated elsewhere.
+		const topic = getBroadcastTopicForEntity( entity );
+		if ( topic ) {
+			const api = window.wp?.desktop;
+			if ( api && typeof api.subscribe === 'function' ) {
+				const unsub = api.subscribe( topic, ( payload: unknown ) => {
+					const detail = payload as { source?: string } | null;
+					// Skip our own emissions to avoid loop
+					if ( detail?.source === 'my-wordpress' ) {
+						return;
+					}
+					if ( fetchTimer !== null ) {
+						window.clearTimeout( fetchTimer );
+					}
+					fetchTimer = window.setTimeout( () => {
+						fetchTimer = null;
+						if ( state.route.kind === 'root' ) {
+							updateCount();
+						}
+					}, 150 );
+				} );
+				state.teardown.push( unsub );
+				state.teardown.push( () => {
+					if ( fetchTimer !== null ) {
+						window.clearTimeout( fetchTimer );
+					}
+				} );
+			}
+		}
 	} );
 
 	state.body.appendChild( grid );
@@ -669,16 +701,12 @@ interface ListContext {
 	/**
 	 * Current debounced search query — empty string means no filter.
 	 * Threaded into `fetchEntityList` as the `search` param.
-	 *
-	 * @since 0.8.7
 	 */
 	query: string;
 	/**
 	 * Aborts the in-flight page fetch when a new search query
 	 * supersedes it. Replaced on every `loadMore()` call so the
 	 * latest in-flight request is the only one that can paint.
-	 *
-	 * @since 0.8.7
 	 */
 	abort: AbortController | null;
 }
@@ -690,8 +718,6 @@ interface ListContext {
  * query without baking it into the Route schema). Keyed by
  * `entity.id` so switching Posts → Pages clears the field — see
  * the user-facing rationale for that in the plan.
- *
- * @since 0.8.7
  */
 const lastQueryByEntity = new Map< string, string >();
 
@@ -3587,6 +3613,23 @@ function closeAnyTileMenu(): void {
 }
 
 /**
+ * Derive the desktop broadcast topic for an entity.
+ *
+ * Reads `entity.post_type` (shipped from PHP for all entities
+ * that support trash/restore, e.g. posts, pages, media). Returns
+ * `null` if the entity has no broadcast channel (e.g. Users).
+ *
+ * @param entity The My WordPress entity configuration.
+ * @return Broadcast topic string, or null if not applicable.
+ */
+function getBroadcastTopicForEntity( entity: MyWordPressEntity ): string | null {
+	if ( entity.post_type ) {
+		return `desktop-mode.${ entity.post_type }.changed`;
+	}
+	return null;
+}
+
+/**
  * Programmatic trash entry-point. Looks up the entity by id from the
  * shell config, calls the REST DELETE, and broadcasts
  * `desktop-mode-my-wordpress-entity-trashed` so every live list view
@@ -3594,12 +3637,14 @@ function closeAnyTileMenu(): void {
  * UX layer belongs to the caller (the right-click `confirmTrash` adds
  * its own; the recycle-bin drag-to-trash doesn't, matching macOS).
  *
+ * Also broadcasts to the cross-window bus so external subscribers
+ * (like the Recycle Bin) can refresh immediately.
+ *
  * Exposed on `wp.desktop.myWordpress.trashEntity(entityId, id)` so
  * cross-bundle drop targets (notably the recycle bin) can trash an
  * entity without depending on this bundle's internals.
  *
  * @public
- * @since 0.8.7
  */
 async function trashEntityById(
 	entityId: string,
@@ -3622,6 +3667,17 @@ async function trashEntityById(
 			detail: { entityId, id },
 		} ),
 	);
+
+	// Broadcast the deletion to the cross-window bus so external windows
+	// (like the Recycle Bin and the dock badge) refresh reactively.
+	const topic = getBroadcastTopicForEntity( entity );
+	if ( topic ) {
+		window.wp?.desktop?.broadcast( topic, {
+			source: 'my-wordpress',
+			action: 'trashed',
+			ids: [ id ],
+		} );
+	}
 }
 
 async function confirmTrash(
@@ -3703,7 +3759,6 @@ function showToast( message: string ): void {
  *  pane, and a dedicated "activity footprint" surface that
  *  replaces the body when the user picks it from the context menu.
  *
- *  @since 0.8.2
  * =================================================================== */
 
 interface UserListContext {
@@ -3720,9 +3775,7 @@ interface UserListContext {
 	selectedTile: HTMLElement | null;
 	observer: IntersectionObserver | null;
 	layout: TileLayout;
-	/** @since 0.8.7 */
 	query: string;
-	/** @since 0.8.7 */
 	abort: AbortController | null;
 }
 
@@ -5438,7 +5491,7 @@ function createTileSelector(): ( tile: HTMLElement ) => void {
 // between neighbours, so the selected tile's background ring abutted
 // adjacent corner ribbons and read as "spillover" (regression
 // surfaced once `<wpd-ribbon>` started rendering DRAFT/PENDING
-// banners in 0.8.6). Widen the cell so the selection ring has
+// banners). Widen the cell so the selection ring has
 // breathing room — and so wrapped 2-line labels don't push the next
 // row's tile into the cell above. Tile label is clamped to 2 lines
 // via CSS in `my-wordpress.css`; if you change that clamp, raise
@@ -5493,8 +5546,6 @@ interface TileLayout {
 	 * persisted-positions map on disk stays intact — when a previously-
 	 * placed tile's key reappears (e.g. user clears the search field),
 	 * its remembered position is restored.
-	 *
-	 * @since 0.8.7
 	 */
 	clear: () => void;
 	dispose: () => void;
@@ -5893,7 +5944,7 @@ function storageKey( scope: string ): string {
 // future cross-window drag-out, but it set `setPointerCapture` on the
 // tile which BROKE HTML5 `dragstart` detection on the `draggable=true`
 // post tiles — the long-standing "I can lift the tile but no drop
-// target sees it" bug. Removed in 0.8.1; entity tiles now use the
+// target sees it" bug. Removed; entity tiles now use the
 // centralized DragManager (`pointerdown` -> `dragManager.start()`)
 // for drag-out and a plain `click` listener for selection.
 
@@ -5988,7 +6039,6 @@ function renderInto( body: HTMLElement ): ( () => void ) | undefined {
 	// wallpaper canvas under the window (registry.hitTest stops at
 	// the first registered target it finds in the walk-up).
 	//
-	// @since 0.8.2
 	const dragManager = getDragManager();
 	if ( dragManager ) {
 		rejectIdCounter += 1;
@@ -6034,6 +6084,54 @@ function renderInto( body: HTMLElement ): ( () => void ) | undefined {
 	}
 	pendingRoute = null;
 	navigate( state, initialRoute );
+
+	// Subscribe to cross-window broadcast change signals so the list
+	// refreshes reactively when any post, page, media, or CPT is mutated
+	// elsewhere in the shell (like the Recycle Bin).
+	const api = window.wp?.desktop;
+	if ( api && typeof api.subscribe === 'function' ) {
+		let domainRefreshTimer: number | null = null;
+		const onDomainChanged = ( payload: unknown, meta: { topic: string } ): void => {
+			const detail = payload as { source?: string } | null;
+			// Skip our own emissions to avoid loop
+			if ( detail?.source === 'my-wordpress' ) {
+				return;
+			}
+			// Only refresh if the topic matches the active list's entity topic.
+			const currentRoute = state.route;
+			if ( currentRoute.kind === 'list' ) {
+				const activeEntity = getConfig().entities.find( ( e ) => e.id === currentRoute.entityId );
+				const activeTopic = activeEntity && getBroadcastTopicForEntity( activeEntity );
+				if ( activeTopic && meta.topic === activeTopic ) {
+					if ( domainRefreshTimer !== null ) {
+						window.clearTimeout( domainRefreshTimer );
+					}
+					domainRefreshTimer = window.setTimeout( () => {
+						domainRefreshTimer = null;
+						if ( state.route.kind === 'list' && state.route.entityId === currentRoute.entityId ) {
+							navigate( state, state.route );
+						}
+					}, 150 );
+				}
+			}
+		};
+
+		for ( const entity of getConfig().entities ) {
+			const topic = getBroadcastTopicForEntity( entity );
+			if ( ! topic ) {
+				continue; // Non-post-type entities (e.g. Users) have no broadcast bus.
+			}
+			const unsub = api.subscribe( topic, onDomainChanged );
+			windowTeardowns.push( unsub );
+		}
+
+		windowTeardowns.push( () => {
+			if ( domainRefreshTimer !== null ) {
+				window.clearTimeout( domainRefreshTimer );
+				domainRefreshTimer = null;
+			}
+		} );
+	}
 
 	// Return a teardown the framework invokes when THIS specific
 	// window closes. The framework wires it to the per-window
@@ -6133,7 +6231,6 @@ function asRenderState( host: EntityRenderHost ): RenderState {
  *  navigation for the freshly-mounted state.
  *
  *  @public
- *  @since 0.8.0
  * ------------------------------------------------------------------ */
 
 /**
@@ -6195,7 +6292,6 @@ interface OpenMediaArgs {
  * view for the given attachment. Mirrors `openDetail()` for posts.
  *
  * @public
- * @since 0.8.6
  */
 function openMedia( args: OpenMediaArgs ): void {
 	const route: Route = {
@@ -6238,7 +6334,6 @@ interface OpenUserFootprintArgs {
  * `openDetail()` / `openMedia()`, for users.
  *
  * @public
- * @since 0.9.1
  *
  * @param args Footprint target (`userId` required, `userName` optional).
  */
@@ -6263,8 +6358,6 @@ interface MyWordpressApi {
 	 * with its own confirm; the recycle-bin drag-to-trash calls it
 	 * directly (macOS pattern: drag is the deliberate gesture, no
 	 * extra confirm).
-	 *
-	 * @since 0.8.7
 	 */
 	trashEntity: ( entityId: string, id: number ) => Promise< void >;
 }

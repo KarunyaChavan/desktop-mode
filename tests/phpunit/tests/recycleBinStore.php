@@ -194,4 +194,63 @@ class Tests_DesktopMode_RecycleBinStore extends WP_UnitTestCase {
 			'Subscribers must not learn the global trash total from the badge count.'
 		);
 	}
+
+	/**
+	 * @covers ::desktop_mode_recycle_bin_heartbeat_received
+	 */
+	public function test_heartbeat_attaches_count_only_when_changed() {
+		$this->trash_n_posts( 2 );
+		$latest = (int) get_option( DESKTOP_MODE_RECYCLE_BIN_CHANGE_OPTION, 0 );
+		$this->assertGreaterThan( 0, $latest, 'trashing bumps the change ts' );
+
+		// Client behind the high-water mark → changed + count attached.
+		$stale = desktop_mode_recycle_bin_heartbeat_received(
+			array(),
+			array( 'desktop_mode_recycle_bin_seen_ts' => 0 )
+		);
+		$this->assertTrue( $stale['desktop_mode_recycle_bin']['changed'] );
+		$this->assertSame( 2, $stale['desktop_mode_recycle_bin']['count'] );
+
+		// Client caught up → no count key, no COUNT(*) work.
+		$caught_up = desktop_mode_recycle_bin_heartbeat_received(
+			array(),
+			array( 'desktop_mode_recycle_bin_seen_ts' => $latest )
+		);
+		$this->assertFalse( $caught_up['desktop_mode_recycle_bin']['changed'] );
+		$this->assertSame( $latest, $caught_up['desktop_mode_recycle_bin']['ts'] );
+		$this->assertArrayNotHasKey( 'count', $caught_up['desktop_mode_recycle_bin'] );
+	}
+
+	/**
+	 * @covers ::desktop_mode_recycle_bin_heartbeat_received
+	 */
+	public function test_heartbeat_ignores_ticks_without_the_seen_ts_field() {
+		$response = desktop_mode_recycle_bin_heartbeat_received( array(), array() );
+		$this->assertArrayNotHasKey( 'desktop_mode_recycle_bin', $response );
+	}
+
+	/**
+	 * @covers ::desktop_mode_recycle_bin_inject_shell_config
+	 * @covers ::desktop_mode_recycle_bin_localize_config
+	 */
+	public function test_config_filters_inject_recycle_bin_post_types() {
+		// Test shell config injection
+		$config = apply_filters( 'desktop_mode_shell_config', array() );
+		$this->assertIsArray( $config );
+		$this->assertArrayHasKey( 'recycleBinPostTypes', $config );
+		$this->assertIsArray( $config['recycleBinPostTypes'] );
+		$this->assertContains( 'post', $config['recycleBinPostTypes'] );
+		$this->assertContains( 'page', $config['recycleBinPostTypes'] );
+		$this->assertContains( 'attachment', $config['recycleBinPostTypes'] );
+
+		// Register the script so wp_localize_script works
+		wp_register_script( 'desktop-mode-recycle-bin', '' );
+
+		// Test localized config injection
+		desktop_mode_recycle_bin_localize_config();
+		$data = wp_scripts()->get_data( 'desktop-mode-recycle-bin', 'data' );
+		$this->assertNotEmpty( $data );
+		$this->assertStringContainsString( 'desktopModeRecycleBinConfig', $data );
+		$this->assertStringContainsString( '"postTypes":["post","page","attachment"', $data );
+	}
 }

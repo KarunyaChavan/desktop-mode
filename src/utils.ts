@@ -1,7 +1,5 @@
 /**
  * Desktop Mode — Shared Utilities.
- *
- * @since 0.5.0
  */
 
 /**
@@ -42,6 +40,25 @@ const IDENTITY_PARAMS: readonly string[] = [
 	// the first comment's window instead of opening its own (and the
 	// window-links ties can only ever point at one comment at a time).
 	'c',
+	// NOTE: the generic `id` param is deliberately NOT identity.
+	// Plugin list screens use `admin.php?page=foo&action=…&id=N` for
+	// row actions; treating `id` as identity would open every such
+	// action in a NEW window instead of navigating the list in place.
+	// The cost: two entities of the same `admin.php?page=` screen
+	// (e.g. two WooCommerce HPOS orders) can't be open side by side —
+	// plugins that want that can differentiate via `path` or their own
+	// window ids.
+	// The term ID on `term.php?taxonomy=category&tag_ID=X` — the term
+	// analogue of `post`. Without it every term-edit URL of the same
+	// taxonomy collapses to one window, so opening a second category
+	// from a post's Related menu just refocuses the first term's
+	// window instead of opening its own.
+	'tag_ID',
+	// The attachment ID on `upload.php?item=X` (Media Library grid
+	// with the details modal open). Without it every deep-linked media
+	// item collapses to the plain `upload-php` window, so opening a
+	// second image from a post's Related menu refocuses the first.
+	'item',
 	// Site-editor entity path: `site-editor.php?p=/wp_template_part/
 	// twentytwentyfive//footer-columns`. Each template / template
 	// part / pattern / navigation entity is a distinct "page" from
@@ -57,9 +74,15 @@ const IDENTITY_PARAMS: readonly string[] = [
  * slug that is safe to use as a DOM id attribute.
  */
 function slugify( path: string ): string {
-	return path
+	let decoded = path;
+	try {
+		decoded = decodeURIComponent( path );
+	} catch {
+		decoded = path;
+	}
+	return decoded
 		.replace( /\.php/g, '-php' )
-		.replace( /[?&=]/g, '-' )
+		.replace( /[?&=/]/g, '-' )
 		.replace( /[^a-zA-Z0-9_-]/g, '' )
 		.replace( /-+/g, '-' )
 		.replace( /^-|-$/g, '' ) || 'index';
@@ -187,8 +210,6 @@ export function urlMatchKey( url: string ): string {
  *
  * Falls back to the raw URL if parsing fails — the caller just sees
  * a stricter equality check than desired, not a crash.
- *
- * @since 0.9.4
  */
 export function urlReuseKey( url: string ): string {
 	try {
@@ -315,7 +336,6 @@ export function sanitizeIconSvg( svg: string ): string {
  * on window close so the listeners don't leak past the host.
  *
  * @public
- * @since 0.8.0
  */
 export interface BackgroundActivateHandle {
 	dispose: () => void;
@@ -327,7 +347,6 @@ export interface BackgroundActivateHandle {
  * See the comment block above for the why.
  *
  * @public
- * @since 0.8.0
  *
  * @param host         Element to attach listeners to. Typically the
  *                     wallpaper / canvas itself.
@@ -388,3 +407,13 @@ export function bindBackgroundActivate(
 		},
 	};
 }
+
+/**
+ * Decode HTML entities from a string cleanly using a temporary textarea.
+ */
+export function decodeHTML( raw: string ): string {
+	const ta = document.createElement( 'textarea' );
+	ta.innerHTML = raw;
+	return ta.value;
+}
+

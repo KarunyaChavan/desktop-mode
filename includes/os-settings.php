@@ -20,6 +20,9 @@ const DESKTOP_MODE_OS_SETTINGS_META_KEY = 'desktop_mode_os_settings';
 /** Valid dock-size IDs — mirrors the TS `DOCK_SIZES` constant. */
 const DESKTOP_MODE_OS_SETTINGS_DOCK_SIZES = array( 'compact', 'default', 'large' );
 
+/** Valid window-radius IDs — mirrors the TS `WINDOW_RADII` constant. */
+const DESKTOP_MODE_OS_SETTINGS_WINDOW_RADII = array( 'sharp', 'default', 'round' );
+
 /** Valid desktop-layout IDs — mirrors the TS `DESKTOP_LAYOUTS` constant. */
 const DESKTOP_MODE_OS_SETTINGS_DESKTOP_LAYOUTS = array( 'classic', 'unified', 'spatial' );
 
@@ -29,8 +32,6 @@ const DESKTOP_MODE_OS_SETTINGS_DESKTOP_LAYOUTS = array( 'classic', 'unified', 's
  * Mirrors the TypeScript `DEFAULTS` constant so a fresh user account
  * gets the same starting state in both environments.
  *
- * @since 0.5.0
- *
  * @return array
  */
 function desktop_mode_default_os_settings() {
@@ -38,8 +39,25 @@ function desktop_mode_default_os_settings() {
 		'wallpaper'                   => 'dark',
 		'accent'                      => 'wp-blue',
 		'dockSize'                    => 'default',
+		'windowRadius'                => 'default',
 		'desktopLayout'               => 'classic',
 		'dockRailRenderer'            => 'default',
+		// Active desktop-theme slug, or `''` for the system default.
+		// Site-wide library (`includes/desktop-themes/`), per-user
+		// activation. Not validated against the installed list here —
+		// the enqueue path checks existence on every request, so a
+		// deleted theme degrades silently instead of needing a
+		// user-meta rewrite.
+		'desktopTheme'                => '',
+		// Slugs of the desktop themes whose `recommendedOsSettings`
+		// block has already been applied for this user. A theme's
+		// recommendations are seeded ONCE — the first time the user
+		// activates it — and this list is the record of that. It is
+		// what makes "never overwrite a user's later choices" true:
+		// re-activating a theme they have worn before changes
+		// nothing. The Themes tab's "Apply recommended layout" action
+		// is the deliberate way back. Capped at 64 slugs.
+		'appliedThemeRecommendations' => array(),
 		'unfocusEffect'               => 'darken',
 		// Window-link renderer id — how relation ties between windows
 		// are drawn (see includes/window-links.php). `svg-splines` is
@@ -78,7 +96,7 @@ function desktop_mode_default_os_settings() {
 		// Per-user opt-IN for the native Posts window. When true,
 		// clicking the Posts dock tile opens the `<wpd-table>`-driven
 		// native window instead of the chromeless `edit.php` iframe.
-		// Default OFF as of 0.9.1 — the native windows are now opt-in
+		// Default OFF — the native windows are opt-in
 		// Beta. Fresh installs land on the classic iframe; users turn
 		// this on in OS Settings → Features → Beta features to try it.
 		// Per-user override of the WordPress Heartbeat interval, in
@@ -173,8 +191,6 @@ function desktop_mode_default_os_settings() {
  * Always returns a fully-shaped array so the JS side doesn't need to
  * defend against partial or missing keys.
  *
- * @since 0.5.0
- *
  * @param int $user_id The user ID.
  * @return array
  */
@@ -194,8 +210,6 @@ function desktop_mode_get_os_settings( $user_id ) {
 
 /**
  * Saves sanitized OS settings for a user.
- *
- * @since 0.5.0
  *
  * @param int   $user_id  The user ID.
  * @param mixed $settings Raw settings payload from the client.
@@ -217,8 +231,6 @@ function desktop_mode_save_os_settings( $user_id, $settings ) {
  * Unknown keys are ignored; known keys are coerced field-by-field so a
  * partial save (e.g., only accent changed) merges cleanly with the
  * defaults rather than wiping unset fields.
- *
- * @since 0.5.0
  *
  * @param mixed $raw Raw settings from the client or user meta.
  * @return array Sanitized settings.
@@ -246,6 +258,11 @@ function desktop_mode_sanitize_os_settings( $raw ) {
 		? (string) $raw['dockSize']
 		: $defaults['dockSize'];
 
+	// Window radius — must be one of the three known values.
+	$window_radius = isset( $raw['windowRadius'] ) && in_array( $raw['windowRadius'], DESKTOP_MODE_OS_SETTINGS_WINDOW_RADII, true )
+		? (string) $raw['windowRadius']
+		: $defaults['windowRadius'];
+
 	// Desktop layout — must be one of the three known values
 	// (`classic`, `unified`, `spatial`). Default `classic`.
 	$desktop_layout = isset( $raw['desktopLayout'] )
@@ -262,6 +279,44 @@ function desktop_mode_sanitize_os_settings( $raw ) {
 		if ( '' !== $slug ) {
 			$dock_rail_renderer = $slug;
 		}
+	}
+
+	// Desktop theme slug — a pattern check, NOT an allow-list, the
+	// same idiom as `dockRailRenderer` above. Validating against the
+	// installed-theme option here would load (and unserialize) that
+	// option on every single settings write for a value the enqueue
+	// path re-checks anyway. `''` is the system default and is a
+	// legitimate value, so an empty/absent key keeps the default.
+	$desktop_theme = $defaults['desktopTheme'];
+	if ( isset( $raw['desktopTheme'] ) && is_string( $raw['desktopTheme'] ) ) {
+		$desktop_theme = sanitize_key( $raw['desktopTheme'] );
+	}
+
+	// appliedThemeRecommendations — list of desktop-theme slugs whose
+	// recommendations this user has already been seeded with. Unknown
+	// slugs are kept (a deleted-then-reinstalled theme must not
+	// re-seed and clobber the settings the user has since chosen).
+	$applied_theme_recommendations = $defaults['appliedThemeRecommendations'];
+	if ( isset( $raw['appliedThemeRecommendations'] ) && is_array( $raw['appliedThemeRecommendations'] ) ) {
+		$applied_theme_recommendations = array();
+		foreach ( $raw['appliedThemeRecommendations'] as $theme_slug ) {
+			if ( ! is_string( $theme_slug ) || '' === $theme_slug ) {
+				continue;
+			}
+			$theme_slug = sanitize_key( $theme_slug );
+			if ( '' === $theme_slug ) {
+				continue;
+			}
+			$applied_theme_recommendations[] = $theme_slug;
+		}
+		// Keep the MOST RECENT 64, not the first 64 — the client
+		// appends, so trimming from the front would silently discard
+		// the entry that was just written and let the theme re-seed on
+		// the next activation.
+		$applied_theme_recommendations = array_slice(
+			array_values( array_unique( $applied_theme_recommendations ) ),
+			-64
+		);
 	}
 
 	// Unfocus effect id — accept the `none` sentinel or any registry id.
@@ -581,8 +636,11 @@ function desktop_mode_sanitize_os_settings( $raw ) {
 		'wallpaper'                   => $wallpaper,
 		'accent'                      => $accent,
 		'dockSize'                    => $dock_size,
+		'windowRadius'                => $window_radius,
 		'desktopLayout'               => $desktop_layout,
 		'dockRailRenderer'            => $dock_rail_renderer,
+		'desktopTheme'                => $desktop_theme,
+		'appliedThemeRecommendations' => $applied_theme_recommendations,
 		'unfocusEffect'               => $unfocus_effect,
 		'windowLinkRenderer'          => $window_link_renderer,
 		'windowLinkVisibility'        => $window_link_visibility,
@@ -613,8 +671,6 @@ function desktop_mode_sanitize_os_settings( $raw ) {
 
 /**
  * Registers the REST routes for OS settings.
- *
- * @since 0.5.0
  */
 function desktop_mode_register_os_settings_rest_routes() {
 	register_rest_route(
@@ -649,8 +705,6 @@ add_action( 'rest_api_init', 'desktop_mode_register_os_settings_rest_routes' );
  * see {@see desktop_mode_rest_require_enabled()} for why `read` alone is
  * insufficient.
  *
- * @since 0.8.10 Hardened to require desktop mode enabled (was `read`).
- *
  * @return true|WP_Error
  */
 function desktop_mode_rest_os_settings_permission() {
@@ -660,8 +714,6 @@ function desktop_mode_rest_os_settings_permission() {
 /**
  * GET /desktop-mode/v1/os-settings
  *
- * @since 0.5.0
- *
  * @return WP_REST_Response
  */
 function desktop_mode_rest_get_os_settings() {
@@ -670,8 +722,6 @@ function desktop_mode_rest_get_os_settings() {
 
 /**
  * POST /desktop-mode/v1/os-settings
- *
- * @since 0.5.0
  *
  * @param WP_REST_Request $request The REST request.
  * @return WP_REST_Response The saved settings (after sanitization).
@@ -692,8 +742,6 @@ function desktop_mode_rest_save_os_settings( WP_REST_Request $request ) {
  *
  * Only applies to users with Desktop Mode enabled — non-desktop
  * sessions keep Core's defaults. Anonymous requests skip too.
- *
- * @since 0.8.5
  *
  * @param array $settings Filtered Heartbeat settings.
  * @return array

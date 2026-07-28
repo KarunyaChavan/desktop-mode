@@ -13,11 +13,42 @@
  * A ref without `root` IS a root; a ref with `root` is a child of it.
  * Third parties join by namespacing their `type` (`vendor/order`) and
  * pointing `root` wherever they like.
- *
- * @since 0.9.4
  */
 
 import type { WindowState } from '../types';
+
+/**
+ * A ready-to-open navigation target related to a window's content —
+ * one entry in the title bar's "Related" menu. Built server-side for
+ * posts/pages (comments, assigned terms, attached media) and open to
+ * plugins via the `desktop_mode_window_related_entities` PHP filter
+ * and the `desktop-mode.related-entities.items` JS filter.
+ */
+export interface RelatedEntityItem {
+	/**
+	 * Unique id within the list, e.g. `'comments'`,
+	 * `'term-category-7'`, `'media-42'`. Third parties namespace
+	 * `vendor/sub-id`.
+	 */
+	id: string;
+	/**
+	 * Section key the item sorts under. Built-ins: `'comments'`,
+	 * `'terms/{taxonomy}'`, `'media'`, `'links'` (internally linked
+	 * posts). Vendors define their own; unknown groups render after
+	 * the built-ins in arrival order.
+	 */
+	group: string;
+	/** Translated section header ("Categories", "Media"). */
+	groupLabel?: string;
+	/** Translated item label (post title, term name, …). */
+	label: string;
+	/** Dashicons class painted before the label. */
+	icon?: string;
+	/** Admin URL the item opens (as its own desktop window). */
+	url: string;
+	/** Optional count rendered after the label (comment total). */
+	count?: number;
+}
 
 /**
  * A reference to the piece of content a window displays, and —
@@ -75,6 +106,23 @@ export interface WindowContentRef {
 	 * renderers and tooltips.
 	 */
 	label?: string;
+	/**
+	 * Ready-to-open navigation targets related to this content — what
+	 * the title bar's "Related" button lists. Built server-side (the
+	 * chromeless bridge announces it with the identity) and filterable
+	 * client-side via `desktop-mode.related-entities.items`. Not part
+	 * of group membership — purely a navigation affordance.
+	 */
+	related?: RelatedEntityItem[];
+	/**
+	 * Front-end preview URL for this content — the target of the title
+	 * bar's "Preview" (eye) button. Built server-side via
+	 * `get_preview_post_link()` (autosave-aware, carries a
+	 * `preview_nonce`), so it is only present on post-editor
+	 * identities of viewable post types. Same-origin URLs only — the
+	 * engine drops anything else.
+	 */
+	previewUrl?: string;
 	/**
 	 * Provenance, stamped by the engine — never set it yourself:
 	 * `'config'` (seeded from `WindowConfig.content`), `'bridge'`

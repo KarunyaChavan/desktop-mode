@@ -18,13 +18,13 @@
  * ships a tag.
  *
  * @public
- * @since 0.8.0
  */
 
 import { __, _n, sprintf } from '../i18n';
 import { trackedFetch } from '../tracked-fetch';
 import { applyAvatarSrc } from '../ui/util/avatar-resolve';
 import { showPostsIntroDialog } from './intro-dialog';
+import { decodeHTML } from '../utils';
 // Side-effect imports — register the `<wpd-*>` components this
 // bundle constructs that the main shell does not ship. See the
 // header docblock for the rationale.
@@ -295,12 +295,7 @@ function statusBadgeColor( status: string ): { bg: string; fg: string } {
 }
 
 function decodeTitle( raw: string ): string {
-	// Core returns titles with HTML entities (e.g. `&amp;`) — render
-	// them through a textarea to decode without leaving us vulnerable
-	// to script tags (textarea never executes its content).
-	const ta = document.createElement( 'textarea' );
-	ta.innerHTML = raw;
-	return ta.value;
+	return decodeHTML( raw );
 }
 
 function authorOf( row: PostListItem ): {
@@ -634,8 +629,6 @@ function _buildBaseColumns(
  * parents) display their numeric id with a small "Parent #42" label
  * — acceptable for v1; a small batched-include fetch can lift this
  * to full-title resolution later.
- *
- * @since 0.8.1
  */
 const _parentTitleByPageRoster: Map< number, string > = new Map();
 
@@ -644,8 +637,6 @@ const _parentTitleByPageRoster: Map< number, string > = new Map();
  * (`parent === 0`) render an em-dash — like core's classic list.
  * Otherwise we render the parent's title (if known) or a fallback
  * numeric label.
- *
- * @since 0.8.1
  */
 function buildParentCell( row: PostListItem ): HTMLElement {
 	const cell = document.createElement( 'span' );
@@ -674,8 +665,6 @@ function buildParentCell( row: PostListItem ): HTMLElement {
  * `<wpd-table>` repaints cells from cache, and the parent cell's
  * `textContent` reflects the freshly-known titles on the next
  * memoized rebuild (cell cache is wiped per refresh).
- *
- * @since 0.8.1
  */
 function refreshParentTitleRoster( rows: PostListItem[] ): void {
 	_parentTitleByPageRoster.clear();
@@ -690,8 +679,6 @@ function refreshParentTitleRoster( rows: PostListItem[] ): void {
  * Falls back to the raw slug when the active theme registers a
  * template the config blob doesn't carry a label for, so users see
  * SOMETHING rather than a blank cell.
- *
- * @since 0.8.1
  */
 function buildTemplateCell( row: PostListItem, client: PostsWindowClient ): HTMLElement {
 	const cell = document.createElement( 'span' );
@@ -717,8 +704,6 @@ function buildTemplateCell( row: PostListItem, client: PostsWindowClient ): HTML
  * affordance. Common pain in the classic Pages list when configuring
  * redirects or sharing canonical URLs; one click puts the slug on
  * the clipboard.
- *
- * @since 0.8.1
  */
 function buildSlugCell( row: PostListItem ): HTMLElement {
 	const cell = document.createElement( 'button' );
@@ -773,8 +758,6 @@ function buildSlugCell( row: PostListItem ): HTMLElement {
  * from the REST field with a small icon. Top-asked parity feature
  * with the classic Pages list. Renders "—" when the field is
  * absent (e.g. a plugin-restricted query).
- *
- * @since 0.8.1
  */
 function buildCommentsCell( row: PostListItem ): HTMLElement {
 	const cell = document.createElement( 'span' );
@@ -1383,8 +1366,6 @@ function buildTitleCell( row: PostListItem, client: PostsWindowClient ): HTMLEle
 
 /**
  * Render a small inline assignment badge (Front page / Posts page).
- *
- * @since 0.8.1
  */
 function buildAssignmentBadge(
 	label: string,
@@ -2226,7 +2207,7 @@ function buildSubRow( row: PostListItem ): Node {
 		// then strip tags — we want plain text in the sub-row, not
 		// arbitrary nested elements.
 		const stripped = raw.replace( /<[^>]+>/g, '' ).trim();
-		excerpt.textContent = stripped || __( '(no excerpt)' );
+		excerpt.textContent = decodeHTML( stripped ) || __( '(no excerpt)' );
 	} else {
 		excerpt.textContent = __( '(no excerpt)' );
 		excerpt.style.color = '#a7aaad';

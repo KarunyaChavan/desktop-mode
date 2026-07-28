@@ -1845,6 +1845,7 @@ function init(): void {
 			aiSearchUrl: config.aiSearchUrl ?? '',
 			aiSearchStreamUrl: config.aiSearchStreamUrl ?? '',
 			restNonce: config.restNonce,
+			adminUrl: config.adminUrl,
 			// Progress streaming is on by default now that the per-user
 			// transport picker is gone; the assistant falls back gracefully
 			// if the host drops the SSE connection.

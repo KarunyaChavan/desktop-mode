@@ -7,8 +7,6 @@
  * A widget bundle talks to the shell through the `window.wp.desktop`
  * runtime global rather than importing the shell's singletons directly,
  * so it stays decoupled from build-time internals.
- *
- * @since 0.26.0
  */
 
 /** A live open window, as exposed by the window manager. */
@@ -16,7 +14,7 @@ export interface DesktopWindow {
 	readonly id: string;
 	readonly config: { title?: string; icon?: string; url?: string };
 	readonly element: HTMLElement;
-	/** Public attention nudge — a short horizontal shake (since 0.6.0). */
+	/** Public attention nudge — a short horizontal shake. */
 	shake?(): void;
 }
 
@@ -27,6 +25,7 @@ interface WindowManager {
 
 interface DesktopApi {
 	windowManager?: WindowManager;
+	showToast?( opts: { message: string; type?: string } ): unknown;
 }
 
 function desktopApi(): DesktopApi | undefined {
@@ -63,4 +62,9 @@ export function shakeWindow( id: string ): boolean {
 	}
 	win.shake();
 	return true;
+}
+
+/** Show a transient toast via the shell (no-op if unavailable). */
+export function toast( message: string ): void {
+	desktopApi()?.showToast?.( { message } );
 }

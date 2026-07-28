@@ -15,8 +15,6 @@
  * `window.wp.desktop` before the extraction is still attached
  * after — same names, same shapes, same semantics. Tests
  * exercising `wp.desktop.*` continue to pass unchanged.
- *
- * @since 0.8.1
  */
 
 import {
@@ -157,6 +155,17 @@ import type { WindowConnection, ConnectOptions } from '../connection';
 import type { WallpaperDef } from '../wallpapers/types';
 import type { WallpaperSuspendApi } from '../wallpapers/layer';
 import { gamesApi } from '../games/api';
+import { applyDesktopTheme } from '../desktop-themes/apply';
+import {
+	resolveThemedIcon,
+	resolveThemedIconColor,
+} from '../desktop-themes/icons';
+import {
+	getActiveDesktopThemeId,
+	listDesktopThemes,
+	subscribeDesktopThemes,
+} from '../desktop-themes/registry';
+import { applyThemeRecommendations } from '../settings/theme-recommendations';
 import type { NativeWindowDef, DesktopConfig } from '../types';
 
 /**
@@ -169,8 +178,6 @@ import type { NativeWindowDef, DesktopConfig } from '../types';
  * place that owns the assembly of `wp.desktop.*`. A new public
  * key SHOULD be added here in the same change that adds the
  * field to the interface.
- *
- * @since 0.8.1
  */
 export const RESERVED_NAMESPACE_KEYS: ReadonlySet< string > = new Set( [
 	'windowManager', 'dock', 'sideDock', 'taskbar', 'desktopLayout', 'icons',
@@ -203,7 +210,7 @@ export const RESERVED_NAMESPACE_KEYS: ReadonlySet< string > = new Set( [
 	'registerWindowLinkRenderer', 'unregisterWindowLinkRenderer',
 	'listWindowLinkRenderers',
 	'registerWindowTheme', 'unregisterWindowTheme', 'listWindowThemes',
-	'applyWindowTheme',
+	'applyWindowTheme', 'desktopThemes',
 	'registerWindowControl', 'unregisterWindowControl', 'listWindowControls',
 	'applyWindowControls',
 	'registerWindowSlot', 'unregisterWindowSlot', 'listWindowSlots',
@@ -259,8 +266,6 @@ export interface BuildPublicApiDeps {
  * caller (init in `desktop.ts`) is responsible for merging the
  * returned object onto the early-shim slot — see
  * {@link installPublicApi}.
- *
- * @since 0.8.1
  */
 export function buildPublicApi( deps: BuildPublicApiDeps ): WpDesktopPublicApi {
 	const {
@@ -388,9 +393,22 @@ export function buildPublicApi( deps: BuildPublicApiDeps ): WpDesktopPublicApi {
 				osSettings.state.dockSize =
 					patch.dockSize as typeof osSettings.state.dockSize;
 			}
+			if ( typeof patch.windowRadius === 'string' ) {
+				osSettings.state.windowRadius =
+					patch.windowRadius as typeof osSettings.state.windowRadius;
+			}
 			if ( typeof patch.desktopLayout === 'string' ) {
 				osSettings.state.desktopLayout =
 					patch.desktopLayout as typeof osSettings.state.desktopLayout;
+			}
+			// `desktopTheme` accepts `''` — that is the system default,
+			// a real value rather than a missing one, so this is the
+			// one id field here with no non-empty guard.
+			if ( typeof patch.desktopTheme === 'string' ) {
+				osSettings.state.desktopTheme = patch.desktopTheme;
+			}
+			if ( typeof patch.unfocusEffect === 'string' ) {
+				osSettings.state.unfocusEffect = patch.unfocusEffect;
 			}
 			if ( typeof patch.dockRailRenderer === 'string' ) {
 				osSettings.state.dockRailRenderer = patch.dockRailRenderer;
@@ -518,6 +536,36 @@ export function buildPublicApi( deps: BuildPublicApiDeps ): WpDesktopPublicApi {
 				osSettings.state.dockPromotedPositions = next;
 			}
 			osSettings.save( opts );
+			// Presentation keys have to be applied, not just saved.
+			// `save()` only persists; without this a caller that sets
+			// a theme, an accent or a layout through the public API
+			// sees nothing change until the next page load, which is
+			// not what "update" reads as — and is why the documented
+			// `updateOsSettings( { desktopTheme } )` recipe needed a
+			// companion `desktopThemes.setActive()` call to do the
+			// visible half.
+			//
+			// `apply()` is documented as safe to call repeatedly: the
+			// wallpaper layer dedupes on a generation counter,
+			// `applyDesktopTheme` dedupes on the active id, and the
+			// rest are idempotent custom-property writes. A patch that
+			// touches none of these keys skips it anyway.
+			//
+			// `unfocusEffect` is deliberately absent from this list —
+			// `apply()` knows nothing about it. The unfocus engine
+			// listens on `subscribeOsSettings`, which `save()` above
+			// already fired, so that key repaints on its own.
+			if (
+				typeof patch.wallpaper === 'string' ||
+				typeof patch.accent === 'string' ||
+				typeof patch.dockSize === 'string' ||
+				typeof patch.windowRadius === 'string' ||
+				typeof patch.desktopLayout === 'string' ||
+				typeof patch.dockRailRenderer === 'string' ||
+				typeof patch.desktopTheme === 'string'
+			) {
+				osSettings.apply();
+			}
 			// Belt-and-suspenders live repaint for visibility / order
 			// changes. The `subscribeOsSettings` listener installed in
 			// `desktop.ts` already calls `layoutDispatcher.refresh()`,
@@ -559,6 +607,34 @@ export function buildPublicApi( deps: BuildPublicApiDeps ): WpDesktopPublicApi {
 		registerWindowTheme,
 		unregisterWindowTheme,
 		listWindowThemes,
+		desktopThemes: {
+			list: listDesktopThemes,
+			getActive: getActiveDesktopThemeId,
+			setActive: applyDesktopTheme,
+			subscribe: subscribeDesktopThemes,
+			resolveIcon: resolveThemedIcon,
+			resolveIconColor: resolveThemedIconColor,
+			applyRecommendedOsSettings: ( themeId ) => {
+				const target = themeId ?? getActiveDesktopThemeId() ?? '';
+				if ( target === '' ) {
+					return {};
+				}
+				// `force` because this entry point IS the deliberate
+				// re-apply. First-activation seeding happens in the
+				// Themes tab; a caller reaching for the API is asking
+				// for the author's arrangement back.
+				const applied = applyThemeRecommendations(
+					osSettings.state,
+					target,
+					{ force: true },
+				);
+				if ( Object.keys( applied ).length > 0 ) {
+					osSettings.save();
+					osSettings.apply();
+				}
+				return applied;
+			},
+		},
 		applyWindowTheme: ( windowId, override ) => {
 			const win = manager.getById( windowId );
 			if ( ! win ) {
@@ -733,8 +809,6 @@ export function buildPublicApi( deps: BuildPublicApiDeps ): WpDesktopPublicApi {
  * `whenReady` callbacks queued before the API attached would
  * never fire. `Object.assign` overwrites `whenReady` / `ready` /
  * `isReady` with the canonical versions from `src/hooks.ts`.
- *
- * @since 0.8.1
  */
 export function installPublicApi( api: WpDesktopPublicApi ): void {
 	if ( ! window.wp ) {

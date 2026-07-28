@@ -4,13 +4,13 @@
  * Pure functions that produce the initial window element tree. Called
  * once per window at construction; never touched again after the
  * `Window` constructor wires up event listeners.
- *
- * @since 0.8.1
  */
 
 import type { WindowConfig } from '../types';
 import { urlMatchKey } from '../utils';
 import { renderIcon } from '../icon';
+import { slotForTileId } from '../desktop-themes/slots';
+import { paintThemedControlIcon } from '../window-chrome/controls/paint-themed-icon';
 import { __, sprintf } from '../i18n';
 // Side-effect import — registers `<wpd-spinner>` so the loading
 // overlay rendered below upgrades synchronously when the body is
@@ -64,8 +64,6 @@ function getWindowConfigFromElement( el: HTMLElement ): WindowConfig | undefined
  * Origin snapshot taken at module load. The same-origin gate in
  * `withChromelessParam` compares against this value so a mutation of
  * `window.location` after boot can't relax the cross-origin guard.
- *
- * @since 0.5.0
  */
 const INITIAL_ORIGIN = window.location.origin;
 
@@ -162,7 +160,6 @@ function buildDefaultLoadingOverlay(): HTMLElement {
  * doesn't strand the user with a broken window — the shell
  * falls back to whatever overlay was last good.
  *
- * @since 0.6.0
  * @internal
  */
 function createLoadingOverlay( config: WindowConfig ): HTMLElement {
@@ -221,7 +218,6 @@ function createLoadingOverlay( config: WindowConfig ): HTMLElement {
  * because `markContentLoaded` was called twice in a row) silently
  * no-ops.
  *
- * @since 0.6.0
  * @internal
  */
 export function removeLoadingOverlay( windowEl: HTMLElement ): void {
@@ -242,7 +238,6 @@ export function removeLoadingOverlay( windowEl: HTMLElement ): void {
  * window element wasn't created via `createWindowElement` (test
  * fixtures, hand-rolled DOM).
  *
- * @since 0.6.0
  * @internal
  */
 export function ensureLoadingOverlay( windowEl: HTMLElement ): void {
@@ -267,7 +262,6 @@ export function ensureLoadingOverlay( windowEl: HTMLElement ): void {
  * slots without parsing data attributes. Empty by default — the
  * shell or plugins fill it via the slot pipeline.
  *
- * @since 0.6.0
  * @internal
  */
 function createSlotHost( name: string ): HTMLElement {
@@ -339,6 +333,11 @@ export function createWindowElement( config: WindowConfig ): HTMLElement {
 	//                              Iframe-only — skipped for native.
 	const menuBtn = document.createElement( 'wpd-window-button' );
 	menuBtn.setAttribute( 'icon', 'menu' );
+	// Themed override for the ⋯ glyph. Goes through the same helper
+	// the control cluster uses, so `WINDOW_CONTROL_MENU` behaves
+	// identically to the other seven control slots even though the
+	// menu button is built here rather than by `paintWindowControls`.
+	paintThemedControlIcon( menuBtn, 'core/menu' );
 	menuBtn.setAttribute( 'aria-label', __( 'Window actions' ) );
 	menuBtn.setAttribute( 'aria-haspopup', 'menu' );
 	menuBtn.setAttribute( 'aria-expanded', 'false' );
@@ -397,7 +396,7 @@ export function createWindowElement( config: WindowConfig ): HTMLElement {
 		menuPanel.appendChild( openInNew );
 	}
 
-	// "Reload" — was a built-in title-bar control until 0.6.2. Moved
+	// "Reload" — was a built-in title-bar control. Moved
 	// here because it's an infrequent action that didn't earn the
 	// permanent real estate. No-op for native windows; safe to show.
 	if ( ! config.native ) {
@@ -442,6 +441,10 @@ export function createWindowElement( config: WindowConfig ): HTMLElement {
 	const iconEl = renderIcon( config.icon, {
 		title: config.title,
 		className: 'desktop-mode-window__icon',
+		// A desktop theme can replace a window's title-bar icon by
+		// slot — either the generic `DEFAULT_APP_ICON` or the
+		// per-window `APP:<id>` form.
+		slot: slotForTileId( config.id ),
 	} );
 	slotIcon.appendChild( iconEl );
 

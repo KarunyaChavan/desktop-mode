@@ -23,6 +23,7 @@ import {
 	DESKTOP_LAYOUTS,
 	DOCK_SIZES,
 	STORAGE_KEY,
+	WINDOW_RADII,
 	getAccents,
 	getDefaultWallpaperId,
 } from './constants';
@@ -34,6 +35,7 @@ import type {
 	DesktopLayoutId,
 	DockSizeId,
 	OsSettingsState,
+	WindowRadiusId,
 } from './types';
 import { isHexColor } from './utils';
 import { trackedFetch } from '../tracked-fetch';
@@ -105,6 +107,9 @@ function _parseRaw( parsed: Partial<OsSettingsState> ): OsSettingsState {
 		dockSize: DOCK_SIZES.some( ( d ) => d.id === parsed.dockSize )
 			? ( parsed.dockSize as DockSizeId )
 			: DEFAULTS.dockSize,
+		windowRadius: WINDOW_RADII.some( ( r ) => r.id === parsed.windowRadius )
+			? ( parsed.windowRadius as WindowRadiusId )
+			: DEFAULTS.windowRadius,
 		desktopLayout: DESKTOP_LAYOUTS.some(
 			( l ) => l.id === parsed.desktopLayout,
 		)
@@ -118,6 +123,36 @@ function _parseRaw( parsed: Partial<OsSettingsState> ): OsSettingsState {
 			/^[a-z0-9_-]+$/.test( parsed.dockRailRenderer )
 				? parsed.dockRailRenderer
 				: DEFAULTS.dockRailRenderer,
+		// Desktop theme — mirrors the PHP sanitizer exactly: a
+		// `sanitize_key()`-clean slug, or the empty string for the
+		// system default. Note the `*` quantifier (not `+`): unlike
+		// every other id field here, EMPTY IS A REAL VALUE, and a `+`
+		// would silently rewrite "System default" to whatever the
+		// default happened to be.
+		desktopTheme:
+			typeof parsed.desktopTheme === 'string' &&
+			/^[a-z0-9_-]*$/.test( parsed.desktopTheme )
+				? parsed.desktopTheme
+				: DEFAULTS.desktopTheme,
+		// Seeded-theme ledger — `sanitize_key()`-clean slugs, capped at
+		// the most recent 64 (the same end PHP trims from; the writer
+		// appends, so keeping the head would discard the entry just
+		// written and re-arm that theme's one-time seed). Slugs of
+		// themes that are no longer installed survive on purpose:
+		// forgetting one would let a reinstall re-seed over settings
+		// the user has since chosen.
+		appliedThemeRecommendations: Array.isArray(
+			parsed.appliedThemeRecommendations,
+		)
+			? Array.from(
+				new Set(
+					parsed.appliedThemeRecommendations.filter(
+						( v ): v is string =>
+							typeof v === 'string' && /^[a-z0-9_-]+$/.test( v ),
+					),
+				),
+			).slice( -64 )
+			: DEFAULTS.appliedThemeRecommendations.slice(),
 		// Unfocus effect — any registry id (`vendor/sub-id` allowed) or
 		// the `'none'` sentinel survives; the engine resolves at use
 		// time and treats an unknown id as "no effect".
@@ -420,8 +455,6 @@ let _lastConfirmedState: OsSettingsState | null = null;
 /**
  * Prime the rollback baseline. Called once after `loadState()` so
  * the FIRST failed save still has somewhere to roll back to.
- *
- * @since 0.8.0
  */
 export function setLastConfirmedState( state: OsSettingsState ): void {
 	_lastConfirmedState = _cloneState( state );
@@ -444,6 +477,7 @@ function _cloneState( state: OsSettingsState ): OsSettingsState {
 			] ),
 		),
 		ai: { ...state.ai },
+		appliedThemeRecommendations: state.appliedThemeRecommendations.slice(),
 		nativePostsHiddenColumns: state.nativePostsHiddenColumns.slice(),
 		itemVisibility: { ...state.itemVisibility },
 		dockOrder: state.dockOrder.slice(),
@@ -602,8 +636,6 @@ function _postToServer( state: OsSettingsState, windowId?: string | null ): void
  * canonical example) replace their state with this snapshot and
  * re-render so the controls visually revert to the last-confirmed
  * values, not the optimistic ones the user just attempted.
- *
- * @since 0.8.0
  */
 export type OsSettingsSavePhase = 'pending' | 'saving' | 'saved' | 'failed';
 
@@ -659,6 +691,7 @@ export function structuredDefaults(): OsSettingsState {
 		// objects to share. If `DEFAULTS.dockPromotedPositions` ever
 		// ships seeded entries, its `{ x, y }` values would need a
 		// deeper clone here.
+		appliedThemeRecommendations: [ ...DEFAULTS.appliedThemeRecommendations ],
 		itemVisibility: { ...DEFAULTS.itemVisibility },
 		dockOrder: [ ...DEFAULTS.dockOrder ],
 		dockPromotedPositions: { ...DEFAULTS.dockPromotedPositions },

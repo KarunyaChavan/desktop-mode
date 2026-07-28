@@ -17,8 +17,6 @@
  *
  * Extracted from `src/desktop.ts` during the architecture-0.8.1
  * boot decomposition (phase 5).
- *
- * @since 0.8.1
  */
 
 import { HOOKS, doAction } from '../hooks';
@@ -38,6 +36,7 @@ import type {
 	DesktopWindowLinkRendererScriptServerEntry,
 	DesktopWallpaperServerEntry,
 	DesktopGameServerEntry,
+	DesktopThemeServerEntry,
 	DesktopWidgetServerEntry,
 	NativeWindowServerEntry,
 } from '../types';
@@ -87,6 +86,8 @@ export interface MenuRefreshDeps {
 		scripts: DesktopDockRailRendererScriptServerEntry[],
 	) => Promise< void >;
 	syncServerGames: ( list: DesktopGameServerEntry[] ) => Promise< void >;
+	/** See `MenuRefreshDeps.syncServerDesktopThemes` in `../menu-refresh-apply`. */
+	syncServerDesktopThemes?: ( list: DesktopThemeServerEntry[] ) => void;
 	renderIcons: ( icons: DesktopIconServerEntry[] | undefined ) => void;
 	/** See `MenuRefreshDeps.syncShortcuts` in `../menu-refresh-apply`. */
 	syncShortcuts?: () => void;
@@ -94,10 +95,6 @@ export interface MenuRefreshDeps {
 
 /**
  * Wire the live menu-refresh pipeline.
- *
- * @since 0.8.1 (extracted from desktop.ts; argument list collected
- *               into a single options object so future syncers
- *               don't grow the parameter list).
  *
  * @return An async function plugins can call to force a refresh.
  */
@@ -116,6 +113,7 @@ export function bindMenuRefresh( deps: MenuRefreshDeps ): () => Promise< void > 
 		syncServerWindowLinkRenderers,
 		syncServerDockRailRenderers,
 		syncServerGames,
+		syncServerDesktopThemes,
 		renderIcons,
 		syncShortcuts,
 	} = deps;
@@ -134,6 +132,7 @@ export function bindMenuRefresh( deps: MenuRefreshDeps ): () => Promise< void > 
 		syncServerWindowLinkRenderers,
 		syncServerDockRailRenderers,
 		syncServerGames,
+		syncServerDesktopThemes,
 		renderIcons,
 		syncShortcuts,
 	} );
@@ -278,6 +277,7 @@ export function bindMenuRefresh( deps: MenuRefreshDeps ): () => Promise< void > 
 				serverUnfocusEffectScripts?: unknown;
 				serverWindowLinkRendererScripts?: unknown;
 				serverGames?: unknown;
+				serverDesktopThemes?: unknown;
 				desktopIcons?: unknown;
 				menuSig?: unknown;
 			};

@@ -261,11 +261,12 @@ describe( 'WindowManager — virtual desktops', async () => {
 		expect( c.element.classList.contains( 'desktop-mode-window--overview' ) ).toBe( true );
 	} );
 
-	test( 'enterOverview restores all minimized windows when the active desktop is in Show Desktop state', async () => {
-		// Reproduces the "Show Desktop → Overview shows nothing" bug.
-		// With every window on the active desktop minimized, Overview's
-		// `state !== 'minimized'` eligibility filter would otherwise
-		// produce an empty grid.
+	test( 'enterOverview shows minimized windows in grid without restoring them', async () => {
+		// Previously the "Show Desktop → Overview" path auto-restored
+		// all minimized windows to avoid an empty grid. Now minimized
+		// windows participate in the grid directly, preserving the
+		// user's minimization choice but rendering them as visible
+		// thumbnails (dimmed via CSS).
 		const a = await manager.open( openConfig( 'a' ) );
 		const b = await manager.open( openConfig( 'b' ) );
 		a.minimize();
@@ -275,10 +276,10 @@ describe( 'WindowManager — virtual desktops', async () => {
 
 		manager.enterOverview();
 
-		// Both windows are back in 'normal' state and now wear the
-		// overview class — the grid actually contains them.
-		expect( a.state ).toBe( 'normal' );
-		expect( b.state ).toBe( 'normal' );
+		// Windows stay minimized — overview does not auto-restore.
+		expect( a.state ).toBe( 'minimized' );
+		expect( b.state ).toBe( 'minimized' );
+		// But they now participate in the grid thumbnails.
 		expect(
 			a.element.classList.contains( 'desktop-mode-window--overview' ),
 		).toBe( true );
@@ -299,11 +300,11 @@ describe( 'WindowManager — virtual desktops', async () => {
 		expect( manager._overviewActive ).toBe( false );
 	} );
 
-	test( 'enterOverview leaves partially-minimized desktops alone', async () => {
-		// Counterpart guarantee: only the "everything minimized" path
-		// auto-restores. If the user minimized one window manually, the
-		// other two are visible and Overview should show only the
-		// non-minimized cohort (existing behaviour preserved).
+	test( 'enterOverview includes minimized windows in the grid thumbnails', async () => {
+		// When only some windows are minimized, the Overview grid now
+		// includes all windows (minimized and visible alike) so the
+		// tile count badge and the grid are consistent. Minimized
+		// windows appear dimmed via CSS.
 		const a = await manager.open( openConfig( 'a' ) );
 		const b = await manager.open( openConfig( 'b' ) );
 		const c = await manager.open( openConfig( 'c' ) );
@@ -315,15 +316,22 @@ describe( 'WindowManager — virtual desktops', async () => {
 		expect( a.state ).toBe( 'minimized' );
 		expect( b.state ).toBe( 'normal' );
 		expect( c.state ).toBe( 'normal' );
-		expect(
-			a.element.classList.contains( 'desktop-mode-window--overview' ),
-		).toBe( false );
-		expect(
-			b.element.classList.contains( 'desktop-mode-window--overview' ),
-		).toBe( true );
-		expect(
-			c.element.classList.contains( 'desktop-mode-window--overview' ),
-		).toBe( true );
+
+		// All three windows — minimized and visible — participate in
+		// the grid.
+		const gridTiles = manager._desktop.querySelectorAll< HTMLElement >(
+			'.desktop-mode-window--overview',
+		);
+		expect( gridTiles ).toHaveLength( 3 );
+
+		// The count badge in the active desktop's tile matches the
+		// number of grid tiles — the original badge/grid mismatch
+		// regression is fixed.
+		const badge = manager._overviewTopBar!.querySelector(
+			'.desktop-mode-overview-top-bar__tile-count',
+		);
+		expect( badge ).not.toBeNull();
+		expect( Number( badge!.textContent ) ).toBe( gridTiles.length );
 	} );
 
 	test( 'snapshot preserves geometry for windows on non-active desktops', async () => {

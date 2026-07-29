@@ -34,6 +34,20 @@ function openConfig( id: string ) {
 	};
 }
 
+/**
+ * Fire a synthetic `transitionend` for the `opacity` property on `el`.
+ *
+ * `Window.minimize()` registers a one-shot `transitionend` listener that
+ * hides `content-visibility` and iframe visibility once the opacity
+ * transition settles. This helper lets tests advance past that listener
+ * without waiting on real animation frames.
+ */
+function dispatchOpacityTransitionEnd( el: HTMLElement ): void {
+	const event = new Event( 'transitionend' ) as TransitionEvent;
+	Object.defineProperty( event, 'propertyName', { value: 'opacity' } );
+	el.dispatchEvent( event );
+}
+
 describe( 'WindowManager — virtual desktops', async () => {
 	let hooks: FakeWpHooks;
 	let desktopArea: HTMLElement;
@@ -286,6 +300,86 @@ describe( 'WindowManager — virtual desktops', async () => {
 		expect(
 			b.element.classList.contains( 'desktop-mode-window--overview' ),
 		).toBe( true );
+	} );
+
+	test( 'enterOverview makes completed-minimize windows renderable for thumbnails', async () => {
+		// Regression guard for the "minimized thumbnail renders blank" bug.
+		// After the minimize transition fires, `content-visibility: hidden`
+		// and `iframe.style.visibility = 'hidden'` are set on the window.
+		// enterOverview must reverse these so the overview thumbnail shows
+		// actual content instead of a blank slot.
+		const a = await manager.open( openConfig( 'a' ) );
+		a.minimize();
+		dispatchOpacityTransitionEnd( a.element );
+		expect( a.element.style.getPropertyValue( 'content-visibility' ) ).toBe(
+			'hidden',
+		);
+		if ( a.iframe ) {
+			expect( a.iframe.style.visibility ).toBe( 'hidden' );
+		}
+
+		manager.enterOverview();
+
+		expect( a.element.style.getPropertyValue( 'content-visibility' ) ).toBe(
+			'',
+		);
+		if ( a.iframe ) {
+			expect( a.iframe.style.visibility ).toBe( '' );
+		}
+		expect(
+			a.element.classList.contains( 'desktop-mode-window--overview' ),
+		).toBe( true );
+	} );
+
+	test( 'pending minimize transition does not re-hide an overview thumbnail', async () => {
+		// The minimize() transitionend listener must NOT re-apply
+		// content-visibility/iframe visibility when the window is in overview
+		// mode. If it did, the thumbnail would go blank again after the
+		// transition fires, undoing enterOverview's render-suppression fix.
+		const a = await manager.open( openConfig( 'a' ) );
+		a.minimize();
+
+		manager.enterOverview();
+		dispatchOpacityTransitionEnd( a.element );
+
+		expect( a.element.style.getPropertyValue( 'content-visibility' ) ).toBe(
+			'',
+		);
+		if ( a.iframe ) {
+			expect( a.iframe.style.visibility ).toBe( '' );
+		}
+		expect(
+			a.element.classList.contains( 'desktop-mode-window--overview' ),
+		).toBe( true );
+	} );
+
+	test( 'selecting a minimized fullscreen thumbnail restores fullscreen class before restore', async () => {
+		// When a minimized fullscreen window is selected in overview, the
+		// `--fullscreen` class must be reapplied on the DOM element *before*
+		// the win.restore() call. If the class is not present when the state
+		// flips to 'fullscreen', the exit-overview layout logic will treat it
+		// as a regular window and skip the fullscreen resize path, leaving the
+		// thumbnail-sized layout after selection.
+		const a = await manager.open( openConfig( 'a' ) );
+		a.toggleFullscreen();
+		a.minimize();
+
+		manager.enterOverview();
+		expect( a.state ).toBe( 'minimized' );
+		expect(
+			a.element.classList.contains( 'desktop-mode-window--fullscreen' ),
+		).toBe( false );
+
+		manager.exitOverview( a );
+
+		expect( a.state ).toBe( 'fullscreen' );
+		expect(
+			a.element.classList.contains( 'desktop-mode-window--fullscreen' ),
+		).toBe( true );
+		expect(
+			document.body.classList.contains( 'desktop-mode-has-fullscreen-window' ),
+		).toBe( true );
+		expect( a.element.dataset.wpdHadFullscreenBeforeOverview ).toBeUndefined();
 	} );
 
 	test( 'Enter key in overview exits without selecting a window', async () => {

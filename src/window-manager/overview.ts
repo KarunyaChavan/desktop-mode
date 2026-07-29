@@ -42,6 +42,45 @@ const OVERVIEW_INERT_ELEMENTS = [
 	'desktop-mode-widgets',
 ];
 
+const OVERVIEW_FULLSCREEN_DATA_KEY = 'wpdHadFullscreenBeforeOverview';
+
+/**
+ * Make a minimized window usable as an overview thumbnail without
+ * changing its logical minimized state.
+ */
+export function prepareWindowForOverviewLayout( w: Window ): void {
+	if ( w.state !== 'minimized' ) {
+		return;
+	}
+	w.element.style.removeProperty( 'content-visibility' );
+	if ( w.iframe ) {
+		w.iframe.style.visibility = '';
+	}
+	if ( w.element.classList.contains( 'desktop-mode-window--fullscreen' ) ) {
+		w.element.classList.remove( 'desktop-mode-window--fullscreen' );
+		w.element.dataset[ OVERVIEW_FULLSCREEN_DATA_KEY ] = 'true';
+	}
+}
+
+function restoreOverviewFullscreenClass( w: Window ): void {
+	if ( w.element.dataset[ OVERVIEW_FULLSCREEN_DATA_KEY ] !== 'true' ) {
+		return;
+	}
+	w.element.classList.add( 'desktop-mode-window--fullscreen' );
+	delete w.element.dataset[ OVERVIEW_FULLSCREEN_DATA_KEY ];
+}
+
+/** Restore any render-suppression / state-class changes made for overview. */
+export function restoreWindowAfterOverviewLayout( w: Window ): void {
+	restoreOverviewFullscreenClass( w );
+	if ( w.state === 'minimized' ) {
+		w.element.style.setProperty( 'content-visibility', 'hidden' );
+		if ( w.iframe ) {
+			w.iframe.style.visibility = 'hidden';
+		}
+	}
+}
+
 /**
  * Toggle inert on every direct child of #wpbody-content so focus
  * can't land on hidden screen-options, help panels, or admin
@@ -129,6 +168,7 @@ export function enterOverview( mgr: WindowManager ): void {
 		if ( w.state === 'fullscreen' ) {
 			w.toggleFullscreen();
 		}
+		prepareWindowForOverviewLayout( w );
 	}
 
 	// Target rect for the layout. `computeOverviewLayout` expects
@@ -685,6 +725,7 @@ export function exitOverview(
 		// Restore minimized windows before focusing so the user lands
 		// on a visible window, not an invisible-but-focused one.
 		if ( selected.state === 'minimized' ) {
+			restoreOverviewFullscreenClass( selected );
 			selected.restore();
 		}
 		// Focus first so z-index and focused-class are right from the
@@ -732,6 +773,7 @@ export function exitOverview(
 		mgr._overviewExitTimeoutId = null;
 		for ( const w of mgr._stack ) {
 			w.element.classList.remove( 'desktop-mode-window--overview' );
+			restoreWindowAfterOverviewLayout( w );
 		}
 		for ( const label of mgr._overviewLabels.values() ) {
 			label.remove();

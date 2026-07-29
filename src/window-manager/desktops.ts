@@ -309,7 +309,6 @@ export function relayoutOverviewForActiveDesktop( mgr: WindowManager ): void {
 	//    they're windows with content, nothing special.
 	const eligible = mgr._stack.filter(
 		( w ) =>
-			w.state !== 'minimized' &&
 			w.config.desktopId === mgr._activeDesktopId,
 	);
 	if ( eligible.length === 0 ) {

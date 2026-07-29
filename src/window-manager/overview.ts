@@ -80,43 +80,12 @@ export function enterOverview( mgr: WindowManager ): void {
 	if ( mgr._overviewActive ) {
 		return;
 	}
-	// "Show Desktop → Overview" unwind. If every window on the active
-	// desktop is minimized — the canonical Show Desktop state — entering
-	// overview would otherwise show an empty grid, contradicting the
-	// user's expectation that Overview reveals their work. Restore them
-	// first so they participate in the layout below, allowing them to be
-	// selected and focused in their restored states.
-	const onActive = mgr._stack.filter(
-		( w ) => w.config.desktopId === mgr._activeDesktopId,
-	);
-	if (
-		onActive.length > 0 &&
-		onActive.every( ( w ) => w.state === 'minimized' )
-	) {
-		for ( const w of onActive ) {
-			try {
-				w.restore();
-			} catch ( err ) {
-				if ( typeof console !== 'undefined' ) {
-					console.error(
-						'[desktop-mode] enterOverview: window.restore() threw for',
-						w.id,
-						err,
-					);
-				}
-			}
-		}
-	}
-	// Overview shows only the ACTIVE desktop's windows in the main
-	// grid; windows on other desktops stay hidden underneath. The top
-	// bar (rendered later) gives the user a way to switch. Native
-	// windows (OS Settings, Jorvy, etc.) participate as first-class
-	// citizens — clicking their thumbnail focuses them, they lay
-	// out in the grid, they count toward the top-bar tile's window
-	// count.
+	// Overview shows windows on the active desktop, including minimized
+	// ones. Minimized windows are rendered with a visual indicator
+	// (lower opacity) so the user can see all their work at a glance.
+	// Clicking a minimized thumbnail restores + focuses it on exit.
 	const eligible = mgr._stack.filter(
 		( w ) =>
-			w.state !== 'minimized' &&
 			w.config.desktopId === mgr._activeDesktopId,
 	);
 	// Even with zero windows on the active desktop we still enter
@@ -713,12 +682,27 @@ export function exitOverview(
 	}
 
 	if ( selected ) {
+		// Restore minimized windows before focusing so the user lands
+		// on a visible window, not an invisible-but-focused one.
+		if ( selected.state === 'minimized' ) {
+			selected.restore();
+		}
 		// Focus first so z-index and focused-class are right from the
 		// moment the animation starts — no pop-to-top late in the
 		// transition.
 		mgr.focus( selected );
 		if ( maximize ) {
 			selected.maximize();
+		}
+	}
+
+	// Remove overview class immediately for windows that are STILL minimized
+	// (unselected ones). This strips the opacity override and transform-origin,
+	// allowing them to smoothly fade out and shrink into their minimized state
+	// during the 280ms transition, instead of staying visible and snapping away.
+	for ( const w of mgr._stack ) {
+		if ( w.state === 'minimized' ) {
+			w.element.classList.remove( 'desktop-mode-window--overview' );
 		}
 	}
 

@@ -74,7 +74,6 @@
  */
 .desktop-mode-window--overview.desktop-mode-window--minimized {
 	opacity: 0.6;
-	pointer-events: auto;
 }
 
 /*

@@ -411,7 +411,7 @@ spawned.
 ### `wp.desktop.dragBridge` — cross-iframe drag — Stable
 
 The bridge is the postMessage channel that lets shell-side drags
-(My WordPress media tiles, post tiles, user tiles) land inside iframe
+(site-folder media tiles, post tiles, user tiles) land inside iframe
 windows (the Gutenberg editor, the site editor). When a DragManager
 session begins on a shell tile carrying a `bridgePayload`, the shell
 fans the payload into `dragBridge.start(payload)`. While the gesture
@@ -1277,7 +1277,7 @@ See [`setBadge`](#setbadge--stable) above for the full rules across all three ra
 
 #### `DesktopIconServerEntry.pinned` — Stable
 
-Server-declared icons (registered via `desktop_mode_register_icon( $id, [ 'pinned' => true ] )`) ship a boolean `pinned` flag in `config.desktopIcons[ n ].pinned`. Pinned icons render before any unpinned icon regardless of `position`, and the framework treats them as a stable system surface — built-in shortcuts like the **My WordPress** folder use it. Plugins that decorate icons (drag handles, custom menus) should opt out for tiles where `pinned === true`.
+Server-declared icons (registered via `desktop_mode_register_icon( $id, [ 'pinned' => true ] )`) ship a boolean `pinned` flag in `config.desktopIcons[ n ].pinned`. Pinned icons render before any unpinned icon regardless of `position`, and the framework treats them as a stable system surface — built-in shortcuts like the pinned **site folder** use it. Plugins that decorate icons (drag handles, custom menus) should opt out for tiles where `pinned === true`.
 
 ---
 
@@ -3023,12 +3023,13 @@ Returns a defensive copy — mutating the result doesn't change shell state. Upd
 
 ### `renderIcon( icon, opts )` — Stable
 
-Render an icon-string into a DOM element using the canonical dispatch the default dock uses. One implementation, five shapes:
+Render an icon-string into a DOM element using the canonical dispatch the default dock uses. One implementation, six shapes:
 
 | Input | Output |
 |---|---|
 | `'dashicons-…'` | `<span class="dashicons dashicons-…">` |
-| `'data:image/svg+xml;base64,…'` | `<span>` with the SVG as a CSS background-image |
+| `'data:image/svg+xml;base64,…'` **drawn in `currentColor`** | `<span>` with the SVG as a CSS **mask**, filled with `currentColor` — see [Silhouette icons](#silhouette-icons) below |
+| `'data:image/svg+xml;base64,…'` (fixed colours) | `<span>` with the SVG as a CSS background-image |
 | `'data:image/png;base64,…'` (any raster data URI — png, jpeg, gif, webp, x-icon) | `<img src=…>` |
 | `'http(s)://…'` | `<img src=…>` |
 | Anything else (`''`, `'none'`, `'div'`, …) | Letter-badge fallback — coloured circle with the first one or two letters of `opts.title`, hue hashed from the title so the swatch is stable per plugin |
@@ -3042,6 +3043,29 @@ host.appendChild( iconEl );
 ```
 
 Custom rail renderers should use this so their icons look consistent with the default dock (and the letter-badge fallback colour stays stable across reloads — same hash function).
+
+#### Silhouette icons
+
+**Draw your SVG in `currentColor` and it adapts to every surface automatically.** No flag, no registration field: the art declares its own intent, and the declaration cannot drift out of sync with the drawing because it *is* the drawing.
+
+```php
+// PHP — desktop_mode_register_icon()
+'icon_svg' => '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">'
+    . '<rect x="8" y="12" width="48" height="40" rx="4" fill="none"'
+    . ' stroke="currentColor" stroke-width="4"/>'
+    . '</svg>',
+```
+
+A CSS `background-image` has no colour to inherit, so an SVG drawn in `currentColor` and painted that way comes out black — invisible on a dark dock. `renderIcon()` therefore paints such art as a CSS **mask** filled with `currentColor`: only the alpha channel survives, and the fill comes from whatever the surface is already using for text. One drawing stays legible on the dark dock, on a light title bar, on a hover state, and under a desktop theme that recolours the slot.
+
+Two rules follow:
+
+- **All of it, or none of it.** Any literal `fill="#…"` / `stroke="#…"` in otherwise-silhouette art still contributes only its alpha, so it renders as a solid region in the inherited colour — not in the colour you named. Mixed art is a bug that looks like a design choice.
+- **Fixed-colour art is unaffected.** An SVG with no `currentColor` keeps the background-image path exactly as before. Full-colour app icons (the Games gamepad) are unchanged.
+
+An explicit desktop-theme icon colour still wins over `currentColor` — a theme that recolours a slot recolours silhouettes too.
+
+In-tree reference: `desktop_mode_content_graph_icon_svg()` (the Corkboard).
 
 ---
 
@@ -3277,7 +3301,7 @@ Posted when a link inside the iframe points off-site; the parent opens an extern
 ```
 
 #### `desktop-mode-open-user-footprint` — Stable
-Posted when a `[data-desktop-mode-footprint]` link is clicked inside a chromeless iframe — the "View activity footprint" row action on the classic Users table. Checked *before* the admin-link classifier, so the link's fallback `href` is never followed inside the shell. The parent opens (or focuses) the My WordPress window on that user's footprint route and leaves the source window open (it's an auxiliary peek, not a navigation away — contrast `desktop-mode-iframe-admin-link`, which closes the source on a remap hit). The public entry point is [`wp.desktop.myWordpress.openUserFootprint`](#public-api--wpdesktopmywordpress); see also `bridge-protocol.md`.
+Posted when a `[data-desktop-mode-footprint]` link is clicked inside a chromeless iframe — the "View activity footprint" row action on the classic Users table. Checked *before* the admin-link classifier, so the link's fallback `href` is never followed inside the shell. The parent opens (or focuses) the site folder window on that user's footprint route and leaves the source window open (it's an auxiliary peek, not a navigation away — contrast `desktop-mode-iframe-admin-link`, which closes the source on a remap hit). The public entry point is [`wp.desktop.myWordpress.openUserFootprint`](#public-api--wpdesktopmywordpress); see also `bridge-protocol.md`.
 
 ```typescript
 { type: 'desktop-mode-open-user-footprint'; userId: number; userName: string }
@@ -5022,7 +5046,7 @@ Backed by `wp.desktop.createSharedStore( 'desktop-mode/plugins-window/tab-target
 
 ---
 
-## My WordPress — extensibility surface (Experimental)
+## Site folder — extensibility surface (Experimental)
 
 The native window registered under id `desktop-mode-my-wordpress`
 exposes three JS hook points and a small public API. Every section
@@ -5051,7 +5075,7 @@ interface MyWordpressApi {
      * `openDetail` / `openMedia`, for users. Idempotent and
      * cold-start safe — opens (or focuses) the window and navigates
      * it to the footprint route even from a session that never
-     * opened My WordPress.
+     * opened the site folder.
      *
      * This is the same window the "View activity footprint" row
      * action in the classic Users table reaches (that path routes
@@ -5076,7 +5100,7 @@ interface MyWordpressApi {
     ): () => void;
 
     /**
-     * Trash an entity by its My WordPress entity id (`'posts'`,
+     * Trash an entity by its site-folder entity id (`'posts'`,
      * `'pages'`, `'users'`, plugin-defined). Resolves when the
      * REST DELETE succeeds and broadcasts
      * `desktop-mode-my-wordpress-entity-trashed` on `document`
@@ -5200,7 +5224,7 @@ bundle) listen here to drop the trashed tile reactively.
 { entityId: string, id: number }
 ```
 
-See [Examples — My WordPress media action](./examples/my-wordpress-media-action.md).
+See [Examples — site folder media action](./examples/my-wordpress-media-action.md).
 
 ---
 

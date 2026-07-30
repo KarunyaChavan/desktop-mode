@@ -12,7 +12,15 @@ Components are **side-effect registered** at import time, per bundle, into the p
 2. Add the class export to `src/ui/components/index.ts`.
 3. Add the tag to `src/ui/components/tags.ts` (the single source of `WPD_COMPONENT_TAGS`, re-exported by `index.ts`).
 4. Add a row to this table.
-5. Document via the `static help = { … }` block on the class — surfaced in OS Settings → Help live.
+5. Document via the `static help = { … }` block on the class — surfaced in OS Settings → Components live.
+
+## Browsing the kit at runtime
+
+**OS Settings → Components** (admin-only) renders this table live: every tag in `WPD_COMPONENT_TAGS`, with its props, slots, events, parts, CSS custom properties, and a working example rendered from the `static help.example` template.
+
+The tab side-effect-imports the whole component barrel so the list is the full kit rather than "whatever other bundles happen to have loaded" — the per-bundle registration model described above means an unimported component reaches no custom-element registry, and a tab that only enumerated registered tags silently under-reported itself.
+
+The search box above the list filters on the flattened descriptor, not just the title: tag name, summary, status, `static props` names, and the name *and* description of every documented prop, slot, event, part, and CSS custom property. Terms are ANDed and order-independent, so `field number` and `number clamp` both reach `<wpd-number-field>`.
 
 ## Layout & structure
 
@@ -78,7 +86,7 @@ Components are **side-effect registered** at import time, per bundle, into the p
 | `<wpd-chip>` | `WpdChip` | `wpd-chip/wpd-chip.ts` | Tag/category chip with tone. |
 | `<wpd-key>` | `WpdKey` | `wpd-key/wpd-key.ts` | Keyboard shortcut display. |
 | `<wpd-code>` | `WpdCode` | `wpd-code/wpd-code.ts` | Inline / block monospace code with copy. |
-| `<wpd-spinner>` | `WpdSpinner` | `wpd-spinner/wpd-spinner.ts` | Loading spinner with preset variants. |
+| `<wpd-spinner>` | `WpdSpinner` | `wpd-spinner/wpd-spinner.ts` | Loading spinner with preset variants; `preset="inline"` is a bare arc for text-adjacent use. |
 | `<wpd-progress-bar>` | `WpdProgressBar` | `wpd-progress-bar/wpd-progress-bar.ts` | Determinate or indeterminate progress. |
 | `<wpd-save-status>` | `WpdSaveStatus` | `wpd-save-status/wpd-save-status.ts` | Title-bar save indicator (idle / saving / saved / failed). |
 | `<wpd-relative-time>` | `WpdRelativeTime` | `wpd-relative-time/wpd-relative-time.ts` | Auto-updating "2 min ago". |
@@ -91,7 +99,7 @@ Components are **side-effect registered** at import time, per bundle, into the p
 | --- | --- | --- | --- |
 | `<wpd-table>` | `WpdTable` | `wpd-table/wpd-table.ts` | Sortable, filterable data table with sub-tables. |
 | `<wpd-log>` | `WpdLog` | `wpd-log/wpd-log.ts` | Virtualized streaming log container. |
-| `<wpd-tile>` | `WpdTile` | `wpd-tile/wpd-tile.ts` | Desktop-style icon tile (used by the desktop file layer, folder windows, and My WordPress). |
+| `<wpd-tile>` | `WpdTile` | `wpd-tile/wpd-tile.ts` | Desktop-style icon tile (used by the desktop file layer, folder windows, and the site folder). |
 
 ## Tabs & navigation
 
@@ -121,4 +129,4 @@ The remaining classes are internal-only for now — subpath / source-path import
 
 ## Per-component help
 
-Every class has a `static help = { … }` block with full props / slots / events / examples / status. The OS Settings → Help tab iterates `WPD_COMPONENT_TAGS` and renders these descriptors live; that's the authoritative per-component reference. The table above is a directory; the `static help` block is the manual.
+Every class has a `static help = { … }` block with full props / slots / events / examples / status. The OS Settings → Components tab iterates `WPD_COMPONENT_TAGS` and renders these descriptors live; that's the authoritative per-component reference. The table above is a directory; the `static help` block is the manual.

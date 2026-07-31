@@ -5537,6 +5537,121 @@ focused/unfocused tinting contract. **Only the alpha channel is used**
 
 ---
 
+## AI Agents — client surface *(Experimental)*
+
+Opt-in behind the `agents` extended option; nothing below exists while
+the flag is off. The PHP contract lives in
+[Hooks Reference — AI Agents](./hooks-reference.md#ai-agents).
+
+### REST client
+
+The Agents section talks to `/desktop-mode/v1/agents` (see
+`includes/rest/README.md` for the route map). The canonical agent
+shape every route returns:
+
+```ts
+interface Agent {
+	id: number;          // wp_users.ID
+	slug: string;        // user_login minus the 'agent-' prefix
+	name: string;
+	description: string;
+	instructions: string; // system prompt
+	role: string;
+	abilities: string[]; // ability slugs (allowlist)
+	triggers: Array< { kind: string; config: Record< string, unknown > } >;
+	model: string;
+	rateLimit: number;   // invocations/hour, 0 = platform default
+	avatarUrl: string;
+}
+```
+
+`POST /agents/{id}/invoke` with `{ message, source?, history? }`
+returns `{ text, toolCalls, turns }` where each tool call is
+`{ callId, name, args, output, error }`.
+
+`history` is the prior conversation (`[ { role: 'user'|'agent', text },
+… ]`, oldest first) and is **required for multi-turn work**: each
+invocation is otherwise stateless, so a follow-up ("yes, do it")
+arrives with no idea which entity was being discussed. The server caps
+it at the 20 most recent turns, 4000 characters each. Both in-tree
+intakes (typing in the chat window, and drops) go through
+`invokeAgentIntoTranscript()` in `src/agents-dispatch.ts`, which
+snapshots the transcript before appending the new message.
+
+### Site folder integration
+
+The server appends an `agents` entity (`kind: 'agent'`) to the site
+folder window via the `desktop_mode_my_wordpress_entities` filter,
+and ships an `agents` block on the window config:
+
+```ts
+interface AgentsSectionConfig {
+	canManage: boolean;   // edit_users (filterable)
+	canInvoke: boolean;   // edit_posts (filterable)
+	aiAvailable: boolean; // WP 7.0 AI Client + Abilities API present
+	aiStatusUrl: string;  // live provider probe (/ai/status)
+	connectorsUrl: string;
+	runWindowId: string;  // 'desktop-mode-agent-run'
+}
+```
+
+The `agent` entity-kind renderer is registered through the standard
+`registerEntityKind()` seam — plugins can override it like any other
+kind.
+
+### Chat window + shared store
+
+The `desktop-mode-agent-run` native window is a lazy bundle
+(`agent-run-window[.min].js`) that registers its render callback on
+`window.desktopModeNativeWindows['desktop-mode-agent-run']`. Openers
+seed the cross-bundle store and open the window:
+
+```ts
+// Both bundles share one live object via createSharedStore.
+const store = wp.desktop.createSharedStore( 'desktop-mode/agents-chat', () => ( {
+	activeAgent: null, // { id, name, description, avatarUrl } | null
+	transcripts: {},   // Record<agentId, Array<{ role, text, toolCalls?, at, pending? }>>
+} ) );
+store.state.activeAgent = { id, name, description, avatarUrl };
+store.notify();
+wp.desktop.openWindow( 'desktop-mode-agent-run', { source: 'my-plugin' } );
+```
+
+Transcripts are session-only; nothing persists client-side.
+
+### Drag & drop intake
+
+Agents accept entity drops (`post`, `page`, `media`, `user`,
+`comment`) on three surfaces, all dispatching through the shared
+`src/agents-dispatch.ts` engine (compose message → seed the chat
+store → open the chat window → `POST /invoke` with `source: 'drag'`):
+
+- **Agent rows** in the site folder's Agents section — drop targets
+  registered per row via `wp.desktop.dragManager`.
+- **Agent user tiles on the wallpaper** — opted in through the files
+  layer's tile-payload-handler seam. Gating is payload-driven: the
+  server inlines `isAgent: true` and `agentDragKinds` into the
+  desktop user-file payload (`agentDragKinds` mirrors the drag
+  trigger's `entityKinds`; `null` = no drag trigger, drops rejected;
+  `[]` = accepts every kind).
+- **The open Agent chat window** — accepts drops for the active agent
+  without drag-trigger gating (dropping into an open conversation is
+  explicit intent, like typing).
+
+Double-clicking an agent's user tile on the desktop opens the Agent
+chat window (the built-in `agent-chat` opener, gated by a per-file
+`appliesTo` predicate on `file.shape.isAgent`) instead of the user
+profile; human user tiles are unaffected. The user-file payload
+carries `agentDescription` so the chat header can show the agent's
+"when to use" line without a REST roundtrip.
+
+Accepted drag payload types are the in-tree entity carriers:
+`'shortcut'` (site folder tiles, `wpd-tile` drag-out; `attachment`
+maps to `media`, pages are detected via `bridgePayload.postType`) and
+`'desktop-file'` (wallpaper tiles, via `placement.file`).
+
+---
+
 ## See also
 
 - [Hooks Reference](./hooks-reference.md) — the PHP side of the API.

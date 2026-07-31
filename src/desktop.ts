@@ -232,6 +232,7 @@ import {
 } from './desktop-files';
 import { isSyntheticPlacement, mountFilesLayer } from './desktop-files/layer';
 import { installRecycleBinDropTargets } from './desktop-files/recycle-bin-targets';
+import { installAgentTileDropHandlers } from './desktop-files/agent-drop-targets';
 import { startFilesHeartbeat } from './desktop-files/heartbeat';
 import { startFilesRestoreSync } from './desktop-files/restore-sync';
 import { buildOccupiedSet, snapToEmptyCell } from './desktop-files/grid';
@@ -3389,6 +3390,9 @@ function init(): void {
 	// Deferred to idle: drop targets only matter when the user is
 	// actively dragging, never on first paint.
 	scheduleIdleBoot( () => installRecycleBinDropTargets( dragManager ) );
+	// Agent user tiles accept entity drops (inert while the agents
+	// extended option is off — no tile carries `isAgent` then).
+	scheduleIdleBoot( () => installAgentTileDropHandlers() );
 
 	// Wire the cross-feature Heartbeat bus before any consumer
 	// (presence, recycle bin, third-party plugins) registers a

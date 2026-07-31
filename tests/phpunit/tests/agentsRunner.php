@@ -569,7 +569,51 @@ class Tests_DesktopMode_AgentsRunner extends WP_UnitTestCase {
 		$result = desktop_mode_agent_invoke( $agent->ID, 'loop' );
 		$this->assertWPError( $result );
 		$this->assertSame( 'desktop_mode_agent_runner_max_turns', $result->get_error_code() );
-		$this->assertSame( DESKTOP_MODE_AGENT_RUNNER_MAX_TURNS, $calls );
+		// Cap turns + the forced tool-less attempt (which here still
+		// "called a tool", so the error is preserved).
+		$this->assertSame( DESKTOP_MODE_AGENT_RUNNER_MAX_TURNS + 1, $calls );
+	}
+
+	/**
+	 * When the cap is hit, one forced TOOL-LESS generate turns the
+	 * transcript into a best-effort final answer instead of an error.
+	 *
+	 * @covers ::desktop_mode_agent_runner_loop
+	 */
+	public function test_turn_cap_forces_a_final_toolless_answer() {
+		$agent = $this->create_agent();
+		$calls          = 0;
+		$forced_tools   = null;
+		$this->stub_generate(
+			static function ( $ignored, $history, $tool_defs ) use ( &$calls, &$forced_tools ) {
+				++$calls;
+				if ( $calls <= DESKTOP_MODE_AGENT_RUNNER_MAX_TURNS ) {
+					return array(
+						'text'           => null,
+						'function_calls' => array(
+							array(
+								'name'      => 'never_registered',
+								'call_id'   => 'call-' . $calls,
+								'arguments' => '{}',
+							),
+						),
+						'message'        => null,
+					);
+				}
+				$forced_tools = $tool_defs;
+				return array(
+					'text'           => 'Best effort from what I gathered.',
+					'function_calls' => array(),
+					'message'        => null,
+				);
+			}
+		);
+
+		$result = desktop_mode_agent_invoke( $agent->ID, 'loop' );
+		$this->assertNotWPError( $result );
+		$this->assertSame( 'Best effort from what I gathered.', $result['text'] );
+		$this->assertSame( DESKTOP_MODE_AGENT_RUNNER_MAX_TURNS + 1, $result['turns'] );
+		$this->assertSame( array(), $forced_tools, 'The forced final turn must advertise no tools.' );
 	}
 
 	/**
@@ -721,6 +765,28 @@ class Tests_DesktopMode_AgentsRunner extends WP_UnitTestCase {
 	}
 
 	/**
+	 * The AI Client pins an EXPLICIT 30s timeout via `RequestOptions`
+	 * in the `WP_AI_Client_Prompt_Builder` constructor, bypassing the
+	 * WordPress HTTP default entirely — the wrapper must raise its
+	 * `wp_ai_client_default_request_timeout` filter too, or long
+	 * generations die at 30s ("timed out after 30007 milliseconds").
+	 *
+	 * @covers ::desktop_mode_agent_with_http_timeout
+	 */
+	public function test_ai_client_request_timeout_is_raised_too() {
+		$seen = null;
+		desktop_mode_agent_with_http_timeout(
+			static function () use ( &$seen ) {
+				$seen = apply_filters( 'wp_ai_client_default_request_timeout', 30.0 );
+			}
+		);
+
+		$this->assertSame( (float) DESKTOP_MODE_AGENT_HTTP_TIMEOUT, $seen );
+		// Released afterwards, like the generic filter.
+		$this->assertSame( 30.0, apply_filters( 'wp_ai_client_default_request_timeout', 30.0 ) );
+	}
+
+	/**
 	 * Released afterwards — an agent run must not widen the timeout for
 	 * unrelated requests later in the same page load.
 	 *
@@ -818,5 +884,141 @@ class Tests_DesktopMode_AgentsRunner extends WP_UnitTestCase {
 
 		$this->assertNotWPError( $result );
 		$this->assertSame( 5, $during );
+	}
+
+	/**
+	 * @covers ::desktop_mode_agent_generate_error_is_transient
+	 */
+	public function test_transient_error_detection() {
+		$transient = array(
+			'Unexpected Anthropic API response: Missing the "content" key.',
+			'No models found that support text_generation for this prompt.',
+			'Gateway Timeout (504) - upstream timed out',
+			'cURL error 28: Operation timed out after 180001 milliseconds',
+		);
+		foreach ( $transient as $message ) {
+			$this->assertTrue(
+				desktop_mode_agent_generate_error_is_transient( new WP_Error( 'e', $message ) ),
+				"Should be transient: {$message}"
+			);
+		}
+
+		$permanent = array(
+			"Bad Request (400) - Invalid schema for response_format 'response_schema'.",
+			'Message must be a non-empty string.',
+			'This agent reached its hourly invocation limit.',
+		);
+		foreach ( $permanent as $message ) {
+			$this->assertFalse(
+				desktop_mode_agent_generate_error_is_transient( new WP_Error( 'e', $message ) ),
+				"Should be permanent: {$message}"
+			);
+		}
+	}
+
+	/**
+	 * A transient generate failure is retried once — the flap the user
+	 * recovered from by typing "Can you try again?" heals silently.
+	 *
+	 * @covers ::desktop_mode_agent_invoke
+	 */
+	public function test_transient_generate_failure_is_retried_once() {
+		$agent = $this->create_agent();
+		$calls = 0;
+		$this->stub_generate(
+			static function () use ( &$calls ) {
+				$calls++;
+				if ( 1 === $calls ) {
+					return new WP_Error(
+						'desktop_mode_ai_error',
+						'Unexpected Anthropic API response: Missing the "content" key.'
+					);
+				}
+				return array(
+					'text'           => 'Recovered.',
+					'function_calls' => array(),
+					'message'        => null,
+				);
+			}
+		);
+
+		$result = desktop_mode_agent_invoke( $agent->ID, 'Say hi.' );
+		$this->assertNotWPError( $result );
+		$this->assertSame( 'Recovered.', $result['text'] );
+		$this->assertSame( 2, $calls );
+	}
+
+	/**
+	 * Deterministic rejections are NOT retried — a schema the provider
+	 * rejects would fail identically and only add latency and spend.
+	 *
+	 * @covers ::desktop_mode_agent_invoke
+	 */
+	public function test_permanent_generate_failure_is_not_retried() {
+		$agent = $this->create_agent();
+		$calls = 0;
+		$this->stub_generate(
+			static function () use ( &$calls ) {
+				$calls++;
+				return new WP_Error(
+					'desktop_mode_ai_error',
+					"Bad Request (400) - Invalid schema for response_format 'response_schema'."
+				);
+			}
+		);
+
+		$result = desktop_mode_agent_invoke( $agent->ID, 'Say hi.' );
+		$this->assertWPError( $result );
+		$this->assertSame( 1, $calls );
+	}
+
+	/**
+	 * A provider refusal (surfaced by the Anthropic plugin as the
+	 * cryptic missing-content parse error) is translated into an
+	 * actionable message once the retry doesn't help.
+	 *
+	 * @covers ::desktop_mode_agent_humanize_generate_error
+	 */
+	public function test_refusal_is_translated_for_the_user() {
+		$agent = $this->create_agent();
+		$this->stub_generate(
+			static function () {
+				return new WP_Error(
+					'desktop_mode_ai_error',
+					'Unexpected Anthropic API response: Missing the "content" key.'
+				);
+			}
+		);
+
+		$result = desktop_mode_agent_invoke( $agent->ID, 'Translate this.' );
+		$this->assertWPError( $result );
+		$this->assertSame( 'desktop_mode_agent_provider_refusal', $result->get_error_code() );
+		$this->assertStringContainsString( 'safety system', $result->get_error_message() );
+		// The provider's original message survives for debugging.
+		$this->assertStringContainsString( 'Missing the "content" key', $result->get_error_data()['detail'] );
+	}
+
+	/**
+	 * A flap that persists through the retry still surfaces as an error
+	 * — exactly one retry, never a loop.
+	 *
+	 * @covers ::desktop_mode_agent_invoke
+	 */
+	public function test_persistent_transient_failure_surfaces_after_one_retry() {
+		$agent = $this->create_agent();
+		$calls = 0;
+		$this->stub_generate(
+			static function () use ( &$calls ) {
+				$calls++;
+				return new WP_Error(
+					'desktop_mode_ai_error',
+					'Gateway Timeout (504) - upstream timed out'
+				);
+			}
+		);
+
+		$result = desktop_mode_agent_invoke( $agent->ID, 'Say hi.' );
+		$this->assertWPError( $result );
+		$this->assertSame( 2, $calls );
 	}
 }

@@ -4,7 +4,7 @@ Tags: admin, dashboard, desktop, productivity, ai
 Requires at least: 6.0
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 0.9.7
+Stable tag: 0.9.8
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -121,6 +121,45 @@ The **Inkfall** game's word list (`assets/games/inkfall/words.txt`) is generated
 * **[LDNOOBW English list](https://github.com/LDNOOBW/List-of-Dirty-Naughty-Obscene-and-Otherwise-Bad-Words)** (CC-BY 4.0) — used as an exclusion filter.
 
 == Changelog ==
+
+= 0.9.8 =
+* Desktop Themes — uploadable ZIP theme system
+* Add a Drafts widget
+* Add a window corner-radius setting (Sharp / Default / Round)
+* Add editor-preview eye button with live split-view preview
+* Correct the AI Copilot and settings tab references
+* Update wp-coding-standards/wpcs to 3.4.1
+* Strip version-history annotations across PHP, TS, and Markdown
+* Fix invisible context menus and confirm dialogs (transparent panel background)
+* Let a desktop theme recommend OS settings
+* Fix window id plumbing, and restore native windows across a reload
+* Decode html entities in post excerpts
+* Fix Recycle Bin Sync
+* Add Aero Peek preview with snap-back to dock peek
+* Fix Cmd+K entity search not finding posts in Commands mode
+* Make the command palette follow the active desktop theme
+* Redesign the native Comments window as a two-pane conversation view
+* Keep menu edit links inside the current window
+* Name desktop objects after things, not after the software
+* Give tooltips their own two theming tokens
+* Add an AI writing assistant to the Drafts widget
+* Fix active tab underline highlight in Appearance Add Theme view
+* Show the whole component kit in OS Settings, and make it searchable
+* Expose dock glyph and focused window control colours as tokens
+* Overview: show minimized windows in grid to fix badge count mismatch
+* Decode html entities in recycle bin
+* Add an admin-bar presentation mode to OS Settings and the theme system
+* AI Agents framework: agents as WordPress users, abilities runner, chat with persisted conversations, drag & drop and Send to triggers
+* Close privilege-escalation and session-bypass paths
+* Enforce strict structured-output schemas at the provider boundary
+* Add window reveal animations
+* Add Popup Siege as a Desktop Mode game extension
+* Add SOL Inbound Monologue RSS reader extension
+* Drop the esbuild CSS syntax warning in the drafts widget
+* Improve the agents chat and Agents section UX
+* Contain window-reveal play failures and stop over-promising `owner`
+* Enhance agent capabilities and HTTP timeout management
+* Provider robustness — OpenAI strict schema, Anthropic refusals, retries, real request timeout
 
 = 0.9.7 =
 * Add Drafts widget

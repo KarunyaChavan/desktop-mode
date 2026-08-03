@@ -112,7 +112,7 @@ describe( 'sanitizeRecommendedOsSettings', () => {
 	} );
 
 	test( 'keys outside the schema are dropped', () => {
-		// The payload passes through the `desktop_mode_desktop_themes`
+		// The payload passes through the `openstation_desktop_themes`
 		// PHP filter AFTER sanitization, so the shell must not treat it
 		// as trusted. A theme must never reach a feature switch.
 		expect(
@@ -274,7 +274,7 @@ describe( 'applyThemeRecommendations', () => {
 	} );
 
 	test( 'seeds windowRadius — the corner preset a theme asks for', () => {
-		// The path that replaced pinning `--desktop-mode-window-radius`
+		// The path that replaced pinning `--os-window-radius`
 		// as a token: a token cannot beat the preset's inline write, a
 		// recommendation sets the preset itself.
 		seedLibrary( { windowRadius: 'round' } );

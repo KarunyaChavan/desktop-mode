@@ -3,12 +3,12 @@
 		The theme previewing itself: every colour below is one of the
 		tokens this manifest declares, at the value it declares.
 
-		desk       desktop-mode-bg
-		dock       desktop-mode-dock-bg / dock-border / dock-icon-color
-		window     desktop-mode-window-bg / window-border / window-radius
-		title bar  desktop-mode-titlebar-bg / titlebar-color
-		controls   desktop-mode-titlebar-btn-color
-		body       wpd-fg / wpd-fg-muted / wpd-border / wpd-accent
+		desk       os-bg
+		dock       os-dock-bg / dock-border / dock-icon-color
+		window     os-window-bg / window-border / window-radius
+		title bar  os-titlebar-bg / titlebar-color
+		controls   os-titlebar-btn-color
+		body       os-fg / os-fg-muted / os-border / os-accent
 
 		XML comments cannot carry a double hyphen, so the token names
 		above are written without their leading dashes.

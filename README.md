@@ -119,6 +119,15 @@ See [`docs/architecture.md`](./docs/architecture.md) for how the pieces fit toge
 │   └── ai-copilot/              # AI assistant (OpenAI client, analysis, search, jobs)
 ├── assets/                # hand-authored CSS + JS build output
 │   ├── css/  desktop.css, windows.css, dock.css, chromeless.css, variables.css
+│   │          variables.css carries the OpenStation palette — every design
+│   │          token the shell and the <wpd-*> kit read, declared once
+│   ├── fonts/    Geist + Geist Mono (variable, SIL OFL 1.1)
+│   ├── wallpapers/  the four brand desks: galaxy (default), space,
+│   │          holomesh, pulsemesh
+│   ├── desktop-themes/legacy/
+│   │          the built-in "Desktop Mode (Legacy)" theme — a frozen snapshot of
+│   │          every token at its pre-brand value; never regenerated.
+│   │          Zip it with npm run package:legacy-theme
 │   └── js/   Vite bundles (gitignored; regenerate with npm run build) — only
 │             admin-bar.js and media-library-enhanced.js are hand-written and tracked
 ├── src/                   # TypeScript source — compiled by Vite
@@ -212,6 +221,8 @@ You need a running WordPress to load the plugin into. Pick whichever is easier.
 Run `npm run package` to build a zip from `HEAD` (with correct 0644 / 0755 permissions), then follow the [Quick install](#quick-install) steps 2–3 to upload and activate it. Re-package and re-upload after each change.
 
 > If you changed source, run `npm run build` before `npm run package` — the Vite output is gitignored, and `bin/package.sh` splices the built files into the zip from your working tree.
+
+> `npm run package:legacy-theme` builds `dist/desktop-mode-legacy-theme.zip` — the built-in [Legacy desktop theme](./docs/desktop-themes.md#the-legacy-theme--start-here) as an installable theme ZIP. The plugin registers Legacy from code either way; the zip is for handing it to someone else or forking it into a theme of your own.
 
 ##### Clone `wordpress-develop` and symlink
 

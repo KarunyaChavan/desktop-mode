@@ -1665,6 +1665,30 @@ apply_filters( 'desktop_mode_wallpaper_context_menu_items', array[] $items );
 
 ---
 
+### `desktop_mode_mio_config` — Experimental
+
+Mio's appearance and physics, shipped to the shell as `desktopModeConfig.mio`. Returning a partial array is fine — anything you leave out keeps the reference design, and every value is re-clamped client-side before it reaches the simulation, so a filter can't produce a broken shell. Colours accept integers (`0x05050a`) or CSS hex strings (`'#05050a'`).
+
+Full key/range table in [mio.md](./mio.md#configuration-reference).
+
+```php
+apply_filters( 'desktop_mode_mio_config', array $config );
+```
+
+```php
+add_filter( 'desktop_mode_mio_config', function ( $config ) {
+	// A slower, heavier, teal companion.
+	$config['appearance']['hueStart'] = 170;
+	$config['appearance']['hueSpan']  = 40;
+	$config['physics']['magnetStrength'] = 3400;
+	return $config;
+} );
+```
+
+The on/off state is not part of this filter — it is the per-user OS setting `mioEnabled`, toggled from Mio's dock tile.
+
+---
+
 ## AI Copilot hooks — Stable
 
 The AI assistant (Cmd+K palette) runs an agentic loop server-side, analyses entities on save, and exposes a search REST endpoint. Every decision point is hookable so plugins can adjust model selection, customise prompts, limit which entities get analysed, or react to analysis completion.
@@ -4044,6 +4068,20 @@ Filters one sanitized manifest before it is compiled and stored.
 - **Param** `array $raw` — the manifest exactly as the author wrote it.
 - **Param** `string $slug`
 - **Return** `array`
+
+### `desktop_mode_legacy_theme_manifest_path` — Experimental *(filter)*
+
+Absolute path the built-in **Desktop Mode (Legacy)** theme reads its
+`theme.json` from. Legacy is a frozen snapshot of the shell's own
+defaults, registered from code on `init` priority 5 — see
+[desktop-themes.md](./desktop-themes.md#the-legacy-theme--start-here).
+Point this at your own file to ship a forked token set under the same
+registration; to remove the theme entirely, call
+`desktop_mode_unregister_desktop_theme( 'desktop-mode/legacy' )` on
+`init` at a priority above 5.
+
+- **Param** `string $path` — defaults to `assets/desktop-themes/legacy/theme.json` inside the plugin.
+- **Return** `string`
 
 ### `desktop_mode_desktop_theme_upload_capability` — Experimental *(filter)*
 

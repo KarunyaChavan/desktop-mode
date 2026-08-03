@@ -6,6 +6,9 @@ The imperative rules for working in this repo, plus the contributor-only gotchas
 
 - [Hard rules](#hard-rules)
   - [Never hand-edit JS in `assets/js/`](#never-hand-edit-js-in-assetsjs)
+  - [The palette lives in `variables.css`](#the-palette-lives-in-variablescss--one-declaration-one-owner)
+  - [Never declare a themeable token on a component's `:host`](#never-declare-a-themeable-token-on-a-components-host)
+  - [The Legacy theme manifest is frozen data](#the-legacy-theme-manifest-is-frozen-data-not-build-output)
   - [Use `wp.desktop.fetch` (or `trackedFetch`), never raw `fetch()`](#use-wpdesktopfetch-or-trackedfetch-never-raw-fetch)
   - [Use `wp.desktop.confirm` (or `wpdConfirm`), never `window.confirm`/`alert`/`prompt`](#use-wpdesktopconfirm-or-wpdconfirm-never-windowconfirmalertprompt)
   - [Use `wpd-*` components, not raw HTML controls](#use-wpd--components-not-raw-html-controls)
@@ -48,6 +51,55 @@ Process for any JS change:
 If you ever find yourself reaching for `assets/js/*.js` directly, stop and write the TS instead. Hand-edited JS is overwritten by the next `npm run build` and produces no TS-checked types, a silent class of bug.
 
 **Lint scope:** `npm run lint` runs on `src/**/*.ts` only. Test files under `tests/vitest/` aren't in the lint config (typescript-eslint project doesn't include them); rely on `npm run typecheck` + `npm run test:js` to catch issues there.
+
+### The palette lives in `variables.css` — one declaration, one owner
+
+The shell wears the [OpenStation brand](https://nuriapenya.github.io/open-station-brand/), and it wears it as **token declarations in `assets/css/variables.css` and nowhere else**. Void as the base, Obsidian for surfaces, Pulse and Nebula for identity moments, Sirius and Starlight for contrast, the Shade ramp for text hierarchy and lines.
+
+**The palette is scoped to `body.desktop-mode-active`, never `:root`.** `variables.css` is a dependency of `chromeless.css`, so it also loads inside every iframe window — a real `wp-admin` document. On `:root` the palette would repaint WordPress's own UI in there, and `--wp-admin-theme-color` alone would move Core's primary buttons, links and focus rings across every admin screen. Iframe documents carry `desktop-mode-chromeless`, match nothing, and render on the fallback literals. **An admin page in a window looks exactly as it does outside one — that is a promise, and `tests/vitest/brand-palette.test.ts` holds you to it.**
+
+Three rules follow from that, and all have tests:
+
+1. **Restyling means changing a token's value in `variables.css`**, not adding a rule in a feature stylesheet. A colour declared next to the thing it paints is out of reach of the palette *and* of every desktop theme — including Legacy, the way back to the pre-brand look.
+2. **Every consuming rule keeps reading `var( --token, <literal> )`**, and that literal stays the pre-brand WordPress-admin value. It is the floor if the stylesheet fails to load, and it is what the Legacy snapshot collected. Never "tidy" a fallback away.
+
+**The failure mode to watch for after a palette change** is a chain that now means something else: a fill resolving to a 10%-alpha wash, or a base and its hover state — declared in two different rules, distinguished only by their fallback literals — collapsing onto the same value once the shared token is declared. `<wpd-button>`'s ghost/secondary hover did exactly that. When a surface stops reacting to the pointer, check whether both states resolve through the same palette token, and declare the second one.
+
+### Never declare a themeable token on a component's `:host`
+
+**In a `<wpd-*>` component, a default belongs in a `var()` fallback, never in a `--wpd-*` declaration on the bare `:host` block.**
+
+A custom property declared on `:host` matches the host *element*, and a declaration matching the element always beats a value that element would otherwise *inherit*. The palette declares on `body.desktop-mode-active`; a desktop theme declares on `body.desktop-mode-desktop-theme-<slug>`. Both are ancestors. So this:
+
+```css
+:host { --wpd-table-bg: var( --wpd-surface, #fff ); }
+```
+
+does not read as "default to the surface colour". It reads as *"`--wpd-table-bg` can never be set from outside this element again"* — the theme's declaration of that name is dead, and so is the palette's. `<wpd-table>`, `<wpd-modal>`, `<wpd-progress-bar>` and `<wpd-spinner>` between them pinned 22 names this way; every one is in the Legacy snapshot and none of them reached its component.
+
+Read the public token **into a private alias** instead:
+
+```css
+:host { --_bg: var( --wpd-table-bg, var( --wpd-surface, #fff ) ); }
+/* …then every use site reads var( --_bg ). */
+```
+
+With no declaration on the host to find, the `var()` resolves the inherited value — theme first, palette next, the pre-brand literal last. `<wpd-rating-summary>` is the reference implementation.
+
+Two things this does **not** apply to:
+
+- **State modifiers** (`:host( [ compact ] )`, `:host( [ tone='danger' ] )`, `:host( [ preset='inline' ] )`) keep declaring the *public* token. The alias reads it off the host, so the state still overrides the default, and a document-tree rule still outranks the state the way it always did.
+- **A component that deliberately opts out of a palette value** — `<wpd-modal>`'s dialog surface is dark whatever the admin colour scheme says, so following `--wpd-fg` would put near-black text on a near-black dialog. It still re-points `--wpd-fg` on `:host`, but through `--wpd-modal-text`, a name the palette owns. Opting out of the *value* is fine; opting out of *reachability* is not.
+
+`tests/vitest/component-token-reachability.test.ts` is the guard, with the opt-outs named in one allowlist.
+
+### The Legacy theme manifest is frozen data, not build output
+
+`assets/desktop-themes/legacy/theme.json` is a **frozen snapshot**: the built-in [Legacy desktop theme](docs/desktop-themes.md#the-legacy-theme--start-here), every design token at the value it resolved to before the brand. It was collected from the stylesheets once, by hand, and it is a plain data file from here on.
+
+**Changing a default does NOT mean updating Legacy.** Someone wearing it asked for the old look and is entitled to keep it; a manifest that tracked the code would silently turn the theme back into a no-op every release. Nothing generates it — not the build, not CI, not a script — and nothing should. There is deliberately no tool that can rewrite it.
+
+`Tests_DesktopMode_DesktopThemesLegacy` is the guard: it pins the token count and a set of canonical values, and fails if any value stops satisfying the manifest's value grammar — otherwise a silent drop, since a rejected token just falls back to the built-in look. If you find yourself editing the JSON, that test failing is the question "is this really what Legacy should say forever?" being asked out loud.
 
 ### Use `wp.desktop.fetch` (or `trackedFetch`), never raw `fetch()`
 
@@ -268,6 +320,7 @@ The full index lives in [`docs/README.md`](docs/README.md). Quick reference:
 | `docs/plugin-compat-layer.md` | A chromeless-CSS shim, offset neutralizer, or dock-builder adaptation for a third-party plugin shape is added/changed. |
 | `docs/dock-customization.md` | Dock rendering, ordering, or decoration hooks change. |
 | `docs/desktop-themes.md` | The desktop-theme manifest format, icon/texture slot lists, value grammar, or fallback semantics change. **Slot names must stay equal on both sides** (`desktop_mode_desktop_theme_icon_slots()` ↔ `src/desktop-themes/slots.ts`). |
+| `docs/mio.md` | Mio's simulation, appearance/physics config keys, layer stacking, or `wp.desktop.mio` surface changes. **The four soft-body failure modes documented there (no core particle; edge-normal pressure; one rest shape shared by every spring family; angular-order constraint against folding) are load-bearing — read before touching `src/mio/soft-body.ts`.** |
 | `docs/files-on-desktop.md` | Desktop file/folder behavior, tile metadata, or placement changes. |
 | `docs/folder-sharing.md` | Folder-sharing API, ACL model, or REST routes change. |
 | `docs/migration-*.md` | A breaking change ships, write a migration note here in the same PR. |

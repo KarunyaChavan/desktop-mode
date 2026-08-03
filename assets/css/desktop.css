@@ -9,9 +9,14 @@
  * @since 0.1.0
  */
 
-/* Solid backdrop behind the shell. */
+/*
+ * Solid backdrop behind the shell. Reads the backstop token rather
+ * than a literal so it moves with the desk: this is the colour a
+ * dropped frame shows, and it has to be the same one the shell paints
+ * or the seam is visible at exactly the wrong moment.
+ */
 body.desktop-mode-active {
-	background: #1d2327;
+	background: var( --desktop-mode-backstop, #1d2327 );
 	overflow: hidden;
 }
 
@@ -301,6 +306,15 @@ body.desktop-mode-active #wpcontent {
 	overflow: hidden;
 	z-index: var(--desktop-mode-z-base);
 	/*
+	 * Opaque floor. The wallpaper paints over this and is what anyone
+	 * actually sees — but the wallpaper is one layer among several,
+	 * and behind this shell is the classic admin page, which is WHITE.
+	 * Without a background here, any frame in which the wallpaper
+	 * doesn't paint flashes that white through the whole viewport.
+	 * See `--desktop-mode-backstop`.
+	 */
+	background: var(--desktop-mode-backstop, #1d2327);
+	/*
 	 * Shell typeface. Every piece of chrome that doesn't set its own
 	 * face inherits from here — dock labels, desktop icon labels,
 	 * widgets, the overview. Windows override with `--wpd-font` on
@@ -331,6 +345,128 @@ body.desktop-mode-active #wpcontent {
 	overflow: hidden;
 	pointer-events: none;
 }
+
+/*
+ * Mio layer — the desk companion.
+ *
+ * A sibling of the wallpaper inside the shell, but at the far end of
+ * the stack: Mio paints ABOVE windows (it perches on them)
+ * and below the dock (it must never cover navigation). Created on
+ * demand by `src/mio/controller.ts`. A shell whose user has never
+ * switched Mio on has no extra element at all; switching it off
+ * hides this one rather than removing it, because the instance is
+ * parked (WebGL context intact) rather than destroyed — see the
+ * `parked` field there.
+ *
+ * The layer and its <canvas> are permanently inert. Making a
+ * full-shell canvas interactive — even conditionally, from a
+ * per-frame hit test — would swallow clicks meant for the window
+ * underneath. Only the small round `__handle` inside it takes
+ * pointer events, and it rides on the blob.
+ */
+.desktop-mode-mio {
+	position: absolute;
+	inset: 0;
+	z-index: var(--desktop-mode-z-mio);
+	overflow: hidden;
+	pointer-events: none;
+}
+
+.desktop-mode-mio__handle {
+	position: absolute;
+	/*
+	 * PHYSICAL `top` / `left`, deliberately — the one place in this
+	 * sheet that isn't logical. The handle is positioned every frame
+	 * by a `translate3d()` carrying the body's canvas coordinates,
+	 * and `transform` is always physical. Anchoring with
+	 * `inset-inline-start` would flip the origin to the right edge
+	 * under RTL while the translation kept pushing rightwards, and
+	 * the handle would walk off screen.
+	 */
+	top: 0;
+	left: 0;
+	border-radius: 50%;
+	pointer-events: auto;
+	cursor: grab;
+	/* Promote to its own layer: the handle is re-positioned via
+	 * `transform` on every animation frame. */
+	will-change: transform;
+	touch-action: none;
+}
+
+.desktop-mode-mio__handle.is-dragging {
+	cursor: grabbing;
+}
+
+/*
+ * "Make it yours" panel — a live-preview dialog, not a modal.
+ *
+ * `<wpd-modal>` is built for the usual case: dim the page, blur it
+ * slightly, put the decision in front of everything. Every one of
+ * those defaults is wrong here, because the thing being edited is
+ * ON the page and the whole point is watching it change.
+ *
+ *   - No scrim and no `backdrop-filter`, or the companion the sliders
+ *     are driving is a blurred grey smudge behind them.
+ *   - `pointer-events: none` on the scrim so the desk stays live: Mio
+ *     can still be picked up and thrown while the panel is open, and a
+ *     click on the wallpaper doesn't dismiss the panel mid-adjustment.
+ *     `::part(dialog)` puts them back for the box itself.
+ *   - Parked against the inline end rather than centred, so it isn't
+ *     sitting on top of the subject.
+ *
+ * Mio never treats the panel as an obstacle: the collision set comes
+ * from `getWallpaperSurfaces()`, which seeds windows, the shell floor,
+ * docks and widget cards — a dialog on `document.body` is none of
+ * those, so there is nothing to bump into.
+ */
+.desktop-mode-mio-panel {
+	background: transparent;
+	background-image: none;
+	backdrop-filter: none;
+	pointer-events: none;
+	justify-content: flex-end;
+	padding-inline-end: clamp(16px, 4vw, 64px);
+}
+
+/*
+ * Both halves are required, and the second one is easy to miss.
+ *
+ * `::part(dialog)` reaches the box in the modal's SHADOW tree — its
+ * header, title and close button inherit from there. But the controls
+ * are slotted LIGHT-DOM children of `<wpd-modal>`, and slotted content
+ * inherits from its light-DOM parent (the host) rather than from the
+ * shadow ancestor it is projected into. So the host's
+ * `pointer-events: none` reaches them regardless of what the part
+ * says, and without this second rule every slider and button in the
+ * panel is inert while looking perfectly normal.
+ */
+.desktop-mode-mio-panel::part(dialog),
+.desktop-mode-mio-panel > * {
+	pointer-events: auto;
+}
+
+/*
+ * Overview (Exposé) hides the desk furniture so the window grid
+ * reads cleanly — Mio goes with the widgets and the notes.
+ * `:has()` rather than a descendant selector because Mio
+ * layer is a sibling of `.desktop-mode-shell__body`, not a child of
+ * the desktop area.
+ */
+.desktop-mode-mio {
+	transition: opacity 160ms ease;
+}
+
+.desktop-mode-shell:has( .desktop-mode-area--overview ) .desktop-mode-mio {
+	opacity: 0;
+}
+
+/*
+ * Reduced motion is handled in the simulation, not here: the runtime
+ * zeroes the idle float and the hue drift so Mio holds still
+ * until the user actually interacts with it. Hiding it would be
+ * wrong — the user switched it on deliberately.
+ */
 
 /*
  * Desktop-theme wallpaper texture (DESKTOP slot).

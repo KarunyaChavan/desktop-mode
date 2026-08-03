@@ -1611,6 +1611,60 @@ The games framework calls `suspend( 'game:<windowId>' )` / `resume(…)` around 
 
 ---
 
+### `wp.desktop.mio` — Experimental
+
+Mio: a soft-body companion that floats over the wallpaper, falls onto nearby windows, watches the pointer, and can be dragged anywhere. Off by default; users toggle it from its **Mio** tile on the bottom dock, and can hide that tile from OS Settings → Apps & Icons.
+
+Full documentation — architecture, the simulation, the configuration table, the reason the canvas is never interactive — is in [mio.md](./mio.md).
+
+```typescript
+interface MioApi {
+    isEnabled(): boolean;
+    enable(): Promise< void >;             // persists the preference
+    disable(): void;                       // persists; stops + hides, keeps the context
+    setStyle( partial ): void;             // the user's look; applies live AND saves to their account
+    getLook(): MioLook;                    // the user's own look, as stored
+    commitStyle(): void;                   // write it now — what closing the panel calls
+    resetStyle(): void;                    // forget the saved look, restore the site's Mio
+    toggle(): Promise< void >;             // what the menu entry calls
+    getPosition(): { x: number; y: number } | null;   // viewport coords, null when off
+    setPosition( x: number, y: number ): void;        // no-op when off
+    getConfig(): MioConfig;
+    setConfig( partial: PartialMioConfig ): void;  // merged, clamped, applied live
+}
+
+interface MioLook {
+    appearance: Partial< MioAppearance >;   // colour, ring, glow, hologram, body, eyes
+    physics: Partial< MioLookPhysics >;     // silhouette, shuffle, idle wobble
+}
+```
+
+`enable()` / `disable()` / `toggle()` write the per-user OS setting `mioEnabled` exactly as the dock tile does. **The user's look is per-user too** — it rides the same OS Settings blob as `mioStyle`, so a Mio built on a laptop is waiting on the phone. Only the resting position is browser-local (`localStorage`, `desktop-mode-mio-position`): where Mio sits is a fact about one screen, how it looks is a fact about the person.
+
+`setStyle()` takes a **flat bag** of appearance keys and the look-physics keys — `shapePreset`, `shapeLobes`, `shapeAmount`, `shapeAngle`, `shapeShuffle`, `idleWobble`, `idleWobbleSpeed` — and splits them itself. Anything else is dropped: `radius` is a size rather than a look, and the spring constants are the site's. Every call applies live *and* records the change; `commitStyle()` flushes it immediately (the style panel calls it on close). Reach for `setConfig()` when a plugin wants to adjust Mio programmatically without that adjustment becoming the user's saved look.
+
+```js
+// Give Mio a shape, and stop it changing on its own.
+wp.desktop.mio.setStyle( { shapePreset: 'star', shapeShuffle: 0 } );
+```
+
+The first `enable()` lazy-loads `assets/js/mio[.min].js` and PixiJS — nothing about the simulation ships in `desktop.min.js`, so a user who never switches Mio on never downloads it.
+
+```js
+wp.desktop.ready( () => {
+    // A bigger, calmer Mio for a kiosk screen.
+    wp.desktop.mio.setConfig( {
+        appearance: { radius: 90, glow: 1.6 },
+        physics: { magnetStrength: 1400, floatAmplitude: 20 },
+    } );
+    void wp.desktop.mio.enable();
+} );
+```
+
+Server-side defaults come from the `desktop_mode_mio_config` PHP filter; the `desktop-mode.mio.config` JS filter gets the last word before mount. Both are re-sanitized, so out-of-range values are clamped rather than rejected.
+
+---
+
 ### `wp.desktop.games` — Experimental
 
 The desktop games surface: a shared registry (the hub's game grid + per-game detail panel repaint live), and a launcher that opens games in native windows.
@@ -3106,14 +3160,17 @@ Each entry is a read-only descriptor — the underlying `SystemDockItem` (with i
 ```typescript
 [
     {
-        id:       string,
-        title:    string,
-        icon:     string,
-        affinity: 'core' | 'plugin',  // 'core' tiles route to side rail in Classic
+        id:        string,
+        title:     string,
+        icon:      string,
+        affinity:  'core' | 'plugin',  // 'core' tiles route to side rail in Classic
+        placeable: boolean,            // opted into OS Settings → Apps & Icons
     },
     …
 ]
 ```
+
+`placeable` is opt-in (`SystemDockItem.placeable`), because most system tiles are load-bearing — OS Settings is how you reach the very screen that would hide it. Set it on tiles that are genuinely optional decoration; Mio's toggle is the shipped example. Note the visibility override is honoured whether or not the flag is set: all it controls is whether the user is offered a row.
 
 ```js
 const tiles = wp.desktop.listSystemTiles();
@@ -3546,6 +3603,20 @@ This closes the gap where a custom post type registered through a settings tool 
 
 ---
 
+#### `desktop-mode-pointer-move` — Experimental
+
+The cursor's position inside this iframe, in the iframe's own client coordinates. Sent **only** while the parent has armed the frame with [`desktop-mode-pointer-track`](#desktop-mode-pointer-track--experimental), throttled to ~25 Hz, from a passive capture-phase listener that never calls `preventDefault()`.
+
+Pointer events don't cross iframe boundaries, so the shell goes blind to the cursor the moment it enters a window. Anything shell-side that needs the true cursor position over window content consumes this and rebases it through the iframe element's bounding rect. Today's consumer is Mio's gaze ([mio.md](./mio.md#looking-at-the-pointer-across-iframes)).
+
+Coordinates only — no target element, no event object, nothing about the page's content.
+
+```typescript
+{ type: 'desktop-mode-pointer-move'; x: number; y: number }
+```
+
+---
+
 ### parent → iframe
 
 ```javascript
@@ -3600,6 +3671,18 @@ Asks the iframe to run a previously harvested `action`-kind command. Sent when t
 
 ```typescript
 { type: 'desktop-mode-commands-invoke'; name: string }
+```
+
+---
+
+#### `desktop-mode-pointer-track` — Experimental
+
+Arms or disarms the iframe's pointer forwarder (see [`desktop-mode-pointer-move`](#desktop-mode-pointer-move--experimental)). **Off by default**: a shell with no consumer never sends this and the iframe never installs the listener.
+
+The shell posts `{ enabled: true }` to every live iframe when a consumer starts, again to any frame that announces `desktop-mode-bridge-ready` (which fires on every navigation, so a frame re-arms itself after a page load), and `{ enabled: false }` when the last consumer tears down.
+
+```typescript
+{ type: 'desktop-mode-pointer-track'; enabled: boolean }
 ```
 
 ---
@@ -3664,6 +3747,22 @@ if ( wp.desktop.isReady() ) {
 | `desktop-mode.wallpaper.preview-params` | filter | Experimental | `Record<string, unknown> → Record<string, unknown>`, second arg `wallpaperId` — override a wallpaper's live-preview parameters before its `renderPreview` runs |
 | `desktop-mode.wallpaper.settings-changed` | action | Experimental | `{ id, settings }` — the user edited the wallpaper's settings through its `renderConfig` dialog; `settings` is the full post-merge bag. Mounted wallpapers live-apply from here |
 | `desktop-mode.wallpaper.surfaces` | filter | Stable | `WallpaperSurface[] → WallpaperSurface[]` — see below |
+
+#### Mio
+
+The desk companion. Full documentation in [mio.md](./mio.md).
+
+| Hook | Kind | Status | Payload |
+|---|---|---|---|
+| `desktop-mode.mio.config` | filter | Experimental | `MioConfig → MioConfig` — last word on appearance + physics before mount, on top of the `desktop_mode_mio_config` PHP filter. Re-sanitized after your filter runs, so out-of-range values are clamped rather than rejected |
+| `desktop-mode.mio.enabled` | action | Experimental | `{}` — the user switched it on |
+| `desktop-mode.mio.disabled` | action | Experimental | `{}` — the user switched it off |
+| `desktop-mode.mio.mounted` | action | Experimental | `{ position: { x, y } }` — on screen and simulating; viewport coordinates |
+| `desktop-mode.mio.unmounted` | action | Experimental | `{}` — the instance was genuinely destroyed and its WebGL context released. **Not** the signal for "the user switched Mio off": that parks the instance and fires `disabled`. In practice this only fires on page teardown |
+| `desktop-mode.mio.grabbed` | action | Experimental | `{ position: { x, y } }` — the user started dragging it |
+| `desktop-mode.mio.dropped` | action | Experimental | `{ position: { x, y } }` — dropped; the position is already persisted |
+| `desktop-mode.mio.displaced` | action | Experimental | `{ position: { x, y } }` — a window opened, moved, or maximised on top of it, so it hopped clear of the window cluster |
+| `desktop-mode.mio.shape-changed` | action | Experimental | `{ shape, from }` — the silhouette shuffle picked a new stock shape (`circle` \| `blob` \| `ghost` \| `potato`). Fires when the morph starts, not when it finishes |
 
 #### Arrange & Overview
 
@@ -3983,6 +4082,7 @@ Custom rail renderers (registered via `wp.desktop.registerDockRailRenderer`, see
 | `desktop-mode.dock.after-render` | action | Stable | `DockRenderContext` with frozen `tileElements: ReadonlyMap<string, HTMLElement>` |
 | `desktop-mode.dock.item-appended` | action | Stable | `{ id }` — fires when `wp.desktop.registerSystemTile()` lands a tile |
 | `desktop-mode.dock.item-removed` | action | Stable | `{ id, placement }` — symmetric counterpart to `item-appended` |
+| `desktop-mode.dock.refresh-active` | action | Experimental | No payload. One you **fire**, not listen to: repaints every tile's active dot. The dock already repaints on window lifecycle events, so this is only for a system tile whose `isOpen()` asks something other than "is a window open?" — Mio's asks whether the companion is on screen, and no window event will ever fire for that |
 
 **`DockHookContextBase`** (shared by both context types):
 
@@ -5845,12 +5945,19 @@ Applies a theme's `recommendedOsSettings` and persists them. Defaults
 to the active theme. Returns the keys actually written — `{}` when the
 theme is unknown or recommends nothing this shell can apply (a
 `dockRailRenderer` naming a renderer no plugin registered resolves to
-nothing).
+nothing, and so does an `accent` naming a swatch the site does not
+offer).
 
 ```js
 const applied = wp.desktop.desktopThemes.applyRecommendedOsSettings();
 // → { dockSize: 'large', desktopLayout: 'unified' }
 ```
+
+The empty string — the **OpenStation** card, meaning "no theme" — is a
+valid argument and recommends the accent the shell's own palette was
+drawn against. It is the only recommendation set that lives in the
+shell rather than in a manifest, because the default look has no
+manifest.
 
 **The shell already does this once**, the first time a user activates a
 theme that ships recommendations; that is the entire automatic path,

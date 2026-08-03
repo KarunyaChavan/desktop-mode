@@ -215,6 +215,12 @@ import {
 	registerModule,
 	type ModuleDef,
 } from './modules/registry';
+import {
+	MioController,
+	MIO_TILE_ICON,
+	MIO_TILE_ID,
+	type MioApi,
+} from './mio/controller';
 import { wpdConfirm } from './wpd-confirm';
 import { preloadShellOverlays } from './shell-overlays/loader';
 import { preloadWindowSystem } from './window-system/loader';
@@ -529,6 +535,19 @@ export interface WpDesktopPublicApi {
 	 * fires on every suspended/resumed transition.
 	 */
 	wallpaper: WallpaperSuspendApi;
+	/**
+	 * Mio — a soft-body companion that floats over the
+	 * wallpaper, settles onto nearby windows under gravity, watches
+	 * the pointer, and can be dragged anywhere.
+	 *
+	 * Off by default; users toggle it from the wallpaper context
+	 * menu. `enable()` / `disable()` / `toggle()` persist the
+	 * preference exactly as the menu entry does, and `setConfig()`
+	 * live-applies appearance and physics changes on top of the
+	 * server-side `desktop_mode_mio_config` filter. See
+	 * `docs/mio.md`.
+	 */
+	mio: MioApi;
 	/**
 	 * Desktop games surface. `register()` adds a game to the shared
 	 * registry (launcher grid + scoreboard tabs repaint live);
@@ -1020,6 +1039,12 @@ export interface WpDesktopPublicApi {
 		title: string;
 		icon: string;
 		affinity: 'core' | 'plugin';
+		/**
+		 * Whether the tile opts into OS Settings → Apps & Icons, so
+		 * the user can hide it. Opt-in: most system tiles are
+		 * load-bearing.
+		 */
+		placeable: boolean;
 	} >;
 	/**
 	 * Look up a system tile by id. Returns the underlying
@@ -1854,6 +1879,37 @@ function init(): void {
 	);
 	osSettings.apply();
 
+	// Mio — the desk companion. A first-class shell layer (sibling
+	// of the wallpaper, painting above every window), but the main
+	// bundle only carries the controller: the PixiJS soft body lives
+	// in `mio[.min].js` and is fetched the first time a user
+	// switches it on from the wallpaper context menu. Off by default,
+	// so most shells never touch it. See docs/mio.md.
+	const mioShellEl = document.getElementById( 'desktop-mode-shell' );
+	const mio = new MioController( {
+		shell: mioShellEl ?? document.body,
+		bundleUrl: config.mioBundleUrl ?? '',
+		serverConfig: config.mio,
+		enabled: osSettings.state.mioEnabled,
+		persist: ( enabled: boolean ) => {
+			osSettings.state.mioEnabled = enabled;
+			osSettings.save();
+		},
+		// The look someone builds in "Make it yours" rides the OS
+		// Settings blob into user meta, so it follows them to their
+		// other browsers and devices — the same route `mioEnabled`
+		// already takes. `save()` writes localStorage synchronously and
+		// debounces the REST call, which is why this can be handed
+		// every slider frame.
+		savedLook: osSettings.state.mioStyle,
+		persistLook: ( look ) => {
+			osSettings.state.mioStyle = look;
+			osSettings.save();
+		},
+	} );
+	const mioApi: MioApi = mio.api();
+	mio.boot();
+
 	// Starter Widget developer-mode gate — must install its
 	// `desktop-mode.widgets` filter before `widgetLayer.hydrate()`
 	// runs below so a previously-placed Starter instance doesn't
@@ -2562,6 +2618,37 @@ function init(): void {
 		layoutDispatcher.appendSystemTile(
 			getExitDesktopModeTileDef(),
 			'core',
+		);
+
+		// Mio tile — `'plugin'` affinity, so it lands on the bottom
+		// dock with the other optional apps rather than among the core
+		// shell affordances. Clicking toggles the companion; the active
+		// dot tracks whether it is on screen.
+		//
+		// `placeable` is what puts a row in OS Settings → Apps & Icons,
+		// so a user who doesn't want a desk companion can hide the
+		// toggle itself. It is opt-in precisely because most system
+		// tiles must not be hideable — OS Settings is how you reach the
+		// screen that would hide it.
+		//
+		// **This tile is Mio's entire always-on cost.** Nothing
+		// here reaches the simulation: `MioController` is a couple of
+		// hundred bytes in this bundle, and the PixiJS renderer, the
+		// soft body and the ~25 kB Mio bundle are script-injected on
+		// the first toggle. A shell whose user never switches the
+		// Mio on downloads none of it.
+		layoutDispatcher.appendSystemTile(
+			{
+				id: MIO_TILE_ID,
+				title: 'Mio',
+				icon: MIO_TILE_ICON,
+				placeable: true,
+				isOpen: () => mioApi.isEnabled(),
+				onOpen: () => {
+					void mioApi.toggle();
+				},
+			},
+			'plugin',
 		);
 	}
 	const dock: Dock | null = layoutDispatcher?.getPrimary() ?? null;
@@ -3403,6 +3490,7 @@ function init(): void {
 		dragManager,
 		connect: connectionBridge.connect,
 		getConnection: connectionBridge.getConnection,
+		mio: mioApi,
 		wallpaperSuspend: {
 			suspend: ( reason: string ) => wallpaperLayer?.suspend( reason ),
 			resume: ( reason: string ) => wallpaperLayer?.resume( reason ),

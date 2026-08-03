@@ -474,6 +474,23 @@ function desktop_mode_enqueue_assets() {
 			// overlays (toast, confirm dialog, context menus) feel
 			// instant the first time they fire.
 			'shellOverlaysBundleUrl' => $lazy_bundle_url( 'shell-overlays' ),
+			// Mio — the desk companion. `mio` carries the
+			// appearance + physics (see `desktop_mode_mio_config()`);
+			// `mioBundleUrl` is the lazy PixiJS bundle the shell
+			// controller injects the first time a user switches the
+			// Mio on from its dock tile. Shipping the URL
+			// unconditionally costs one short string and keeps the
+			// SCRIPT_DEBUG choice server-side, matching every other
+			// lazy bundle here.
+			//
+			// Both keys ship whether or not the user has Mio on,
+			// and that is the whole of its cost to a shell that doesn't:
+			// ~470 bytes gzipped of config, plus a URL. No script, no
+			// style, no PixiJS. The config has to be here rather than
+			// fetched on first toggle, or the `desktop_mode_mio_config`
+			// filter would silently not apply until the next reload.
+			'mio'                 => desktop_mode_mio_config(),
+			'mioBundleUrl'        => $lazy_bundle_url( 'mio' ),
 			// URL of the lazy window-system bundle (Stage 11).
 			// Holds the `Window` class and its DOM / pointer / tab /
 			// chrome helpers — the single largest module split out of

@@ -2026,6 +2026,20 @@ export interface DesktopConfig {
 	 */
 	shellOverlaysBundleUrl?: string;
 	/**
+	 * Mio appearance + physics from PHP
+	 * (`desktop_mode_mio_config()`, filterable via
+	 * `desktop_mode_mio_config`). Shape mirrors `MioConfig` in
+	 * `src/mio/types.ts`; the shell re-sanitizes it before use, so
+	 * a partial or malformed object is safe.
+	 */
+	mio?: unknown;
+	/**
+	 * Fully-qualified URL of the lazy Mio bundle. The shell-side
+	 * `MioController` script-injects this the first time the user
+	 * switches Mio on from the wallpaper context menu.
+	 */
+	mioBundleUrl?: string;
+	/**
 	 * Fully-qualified URL of the lazy window-system bundle (Stage
 	 * 11). The `Window` class + its DOM / pointer / tab / chrome
 	 * helpers live here; the main bundle's `WindowManager.open()`

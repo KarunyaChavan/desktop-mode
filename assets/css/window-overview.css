@@ -160,6 +160,23 @@
 	}
 }
 
+/*
+ * Desktop shortcut icons & files-layer tiles —
+ * hidden during overview so they don't compete with window
+ * thumbnails or overlap them (especially noticeable with few
+ * windows or Spatial layout). Matches the fade-out pattern
+ * used by widgets and sticky notes. Scoped to DIRECT children
+ * of the desktop area only: folder windows mount their own
+ * files layer inside the window body, and that must stay
+ * visible in its thumbnail.
+ */
+.os-area--overview > .os-icons,
+.os-area--overview > .os-files-layer {
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 0.22s ease;
+}
+
 /* ---------------------------------------------------------------
  * Overview thumbnail labels.
  *
@@ -268,6 +285,10 @@
 @media ( prefers-reduced-motion: reduce ) {
 	.os-area--overview,
 	.os-window--overview {
+		transition-duration: 0.01ms;
+	}
+	.os-area--overview > .os-icons,
+	.os-area--overview > .os-files-layer {
 		transition-duration: 0.01ms;
 	}
 }

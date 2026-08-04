@@ -187,9 +187,12 @@ function openstation_recycle_bin_get_items( $args = array() ) {
 	// shape always carries a sortable string in `deleted_at`, so a
 	// straight string compare is enough (`Y-m-d H:i:s` is sortable
 	// lexicographically).
-	usort( $items, static function ( $a, $b ) {
-		return strcmp( (string) $b['deleted_at'], (string) $a['deleted_at'] );
-	} );
+	usort(
+		$items,
+		static function ( $a, $b ) {
+			return strcmp( (string) $b['deleted_at'], (string) $a['deleted_at'] );
+		}
+	);
 
 	// `total` reports the GLOBAL trash count (every type, every
 	// row, ignoring the current filter / search). The dock-tile
@@ -559,7 +562,8 @@ function openstation_recycle_bin_shape_item( $post ) {
 		$subtitle = $mime;
 	} elseif ( 'post' === $type ) {
 		$icon     = 'dashicons-admin-post';
-		$subtitle = wp_trim_words( openstation_recycle_bin_plain_text( (string) $post->post_excerpt ?: (string) $post->post_content ), 18, '…' );
+		$excerpt  = (string) $post->post_excerpt;
+		$subtitle = wp_trim_words( openstation_recycle_bin_plain_text( $excerpt ? $excerpt : (string) $post->post_content ), 18, '…' );
 	} elseif ( 'page' === $type ) {
 		$icon     = 'dashicons-admin-page';
 		$subtitle = wp_trim_words( openstation_recycle_bin_plain_text( (string) $post->post_content ), 18, '…' );
@@ -577,7 +581,8 @@ function openstation_recycle_bin_shape_item( $post ) {
 		) {
 			$icon = $post_type_obj->menu_icon;
 		}
-		$subtitle = wp_trim_words( openstation_recycle_bin_plain_text( (string) $post->post_excerpt ?: (string) $post->post_content ), 18, '…' );
+		$excerpt  = (string) $post->post_excerpt;
+		$subtitle = wp_trim_words( openstation_recycle_bin_plain_text( $excerpt ? $excerpt : (string) $post->post_content ), 18, '…' );
 	}
 
 	$user      = $user_id ? get_userdata( $user_id ) : false;
@@ -929,7 +934,12 @@ function openstation_recycle_bin_empty() {
 	// hammering it on a 10k-item bin without yielding back to PHP can
 	// still time out. The client re-invokes us until `remaining` hits
 	// zero (or stalls at `skipped`).
-	$batch = openstation_recycle_bin_get_items( array( 'per_page' => $chunk_size, 'page' => 1 ) );
+	$batch = openstation_recycle_bin_get_items(
+		array(
+			'per_page' => $chunk_size,
+			'page'     => 1,
+		)
+	);
 	foreach ( $batch['items'] as $item ) {
 		$result = openstation_recycle_bin_purge(
 			(int) $item['id'],

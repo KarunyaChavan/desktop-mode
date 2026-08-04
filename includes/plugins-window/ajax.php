@@ -114,6 +114,7 @@ function openstation_plugins_window_ajax_browse() {
 		require_once ABSPATH . 'wp-admin/includes/plugin-install.php';
 	}
 
+	// phpcs:disable WordPress.Security.NonceVerification.Missing -- verified in openstation_plugins_window_ajax_guard() above; the sniff cannot follow the check across a function boundary.
 	$browse_raw = isset( $_POST['browse'] ) ? sanitize_key( wp_unslash( (string) $_POST['browse'] ) ) : 'featured';
 	$allowed    = array( 'featured', 'popular', 'recommended', 'favorites', 'new', 'beta', 'updated' );
 	if ( ! in_array( $browse_raw, $allowed, true ) ) {
@@ -124,6 +125,7 @@ function openstation_plugins_window_ajax_browse() {
 	$tag      = isset( $_POST['tag'] ) ? sanitize_key( wp_unslash( (string) $_POST['tag'] ) ) : '';
 	$page     = isset( $_POST['page'] ) ? max( 1, (int) $_POST['page'] ) : 1;
 	$per_page = isset( $_POST['per_page'] ) ? max( 1, min( 60, (int) $_POST['per_page'] ) ) : 24;
+	// phpcs:enable WordPress.Security.NonceVerification.Missing
 
 	$api_args = array(
 		'page'     => $page,
@@ -237,6 +239,7 @@ function openstation_plugins_window_ajax_info() {
 		require_once ABSPATH . 'wp-admin/includes/plugin-install.php';
 	}
 
+	// phpcs:ignore WordPress.Security.NonceVerification.Missing -- verified in openstation_plugins_window_ajax_guard() above.
 	$slug = isset( $_POST['slug'] ) ? sanitize_key( wp_unslash( (string) $_POST['slug'] ) ) : '';
 	if ( '' === $slug ) {
 		openstation_plugins_window_ajax_error(
@@ -320,6 +323,7 @@ function openstation_plugins_window_ajax_reviews() {
 		return;
 	}
 
+	// phpcs:ignore WordPress.Security.NonceVerification.Missing -- verified in openstation_plugins_window_ajax_guard() above.
 	$slug = isset( $_POST['slug'] ) ? sanitize_key( wp_unslash( (string) $_POST['slug'] ) ) : '';
 	if ( '' === $slug ) {
 		openstation_plugins_window_ajax_error(
@@ -479,7 +483,7 @@ function openstation_plugins_window_parse_reviews_html( $html ) {
 				continue;
 			}
 
-			$author = '';
+			$author       = '';
 			$author_nodes = $xpath->query(
 				'.//*[contains(concat(" ", normalize-space(@class), " "), " reviewer-name ")]',
 				$review
@@ -488,7 +492,7 @@ function openstation_plugins_window_parse_reviews_html( $html ) {
 				$author = trim( (string) $author_nodes->item( 0 )->textContent );
 			}
 
-			$excerpt = '';
+			$excerpt       = '';
 			$excerpt_nodes = $xpath->query( './/p', $review );
 			if ( $excerpt_nodes instanceof DOMNodeList && $excerpt_nodes->length > 0 ) {
 				$excerpt = trim( (string) $excerpt_nodes->item( 0 )->textContent );
@@ -497,7 +501,7 @@ function openstation_plugins_window_parse_reviews_html( $html ) {
 				$excerpt = mb_strimwidth( $excerpt, 0, 320, '…' );
 			}
 
-			$date = '';
+			$date       = '';
 			$date_nodes = $xpath->query(
 				'.//*[contains(concat(" ", normalize-space(@class), " "), " review-date ")]',
 				$review
@@ -506,7 +510,7 @@ function openstation_plugins_window_parse_reviews_html( $html ) {
 				$date = trim( (string) $date_nodes->item( 0 )->textContent );
 			}
 
-			$stars = 0;
+			$stars        = 0;
 			$rating_nodes = $xpath->query(
 				'.//*[contains(concat(" ", normalize-space(@class), " "), " wporg-ratings ") or contains(concat(" ", normalize-space(@class), " "), " star-rating ")]',
 				$review
@@ -530,7 +534,7 @@ function openstation_plugins_window_parse_reviews_html( $html ) {
 			}
 			$stars = max( 0, min( 5, $stars ) );
 
-			$url = '';
+			$url        = '';
 			$link_nodes = $xpath->query( './/a[contains(@href, "/topic/")]', $review );
 			if ( $link_nodes instanceof DOMNodeList && $link_nodes->length > 0 ) {
 				$href = $link_nodes->item( 0 );
@@ -550,7 +554,7 @@ function openstation_plugins_window_parse_reviews_html( $html ) {
 				'date'    => $date,
 				'url'     => $url,
 			);
-			$count++;
+			++$count;
 		}
 
 		return $out;
@@ -578,6 +582,7 @@ function openstation_plugins_window_ajax_upload() {
 		return;
 	}
 
+	// phpcs:disable WordPress.Security.NonceVerification.Missing -- verified in openstation_plugins_window_ajax_guard() above.
 	if ( empty( $_FILES['pluginzip'] ) || ! is_array( $_FILES['pluginzip'] ) ) {
 		openstation_plugins_window_ajax_error(
 			new WP_Error(
@@ -590,6 +595,7 @@ function openstation_plugins_window_ajax_upload() {
 	}
 
 	$file = $_FILES['pluginzip']; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- read raw, sanitized below.
+	// phpcs:enable WordPress.Security.NonceVerification.Missing
 
 	if ( ! isset( $file['name'] ) || ! isset( $file['tmp_name'] ) || ! isset( $file['error'] ) ) {
 		openstation_plugins_window_ajax_error(
@@ -869,9 +875,9 @@ function openstation_plugins_window_ajax_featured() {
 		return;
 	}
 
-	$plugins      = array();
-	$seen_slugs   = array();
-	$fields       = array(
+	$plugins    = array();
+	$seen_slugs = array();
+	$fields     = array(
 		'icons'             => true,
 		'banners'           => true,
 		'short_description' => true,
@@ -912,9 +918,9 @@ function openstation_plugins_window_ajax_featured() {
 			// tab.
 			continue;
 		}
-		$row             = (array) $info;
-		$row['featured'] = true;
-		$plugins[]       = $row;
+		$row                 = (array) $info;
+		$row['featured']     = true;
+		$plugins[]           = $row;
 		$seen_slugs[ $slug ] = true;
 	}
 

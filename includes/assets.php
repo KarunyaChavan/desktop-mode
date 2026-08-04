@@ -69,7 +69,6 @@ function openstation_register_assets() {
 		return file_exists( $path ) ? (string) filemtime( $path ) : $version;
 	};
 
-
 	// Styles.
 	// `filemtime`-stamped, NOT the plugin-wide `$version`. This file
 	// is the token catalogue every other sheet resolves `var()`s
@@ -97,6 +96,7 @@ function openstation_register_assets() {
 		array( 'os-variables' ),
 		$built_version( 'assets/css/desktop.css' )
 	);
+
 	/*
 	 * Window styles — one handle per sheet, chained by dependency.
 	 *
@@ -135,7 +135,7 @@ function openstation_register_assets() {
 		'os-effects'       => 'assets/css/effects.css',
 		'os-window-links'  => 'assets/css/window-links.css',
 	);
-	$previous = array( 'os-variables', 'dashicons' );
+	$previous      = array( 'os-variables', 'dashicons' );
 	foreach ( $window_sheets as $handle => $relative ) {
 		wp_register_style(
 			$handle,

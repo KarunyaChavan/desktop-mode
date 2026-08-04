@@ -33,9 +33,11 @@
 
 defined( 'ABSPATH' ) || exit;
 
-/* ============================================================
+/*
+============================================================
  * Layer 1 — Themes
- * ============================================================ */
+ * ============================================================
+ */
 
 /**
  * Declare a WP-registered script handle as a window-theme provider.
@@ -91,7 +93,7 @@ function openstation_register_window_theme( $args = array() ) {
 		'priority' => 100,
 		'script'   => '',
 	);
-	$args = wp_parse_args( $args, $defaults );
+	$args     = wp_parse_args( $args, $defaults );
 
 	$id = (string) $args['id'];
 	if ( '' === $id ) {
@@ -264,26 +266,34 @@ function openstation_build_window_themes_payload() {
 		$handle  = (string) $entry['script'];
 		$payload = '' !== $handle
 			? openstation_resolve_script_payload( $handle )
-			: array( 'url' => '', 'before' => array(), 'after' => array(), 'l10n' => array(), 'translations' => '' );
-		$out[]  = array(
-			'id'                => (string) $entry['id'],
-			'label'             => (string) $entry['label'],
-			'tokens'            => (array) $entry['tokens'],
-			'priority'          => (int) $entry['priority'],
-			'scriptUrl'         => $payload['url'],
-			'scriptHandle'      => $handle,
-			'scriptBefore'      => $payload['before'],
-			'scriptAfter'       => $payload['after'],
-			'scriptL10n'        => $payload['l10n'],
+			: array(
+				'url'          => '',
+				'before'       => array(),
+				'after'        => array(),
+				'l10n'         => array(),
+				'translations' => '',
+			);
+		$out[]   = array(
+			'id'                 => (string) $entry['id'],
+			'label'              => (string) $entry['label'],
+			'tokens'             => (array) $entry['tokens'],
+			'priority'           => (int) $entry['priority'],
+			'scriptUrl'          => $payload['url'],
+			'scriptHandle'       => $handle,
+			'scriptBefore'       => $payload['before'],
+			'scriptAfter'        => $payload['after'],
+			'scriptL10n'         => $payload['l10n'],
 			'scriptTranslations' => $payload['translations'],
 		);
 	}
 	return $out;
 }
 
-/* ============================================================
+/*
+============================================================
  * Layer 2 — Controls
- * ============================================================ */
+ * ============================================================
+ */
 
 /**
  * Declare a WP-registered script handle as a window-control provider.
@@ -335,7 +345,7 @@ function openstation_register_window_control( $args = array() ) {
 		'order'     => 100,
 		'script'    => '',
 	);
-	$args = wp_parse_args( $args, $defaults );
+	$args     = wp_parse_args( $args, $defaults );
 
 	$id = (string) $args['id'];
 	if ( '' === $id ) {
@@ -483,27 +493,35 @@ function openstation_build_window_controls_payload() {
 		$handle  = (string) $entry['script'];
 		$payload = '' !== $handle
 			? openstation_resolve_script_payload( $handle )
-			: array( 'url' => '', 'before' => array(), 'after' => array(), 'l10n' => array(), 'translations' => '' );
-		$out[]  = array(
-			'id'                => (string) $entry['id'],
-			'label'             => (string) $entry['label'],
-			'icon'              => (string) $entry['icon'],
-			'placement'         => (string) $entry['placement'],
-			'order'             => (int) $entry['order'],
-			'scriptUrl'         => $payload['url'],
-			'scriptHandle'      => $handle,
-			'scriptBefore'      => $payload['before'],
-			'scriptAfter'       => $payload['after'],
-			'scriptL10n'        => $payload['l10n'],
+			: array(
+				'url'          => '',
+				'before'       => array(),
+				'after'        => array(),
+				'l10n'         => array(),
+				'translations' => '',
+			);
+		$out[]   = array(
+			'id'                 => (string) $entry['id'],
+			'label'              => (string) $entry['label'],
+			'icon'               => (string) $entry['icon'],
+			'placement'          => (string) $entry['placement'],
+			'order'              => (int) $entry['order'],
+			'scriptUrl'          => $payload['url'],
+			'scriptHandle'       => $handle,
+			'scriptBefore'       => $payload['before'],
+			'scriptAfter'        => $payload['after'],
+			'scriptL10n'         => $payload['l10n'],
 			'scriptTranslations' => $payload['translations'],
 		);
 	}
 	return $out;
 }
 
-/* ============================================================
+/*
+============================================================
  * Layer 3 — Slots
- * ============================================================ */
+ * ============================================================
+ */
 
 /**
  * Canonical slot names. Mirrors the `WindowSlotName` TypeScript
@@ -566,7 +584,7 @@ function openstation_register_window_slot( $args = array() ) {
 		'order'  => 100,
 		'script' => '',
 	);
-	$args = wp_parse_args( $args, $defaults );
+	$args     = wp_parse_args( $args, $defaults );
 
 	$id = (string) $args['id'];
 	if ( '' === $id ) {
@@ -705,25 +723,33 @@ function openstation_build_window_slots_payload() {
 		$handle  = (string) $entry['script'];
 		$payload = '' !== $handle
 			? openstation_resolve_script_payload( $handle )
-			: array( 'url' => '', 'before' => array(), 'after' => array(), 'l10n' => array(), 'translations' => '' );
-		$out[]  = array(
-			'id'                => (string) $entry['id'],
-			'slot'              => (string) $entry['slot'],
-			'order'             => (int) $entry['order'],
-			'scriptUrl'         => $payload['url'],
-			'scriptHandle'      => $handle,
-			'scriptBefore'      => $payload['before'],
-			'scriptAfter'       => $payload['after'],
-			'scriptL10n'        => $payload['l10n'],
+			: array(
+				'url'          => '',
+				'before'       => array(),
+				'after'        => array(),
+				'l10n'         => array(),
+				'translations' => '',
+			);
+		$out[]   = array(
+			'id'                 => (string) $entry['id'],
+			'slot'               => (string) $entry['slot'],
+			'order'              => (int) $entry['order'],
+			'scriptUrl'          => $payload['url'],
+			'scriptHandle'       => $handle,
+			'scriptBefore'       => $payload['before'],
+			'scriptAfter'        => $payload['after'],
+			'scriptL10n'         => $payload['l10n'],
 			'scriptTranslations' => $payload['translations'],
 		);
 	}
 	return $out;
 }
 
-/* ============================================================
+/*
+============================================================
  * Layer 4 — Custom chrome (Experimental)
- * ============================================================ */
+ * ============================================================
+ */
 
 /**
  * Declare a WP-registered script handle as a window-chrome provider.
@@ -771,7 +797,7 @@ function openstation_register_window_chrome( $args = array() ) {
 		'label'  => '',
 		'script' => '',
 	);
-	$args = wp_parse_args( $args, $defaults );
+	$args     = wp_parse_args( $args, $defaults );
 
 	$id = (string) $args['id'];
 	if ( '' === $id ) {
@@ -898,15 +924,21 @@ function openstation_build_window_chromes_payload() {
 		$handle  = (string) $entry['script'];
 		$payload = '' !== $handle
 			? openstation_resolve_script_payload( $handle )
-			: array( 'url' => '', 'before' => array(), 'after' => array(), 'l10n' => array(), 'translations' => '' );
-		$out[]  = array(
-			'id'                => (string) $entry['id'],
-			'label'             => (string) $entry['label'],
-			'scriptUrl'         => $payload['url'],
-			'scriptHandle'      => $handle,
-			'scriptBefore'      => $payload['before'],
-			'scriptAfter'       => $payload['after'],
-			'scriptL10n'        => $payload['l10n'],
+			: array(
+				'url'          => '',
+				'before'       => array(),
+				'after'        => array(),
+				'l10n'         => array(),
+				'translations' => '',
+			);
+		$out[]   = array(
+			'id'                 => (string) $entry['id'],
+			'label'              => (string) $entry['label'],
+			'scriptUrl'          => $payload['url'],
+			'scriptHandle'       => $handle,
+			'scriptBefore'       => $payload['before'],
+			'scriptAfter'        => $payload['after'],
+			'scriptL10n'         => $payload['l10n'],
 			'scriptTranslations' => $payload['translations'],
 		);
 	}

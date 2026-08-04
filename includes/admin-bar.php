@@ -228,7 +228,6 @@ function openstation_admin_bar_toggle( $wp_admin_bar ) {
 		}
 	}
 
-
 	// "Keyboard shortcuts" trigger — shown only when OpenStation is
 	// active. Clicking toggles the keyboard-shortcuts popover wired by
 	// assets/js/admin-bar.js (wireShortcutsPopover); the popover content
@@ -692,6 +691,7 @@ function openstation_enqueue_toggle_assets() {
 					'enterTitle'      => __( 'Enter fullscreen', 'desktop-mode' ),
 					'exitTitle'       => __( 'Exit fullscreen', 'desktop-mode' ),
 				),
+
 				/*
 				 * Keyboard-shortcuts popover content. Translated once on
 				 * the server and shipped to admin-bar.js, which renders
@@ -776,4 +776,3 @@ function openstation_enqueue_toggle_assets() {
 	wp_enqueue_script( 'os-admin-bar' );
 }
 add_action( 'admin_enqueue_scripts', 'openstation_enqueue_toggle_assets' );
-

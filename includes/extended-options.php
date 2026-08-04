@@ -36,7 +36,7 @@
 defined( 'ABSPATH' ) || exit;
 
 /**
- * wp_options key for the extended options bundle.
+ * The `wp_options` key for the extended options bundle.
  *
  * The VALUE keeps its pre-rebrand spelling on purpose: it is a
  * persisted or externally-visible identifier, so renaming it would
@@ -61,7 +61,7 @@ function openstation_get_extended_options() {
 		'games'                  => false,
 		'agents'                 => false,
 	);
-	$raw = get_option( OPENSTATION_EXTENDED_OPTIONS_KEY, array() );
+	$raw      = get_option( OPENSTATION_EXTENDED_OPTIONS_KEY, array() );
 	if ( ! is_array( $raw ) ) {
 		return $defaults;
 	}

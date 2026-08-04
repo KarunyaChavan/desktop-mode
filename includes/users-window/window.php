@@ -32,10 +32,14 @@ function openstation_users_window_render_template() {
 			<?php if ( $can_create ) : ?>
 				<os-tab value="add-new"><?php esc_html_e( 'Add new', 'desktop-mode' ); ?></os-tab>
 			<?php endif; ?>
-			<?php /* Profile tab — always visible, always shows the
-			       CURRENT logged-in user. Other-user row clicks
-			       open a separate `desktop-mode-user-edit`
-			       window. */ ?>
+			<?php
+			/*
+			 * Profile tab — always visible, always shows the
+			 * CURRENT logged-in user. Other-user row clicks
+			 * open a separate `desktop-mode-user-edit`
+			 * window.
+			 */
+			?>
 			<os-tab value="edit" data-os-users-edit-tab>
 				<?php esc_html_e( 'Profile', 'desktop-mode' ); ?>
 			</os-tab>
@@ -158,12 +162,16 @@ function openstation_users_window_render_template() {
 					autocomplete="off"
 					full-width
 				></os-text-field>
-				<?php /* The `role` and `locale` selects are declared here
-				       so the components upgrade with the rest of the
-				       form; the option list (which depends on the
-				       viewer's `editable_roles` map and the install's
-				       available languages) is appended JS-side in
-				       `mountAddUserForm`. */ ?>
+				<?php
+				/*
+				 * The `role` and `locale` selects are declared here
+				 * so the components upgrade with the rest of the
+				 * form; the option list (which depends on the
+				 * viewer's `editable_roles` map and the install's
+				 * available languages) is appended JS-side in
+				 * `mountAddUserForm`.
+				 */
+				?>
 				<os-select
 					name="role"
 					label="<?php esc_attr_e( 'Role', 'desktop-mode' ); ?>"
@@ -206,12 +214,14 @@ function openstation_users_window_render_template() {
 
 		<os-tabpanel for="edit" class="os-users__edit-panel">
 			<?php
-			/* The Profile tab is hard-wired to the viewer's own user
+			/*
+			 * The Profile tab is hard-wired to the viewer's own user
 			 * id — the JS render shell sets the `user-id` attribute
 			 * once the window is mounted. The component does the
 			 * rest (lazy-loads data, paints sidebar + form +
 			 * activity). Other-user editing happens in the dedicated
-			 * `desktop-mode-user-edit` window via row-click. */
+			 * `desktop-mode-user-edit` window via row-click.
+			 */
 			?>
 			<os-user-profile data-os-user-profile-self></os-user-profile>
 		</os-tabpanel>
@@ -319,11 +329,14 @@ function openstation_users_window_register_window() {
 			'insightsUrlBase'  => esc_url_raw(
 				rest_url( 'desktop-mode/v1/users/' )
 			),
+			/** This filter is documented in wp-includes/user.php */
+			// phpcs:disable WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- Core's filter; the window must offer the same contact fields profile.php does.
 			'contactMethods'   => (array) apply_filters(
 				'user_contactmethods',
 				array(),
 				null
 			),
+			// phpcs:enable WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound
 			'colorSchemes'     => function_exists( 'openstation_user_edit_window_color_schemes' )
 				? openstation_user_edit_window_color_schemes()
 				: array(),

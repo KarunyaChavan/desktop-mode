@@ -2114,6 +2114,16 @@ os-tile[ status='future' ] .os-file-tile__icon {
 	box-sizing: border-box;
 }
 
+/* The framework is opt-in but the section is always listed, so with
+   the option off the surface paints inert rather than vanishing.
+   Only the sidebar dims: the detail pane holds the empty state
+   explaining why, and the one button that undoes it — dimming the way
+   out along with everything else is how a disabled screen becomes a
+   dead end. */
+.dm-agents.is-disabled .dm-agents__sidebar {
+	opacity: 0.6;
+}
+
 /* Section-level loading — same scale curve as the My WordPress
    preview loader and the window-loading overlay, instead of the bare
    48px component default. */
@@ -2231,6 +2241,16 @@ os-tile[ status='future' ] .os-file-tile__icon {
 	display: flex;
 	flex-direction: column;
 	gap: 10px;
+}
+
+/* `<os-empty-state>` owns the icon + copy and centres them within
+   itself; the host is still a flex item that shrinks to its content,
+   so without this it sits at the top of a pane that is mostly empty
+   space. Auto margins on both axes absorb the slack — placement only,
+   same as the comments window. Covers the framework-off state and
+   "No agents yet" alike. */
+.dm-agents__detail > os-empty-state {
+	margin: auto;
 }
 
 .dm-agents__detail-head {

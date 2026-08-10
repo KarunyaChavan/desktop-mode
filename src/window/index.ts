@@ -486,6 +486,13 @@ export class Window {
 	public _boundOnDocumentPointerDown: ( ( e: PointerEvent ) => void ) | null = null;
 
 	/**
+	 * Live subscription that repaints the ⋯ menu while it is open, so
+	 * an action registered a moment after opening still appears. Held
+	 * only for the lifetime of one open menu. @internal
+	 */
+	public _unsubscribeWindowActions: ( () => void ) | null = null;
+
+	/**
 	 * ResizeObserver watching the body element. Fires the inline
 	 * `config.onResize` callback AND the `WINDOW_BODY_RESIZED` hook
 	 * on every size change. Null when the environment lacks
@@ -3381,6 +3388,14 @@ export class Window {
 				true,
 			);
 		}
+		// The ⋯ menu's repaint subscription is normally dropped by
+		// `closeActionsMenu()`, and a click-driven close always gets
+		// there first because the pointerdown capture above closes the
+		// menu. A programmatic `close()` with the menu open does not —
+		// leaving a live registry listener holding this window and the
+		// detached panel it would try to repaint.
+		this._unsubscribeWindowActions?.();
+		this._unsubscribeWindowActions = null;
 		this.element.remove();
 		// If this was the last fullscreen window, drop the body
 		// class so the admin bar and shell top-offset come back

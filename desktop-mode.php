@@ -115,6 +115,10 @@ require_once OPENSTATION_DIR . 'includes/seen-intros.php';
 require_once OPENSTATION_DIR . 'includes/migrations.php';
 require_once OPENSTATION_DIR . 'includes/portal.php';
 require_once OPENSTATION_DIR . 'includes/default-window.php';
+// Solo window rendering mode (`?openstation_solo=<id>`). Unconditional
+// because `includes/render/` reads its flag, and because extensions
+// (the Electron adapter) call its helpers from their own hooks.
+require_once OPENSTATION_DIR . 'includes/solo-window.php';
 require_once OPENSTATION_DIR . 'includes/themes-tabs.php';
 require_once OPENSTATION_DIR . 'includes/media-query.php';
 require_once OPENSTATION_DIR . 'includes/accents.php';
@@ -129,6 +133,7 @@ require_once OPENSTATION_DIR . 'includes/commands.php';
 require_once OPENSTATION_DIR . 'includes/settings-tabs.php';
 require_once OPENSTATION_DIR . 'includes/dock-rail-renderer.php';
 require_once OPENSTATION_DIR . 'includes/title-bar-buttons.php';
+require_once OPENSTATION_DIR . 'includes/window-actions.php';
 require_once OPENSTATION_DIR . 'includes/unfocus-effects.php';
 require_once OPENSTATION_DIR . 'includes/window-links.php';
 require_once OPENSTATION_DIR . 'includes/window-chrome.php';

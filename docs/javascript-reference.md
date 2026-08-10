@@ -6596,8 +6596,164 @@ maps to `media`, pages are detected via `bridgePayload.postType`) and
 
 ---
 
+## `wp.os.registerWindowAction()` — *Experimental*
+
+Adds a row to the ⋯ actions menu in **every** window's title bar — the
+right surface for an infrequent, wordy, per-window verb that has not
+earned a permanent title-bar button. (For something the user reaches
+for constantly, use
+[`registerTitleBarButton`](#wposregistertitlebarbutton--stable)
+instead.)
+
+```js
+wp.os.registerWindowAction( {
+    id: 'my-plugin/pin',
+    label: ( win ) => ( isPinned( win.id ) ? 'Unpin' : 'Pin to top' ),
+    icon: 'dashicons-sticky',
+    order: 60,
+    isVisible: ( win ) => ! win.config.native,
+    onSelect: ( win ) => togglePin( win.id ),
+    owner: 'my-plugin-shell',
+} );
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | `string` | Required. `/^[a-z0-9_/-]+$/`; `vendor/sub-id` namespacing encouraged. |
+| `label` | `string \| ( win ) => string` | Required. A function is re-read on **every menu open**. |
+| `icon` | `string \| ( win ) => string` | Dashicons class. Optional; also re-read per open. |
+| `order` | `number` | Sort order among registered rows. Default `100`. |
+| `isVisible` | `( win ) => boolean` | Optional. Re-read per open; omit to show everywhere. |
+| `onSelect` | `( win ) => void` | Required. The menu is closed before it is called. |
+| `owner` | `string` | Script handle, for live unregistration on deactivation. See below. |
+
+Also: `wp.os.unregisterWindowAction( id )` and
+`wp.os.listWindowActions()`.
+
+**Making `owner` mean something.** Pair it with the PHP opt-in
+[`openstation_register_window_action_script( 'my-plugin-shell' )`](./hooks-reference.md#openstation_register_window_action_script-handle--experimental-php-function)
+and pass the same handle. That puts your script in the live-refresh
+payload, so activating your plugin loads it — the row is in the next ⋯
+menu that opens, no reload — and deactivating it sweeps every action
+tagged with that handle back out.
+
+Without the PHP call there is nothing to diff, so an `owner` tag is
+inert: the row stays until the next page reload. That is deliberate
+backwards-compat, the same bargain commands and title-bar buttons
+offer, but it does mean `owner` alone is not the whole opt-in.
+
+**Why `label` / `icon` / `isVisible` may be functions.** They are read
+fresh every time the menu opens, not once at registration. That is what
+lets one row express a toggle whose meaning depends on state — "Send to
+your Mac" becoming "Bring back into OpenStation" for the same window —
+without the plugin re-registering itself on every transition. A window
+is in one place or the other, so one row that answers "what does this
+do right now?" is the honest shape; two competing rows would
+misdescribe it.
+
+A row whose resolver or handler throws is contained: the row hides (or
+the click is swallowed) and the rest of the menu keeps working. The ⋯
+menu is shared surface, and the user's "Reload" lives there.
+
+Registering or unregistering repaints menus on their next open;
+`registerWindowAction` throws a `RegistrationError` naming the bad
+field when validation fails.
+
+### `HOOKS.WINDOW_MENU_OPENED` — *Experimental*
+
+Fires when a window's ⋯ actions menu opens, **after** its rows have
+been painted. Payload: `{ windowId: string, element: HTMLElement }`,
+where `element` is the `<os-menu>` panel.
+
+The moment to do work a menu's contents depend on but that is too
+expensive, or too perishable, to do up front — probing the network,
+re-reading a permission, checking whether a companion app has started
+since the page loaded.
+
+**An open menu repaints itself when the registry changes.** So
+registering an action from this hook — even asynchronously — puts the
+row under the user's pointer rather than on their next click:
+
+```js
+wp.os.hooks.addAction( wp.os.HOOKS.WINDOW_MENU_OPENED, 'my-plugin/probe', () => {
+    void probeForCompanionApp().then( ( found ) => {
+        if ( found ) {
+            wp.os.registerWindowAction( { /* … */ } );
+        }
+    } );
+} );
+```
+
+That is why it fires after the paint rather than before. The
+subscription lives only while the menu is open.
+
+---
+
+## Native desktop host — `wp.os.electron` *(Experimental)*
+
+Published by the **Electron Adapter extension**, not by core, when the
+desktop is being viewed through the OpenStation Desktop app. Absent in
+a browser, so check before use:
+
+```js
+if ( wp.os.electron?.isAvailable() ) {
+    console.log( wp.os.electron.getSendLabel() ); // "Send to your Mac"
+    await wp.os.electron.free( 'edit-php' );
+}
+```
+
+Full narrative, the REST surface, and the adapter's PHP hooks:
+[Native Desktop Host](./desktop-host.md).
+
+| Method | Returns | Notes |
+|---|---|---|
+| `isAvailable()` | `boolean` | Always true when the namespace exists. |
+| `getInfo()` | `HostInfo \| null` | Platform, app version, host id, currently-freed ids. |
+| `getSendLabel()` | `string` | Translated and OS-adapted. |
+| `getDockLabel()` | `string` | "Bring back into OpenStation". |
+| `isFreedWindow()` | `boolean` | Whether *this page* is itself a freed window. |
+| `free( windowId )` | `Promise<boolean>` | Set a window free; focuses it if already free. |
+| `dock( windowId )` | `Promise<boolean>` | Bring a freed window back into the shell. |
+| `listFreed()` | `string[]` | Ids currently out on the desktop. |
+| `isFreed( windowId )` | `boolean` | Whether one specific window is out there. |
+| `getConnection()` | `ConnectionState` | Last liveness-pulse snapshot. |
+
+Anything that would surface a freed window inside the shell — a dock
+click, the switcher, a plugin calling `openWindow()` — raises the
+**native** window instead. Plugin authors get that for free.
+
+### CustomEvents
+
+| Event | `detail` | Fires when |
+|---|---|---|
+| `os-desktop-host-freed` | `{ windowId: string }` | A window went out to the real desktop. |
+| `os-desktop-host-docked` | `{ windowId: string }` | A freed window came back into the shell. |
+| `os-desktop-host-connection` | `ConnectionState` | The connection changed phase. |
+
+### Shell config key
+
+| Key | Type | Notes |
+|---|---|---|
+| `soloWindow` | `string` | Window id when the shell was asked to paint exactly one window (`?openstation_solo=<id>`); `''` otherwise. No dock, taskbar, wallpaper, desk or admin bar, and no session restore. Generic — an embed or a kiosk can use it too. |
+
+### `window.openStationChromelessHost` — *Experimental*
+
+Set this to `true` **before a page's own scripts run** to claim a
+top-level chromeless page as deliberately hosted. Without it, the
+chromeless bridge treats a top-level `?openstation_chromeless=1` page
+as an accident and rescues the user by stripping the flag and reloading
+as classic admin — correct for a stale bookmark, wrong for an embedder
+that put the page there on purpose and provides its own way out.
+
+It must be a global rather than a query flag: a flag is lost on the
+first in-page navigation. See
+[bridge-protocol.md](./bridge-protocol.md#top-frame-escape-hatch--and-how-to-opt-out).
+
+---
+
 ## See also
 
+- [Native Desktop Host](./desktop-host.md) — the Electron layer, solo mode, and the liveness pulse.
 - [Hooks Reference](./hooks-reference.md) — the PHP side of the API.
 - [Examples — React to window events](./examples/react-to-window-events.md)
 - [Examples — Add a dock badge](./examples/dock-badge.md)

@@ -671,6 +671,14 @@ body.os-active {
 	--os-ui-ease-spring: cubic-bezier(0.32, 1.5, 0.55, 1);
 	/* Decelerating. The default for anything arriving. */
 	--os-ui-ease-out: cubic-bezier(0.22, 0.9, 0.28, 1);
+	/*
+	 * Accelerating — the mirror of `out`, and the default for anything
+	 * LEAVING. A surface that eases out on the way in and eases in on
+	 * the way out is the difference between "dismissed" and "undone":
+	 * decelerating into nothing reads as the thing hesitating, which
+	 * is the wrong note when the user has already moved on.
+	 */
+	--os-ui-ease-in: cubic-bezier(0.4, 0, 1, 1);
 	/* Symmetric, for a loop that has to come back where it started. */
 	--os-ui-ease-loop: cubic-bezier(0.45, 0, 0.55, 1);
 
@@ -985,19 +993,24 @@ body.os-active {
 	 *                   icon-badge token, so "badges are 22px" reaches
 	 *                   the bin too.
 	 *
-	 * The count badges keep their red, and keep it as a LITERAL: a
-	 * badge is a status, not an identity moment, and Pulse next to a
-	 * Pulse-accented dock tile would read as decoration rather than as
-	 * "three things need you". Naming the gradient here also keeps it
-	 * a gradient — both stops used to resolve through `--os-ui-danger`,
-	 * which the palette moved, flattening the badge to one flat red
-	 * and turning its white numerals Void. The bin's neutral badge has
-	 * no such constraint and follows the station.
+	 * The count badges wear Pulse, and wear it as a LITERAL gradient:
+	 * both stops used to resolve through `--os-ui-danger`, which the
+	 * palette moved, flattening the badge to one flat fill and turning
+	 * its numerals Void by accident. Naming the stops here keeps it a
+	 * gradient on purpose. The bin's neutral badge is deliberately not
+	 * part of this: a count of things in the trash is ambient state,
+	 * not something asking for you.
+	 *
+	 * **The numerals are Void, not Starlight, and that is a
+	 * requirement rather than a preference.** Starlight on Pulse is
+	 * 2.9:1, which fails AA for text this small; Void on Pulse is
+	 * 6.8:1. Any future retint of these has to keep the pair legible,
+	 * so check the ratio before swapping the ink back to white.
 	 */
-	--os-dock-badge-bg: linear-gradient(180deg, #ff5a5a 0%, #d63638 100%);
-	--os-dock-badge-fg: #fffbff;
-	--os-icon-badge-bg: linear-gradient(180deg, #ff5a5a 0%, #d63638 100%);
-	--os-icon-badge-fg: #fffbff;
+	--os-dock-badge-bg: linear-gradient(180deg, #f97dff 0%, #f252fc 100%);
+	--os-dock-badge-fg: #0c0b0f;
+	--os-icon-badge-bg: linear-gradient(180deg, #f97dff 0%, #f252fc 100%);
+	--os-icon-badge-fg: #0c0b0f;
 	--os-recycle-badge-bg: rgba(26, 23, 33, 0.85);
 	--os-recycle-badge-fg: rgba(255, 251, 255, 0.96);
 	--os-dock-recycle-badge-bg: rgba(26, 23, 33, 0.85);
@@ -1060,11 +1073,68 @@ body.os-active {
 	 * back to the shared value above it.
 	 */
 	--os-dock-border: rgba(255, 251, 255, 0.1);
+
+	/*
+	 * The dividers INSIDE the rail, which are a different job from the
+	 * outline around it: they separate tiles that belong to different
+	 * groups — core menus, plugin apps, and OpenStation's own controls.
+	 *
+	 * One treatment for all of them. An earlier pass gave the
+	 * WordPress-to-OpenStation boundary Pulse and dropped the
+	 * core-to-plugin one to a hairline, on the theory that only one
+	 * boundary was worth reading. Two weights in one short rail read as
+	 * two unrelated ideas instead of one system, so both are now the
+	 * same line: Pulse at the waist, falling away to nothing at both
+	 * ends, with a soft glow to hold it against the dock tint.
+	 *
+	 * Resolved one step back from the accent through
+	 * `--os-ui-accent-dim`, where every ambient use of Pulse resolves,
+	 * so "tone the station down" stays one edit.
+	 */
+	--os-dock-divider: color-mix(in srgb, var(--os-ui-accent-dim) 70%, transparent);
 	--os-dock-floating-bg: rgba(12, 11, 15, 0.62);
 	--os-dock-floating-border: rgba(255, 251, 255, 0.12);
 	--os-dock-floating-border-top: rgba(255, 251, 255, 0.18);
 	--os-dock-floating-highlight: rgba(255, 251, 255, 0.1);
 	--os-dock-floating-shadow: rgba(0, 0, 0, 0.55);
+
+	/*
+	 * ---- The OpenStation layout ---------------------------------
+	 *
+	 * The constellation: the flyout that fans a menu's submenu out of
+	 * its tile on hover, and the only surface left that exists solely
+	 * while `data-os-layout` is `openstation`. The rail's divider used
+	 * to live here too; it is shared chrome now and reads through
+	 * `--os-dock-divider`.
+	 *
+	 * The constellation's SURFACE is Obsidian, deliberately. The mesh
+	 * is spent on the row under the pointer and on the head's icon
+	 * halo — the two moments where the panel is answering the user —
+	 * and nowhere else. A flyout that was iridescent edge to edge
+	 * would have nothing left to say when you actually pointed at
+	 * something in it.
+	 */
+	--os-cn-surface: rgba(26, 23, 33, 0.82);
+	--os-cn-border: rgba(255, 251, 255, 0.14);
+	--os-cn-shadow: 0 24px 64px rgba(0, 0, 0, 0.62),
+		0 2px 8px rgba(0, 0, 0, 0.4);
+	--os-cn-fg: #fffbff;
+	--os-cn-fg-muted: rgba(255, 251, 255, 0.62);
+	--os-cn-legend: rgba(255, 251, 255, 0.4);
+	--os-cn-divider: rgba(255, 251, 255, 0.1);
+	/* The row under the pointer — the panel's identity moment. */
+	--os-cn-row-fill: var(--os-ui-holo-fill);
+	--os-cn-row-ink: var(--os-ui-holo-ink);
+	/* Beam: the thread from the panel's underside down to the tile. */
+	--os-cn-beam: color-mix(in srgb, var(--os-ui-accent-dim) 80%, transparent);
+	--os-cn-radius: 14px;
+	/*
+	 * Above every window and above the dock. Two panels coexist while
+	 * the pointer moves along the rail — one dismissing, one arriving
+	 * — and the retiring one is painted one step below so it can
+	 * never fade out on top of the menu being read.
+	 */
+	--os-cn-z: 2147483000;
 
 	/*
 	 * ---- Shell surfaces ----------------------------------------

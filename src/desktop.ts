@@ -97,6 +97,7 @@ import { createWindowLinkRendererRegistrySync } from './window-links/server-sync
 import { startUnfocusEngine } from './effects/unfocus-engine';
 import { startWindowRevealEngine } from './reveals/engine';
 import { createDockRailRendererSync } from './dock-rail/server-sync';
+import { mountDockConstellation } from './dock-constellation';
 import {
 	type WindowThemeDef,
 } from './window-chrome/themes/registry';
@@ -439,7 +440,8 @@ export interface OpenStationPublicApi {
 	/**
 	 * Side (left) dock instance — only non-null when the active
 	 * layout is `classic`. Holds core admin menus while the bottom
-	 * dock holds plugin menus. `null` in `unified` and `spatial`.
+	 * dock holds plugin menus. `null` in `unified`, `spatial` and
+	 * `openstation`.
 	 */
 	sideDock: Dock | null;
 	/**
@@ -448,7 +450,18 @@ export interface OpenStationPublicApi {
 	 * `data-os-layout` on the shell root with this value so
 	 * plugins can also key off the attribute via CSS.
 	 */
-	desktopLayout: 'classic' | 'unified' | 'spatial';
+	desktopLayout: 'classic' | 'unified' | 'spatial' | 'openstation';
+	/**
+	 * Edge the primary dock sits on. Mirrors
+	 * `OsSettingsSnapshot.dockPlacement` for the one-rail layouts;
+	 * reads `'bottom'` under `classic`, which owns both of its edges
+	 * whatever the preference says. The framework writes the same
+	 * value as `data-os-dock-placement` on the rail element.
+	 *
+	 * Replaced on the same terms as {@link dock}: moving the dock is
+	 * a rebuild, and it fires `os-layout-changed`.
+	 */
+	dockPlacement: 'bottom' | 'left' | 'right';
 	/**
 	 * Wallpaper-icon rail — the second badge surface alongside the
 	 * dock. Mirrors `Dock.setBadge` exactly:
@@ -2454,7 +2467,9 @@ function init(): void {
 
 	if ( bottomDockEl && shellEl && shellBody && config.dockItems ) {
 		desktopArea.classList.add( 'os-area--with-dock' );
-		const initialLayout = osSettings.getOsSettingsSnapshot().desktopLayout;
+		const initialSnapshot = osSettings.getOsSettingsSnapshot();
+		const initialLayout = initialSnapshot.desktopLayout;
+		const initialPlacement = initialSnapshot.dockPlacement;
 		const renderIcons = (
 			icons: import( './types' ).DesktopIconServerEntry[] | undefined,
 		): void => {
@@ -2485,7 +2500,19 @@ function init(): void {
 			initialLayout,
 			config.dockItems,
 			config.desktopIcons,
+			initialPlacement,
 		);
+		// Constellation — the hover-submenu flyout. Mounted once and
+		// left mounted: it is a single delegated listener that
+		// self-gates on `data-os-layout`, so a user flipping between
+		// layouts never needs it re-wired, and a user who never picks
+		// the OpenStation layout pays for one `pointerover` handler
+		// that early-returns on its first line.
+		mountDockConstellation( {
+			windowManager: manager,
+			adminUrl: config.adminUrl,
+			getMenuItems: () => layoutDispatcher?.getMenuItems() ?? [],
+		} );
 		// OpenStation Preferences tile — `'core'` affinity so it lands on
 		// the side dock in Classic (with core admin menus, where users
 		// expect a shell-owned affordance) and on the primary rail in
@@ -3563,19 +3590,29 @@ function init(): void {
 			return;
 		}
 		const prevLayout = layoutDispatcher.getLayout();
+		const prevPlacement = layoutDispatcher.getDockPlacement();
+		// Placement before layout so a save that only moved the dock
+		// rebuilds once. A save carrying BOTH (a theme's recommended
+		// settings, a reset) rebuilds twice — both passes are
+		// idempotent, and it is not a path a user can reach by picking.
+		layoutDispatcher.setDockPlacement( snapshot.dockPlacement );
 		layoutDispatcher.setLayout( snapshot.desktopLayout );
 		desktopApi.dock = layoutDispatcher.getPrimary();
 		desktopApi.sideDock = layoutDispatcher.getSide();
 		desktopApi.desktopLayout = snapshot.desktopLayout;
+		desktopApi.dockPlacement = layoutDispatcher.getDockPlacement();
 		// Always re-apply per-item placement on every settings save.
-		// `setLayout` already rebuilt from scratch when the layout
-		// itself changed (and reads the latest settings while doing
-		// so), so we skip the explicit refresh in that case to avoid
-		// double-rendering. Otherwise, refresh unconditionally — the
-		// snapshot may carry an item-visibility or dock-order change
-		// that callers (settings tab, context menu, drag-to-reorder)
-		// rely on landing live.
-		if ( prevLayout === snapshot.desktopLayout ) {
+		// `setLayout` / `setDockPlacement` already rebuilt from scratch
+		// when the layout or the edge itself changed (and read the
+		// latest settings while doing so), so we skip the explicit
+		// refresh in that case to avoid double-rendering. Otherwise,
+		// refresh unconditionally — the snapshot may carry an
+		// item-visibility or dock-order change that callers (settings
+		// tab, context menu, drag-to-reorder) rely on landing live.
+		if (
+			prevLayout === snapshot.desktopLayout &&
+			prevPlacement === snapshot.dockPlacement
+		) {
 			layoutDispatcher.refresh();
 		}
 		// Bring the files-layer placements in line with the new

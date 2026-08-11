@@ -58,7 +58,8 @@ The full surface is documented in [`javascript-reference.md`](./javascript-refer
 |---|---|---|
 | `dock` | `Dock \| null` *(primary / bottom rail)* | Stable |
 | `sideDock` | `Dock \| null` *(left rail; classic only)* | Stable |
-| `desktopLayout` | `'classic' \| 'unified' \| 'spatial'` | Stable |
+| `desktopLayout` | `'classic' \| 'unified' \| 'spatial' \| 'openstation'` | Stable |
+| `dockPlacement` | `'bottom' \| 'left' \| 'right'` *(Unified + Spatial)* | Stable |
 | `Dock.setBadge` | `( id: string, count: number ) => void` | Stable |
 | `Dock.removeSystemItem` | `( id: string ) => void` | Stable |
 | `icons` | `IconsApi` *(see `icons.setBadge`)* | Stable |
@@ -229,6 +230,7 @@ Every event bubbles from `document`. See [`javascript-reference.md`](./javascrip
 | `os-presence-changed` | Stable |
 | `os-selection-changed` | Experimental |
 | `os-layout-changed` | Stable |
+| `os-item-menu-opening` | Stable |
 | `os-registry-changed` | Stable |
 | `os.drag.start` / `.move` / `.enter` / `.leave` / `.rejected` / `.commit` / `.cancel` / `.end` | Stable |
 | `os-cross-frame-drag-start` / `-end` *(cross-iframe drag bridge)* | Stable |

@@ -120,6 +120,21 @@ function osConfirmGlobal( options: ConfirmOptions ): Promise< boolean > {
 }
 
 /**
+ * Window mode, defaulting to `'posts'`. For the call sites that build
+ * things before render, when the config blob may not exist yet (the
+ * kebab column-toggle menu mounts from the table descriptor). Inside
+ * `renderPostsWindow` read `isPagesMode` instead — the config is
+ * already resolved there, so the fallback would be dead weight.
+ */
+function windowMode( client: PostsWindowClient ): 'posts' | 'pages' {
+	try {
+		return client.getConfig().mode === 'pages' ? 'pages' : 'posts';
+	} catch {
+		return 'posts';
+	}
+}
+
+/**
  * Posts-window first-open intro. Mirrors the seen-intros surface in
  * `includes/seen-intros.php`: gated on `config.introSeen`, marks
  * itself seen on dismiss via `POST config.introUrl`. Runs once per
@@ -494,17 +509,7 @@ function _buildBaseColumns(
 	// pages without the column hook bus knowing the difference.
 	// Plugins that filter `openstation.postsWindow.columns` see the
 	// already-mode-appropriate base list and append/replace from there.
-	let mode: 'posts' | 'pages' = 'posts';
-	try {
-		const cfg = client.getConfig();
-		if ( cfg.mode === 'pages' ) {
-			mode = 'pages';
-		}
-	} catch {
-		// Pre-render code paths (the kebab column-toggle menu mounts
-		// from the table descriptor before render) might call this
-		// before a config is available — fall back to posts mode.
-	}
+	const mode = windowMode( client );
 
 	const titleCol: OsTableColumn< PostListItem > = {
 		key: 'title',
@@ -1074,14 +1079,13 @@ function defaultStatusSegments(): StatusSegment[] {
  * out by id) for read-only views.
  */
 function defaultBulkActions( client: PostsWindowClient ): BulkAction[] {
-	const isPages = client.getConfig().mode === 'pages';
+	const isPages = windowMode( client ) === 'pages';
 	return [
 		{
 			id: 'trash',
 			label: __( 'Move to trash' ),
 			icon: 'dashicons-trash',
 			variant: 'danger',
-			/* translators: %d: row count. */
 			confirm: isPages
 				? /* translators: %d: row count. */ __( 'Move %d page(s) to the trash?' )
 				: /* translators: %d: row count. */ __( 'Move %d post(s) to the trash?' ),
@@ -2295,6 +2299,9 @@ export async function renderPostsWindow(
 	}
 
 	const cfg = client.getConfig();
+	// Every mode-dependent string below reads this. `windowMode()` is
+	// for the call sites that have no resolved config to read.
+	const isPagesMode = cfg.mode === 'pages';
 	const view: ViewState = {
 		page: 1,
 		perPage: Math.max( 1, cfg.defaultPerPage || 20 ),
@@ -2371,11 +2378,15 @@ export async function renderPostsWindow(
 	const updatePager = (): void => {
 		if ( indicator ) {
 			if ( totalRows === 0 ) {
-				indicator.textContent = __( 'No posts' );
+				indicator.textContent = isPagesMode
+					? __( 'No pages' )
+					: __( 'No posts' );
 			} else {
+				const fmt = isPagesMode
+					? /* translators: 1: current page, 2: total pages, 3: total pages found. */ __( 'Page %1$d of %2$d · %3$d pages' )
+					: /* translators: 1: current page, 2: total pages, 3: total posts. */ __( 'Page %1$d of %2$d · %3$d posts' );
 				indicator.textContent = sprintf(
-					/* translators: 1: current page, 2: total pages, 3: total posts. */
-					__( 'Page %1$d of %2$d · %3$d posts' ),
+					fmt,
 					view.page,
 					Math.max( totalPages, 1 ),
 					totalRows,
@@ -2566,10 +2577,11 @@ export async function renderPostsWindow(
 			return;
 		}
 		if ( target.closest( NEW_BTN ) ) {
-			const isPages = cfg.mode === 'pages';
 			openAdminUrl( cfg.newPostUrl, {
-				title: isPages ? __( 'Add New Page' ) : __( 'Add New Post' ),
-				icon: isPages ? 'dashicons-admin-page' : 'dashicons-admin-post',
+				title: isPagesMode ? __( 'Add New Page' ) : __( 'Add New Post' ),
+				icon: isPagesMode
+					? 'dashicons-admin-page'
+					: 'dashicons-admin-post',
 			} );
 			return;
 		}

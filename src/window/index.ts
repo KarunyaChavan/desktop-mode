@@ -85,13 +85,17 @@ import {
  */
 const INITIAL_ORIGIN = window.location.origin;
 import {
+	activatePanelTab,
 	addExternalTab,
 	externalTabCount,
 	externalTabsSnapshot,
 	handleTabStripClick,
+	handleTabStripKeydown,
 	observeTabOverflow,
+	setPanelTabs,
 	syncActiveTab,
 } from './tabs';
+import type { PanelTabEntry } from './tabs';
 import {
 	closeActionsMenu,
 	flipStartupCheckOptimistically,
@@ -141,18 +145,19 @@ export class Window {
 
 	/**
 	 * In-flight async operation count. `markActivityStart()` /
-	 * `markActivitySettled()` increment / decrement; the title-bar
-	 * indicator paints `pending` while > 0. Counter (not boolean) so
-	 * concurrent fetches don't fight: two-in-flight + one-settled
-	 * still reads "saving".
+	 * `markActivitySettled()` increment / decrement; the phase reads
+	 * `pending` while > 0. Counter (not boolean) so concurrent fetches
+	 * don't fight: two-in-flight + one-settled still reads "saving".
 	 *
 	 * @internal
 	 */
 	public _activityCount = 0;
 
 	/**
-	 * Phase of the title-bar activity indicator. Driven by
-	 * `markActivity()` / `trackActivity()` / `wp.os.fetch()`.
+	 * This window's activity phase. Driven by `markActivity()` /
+	 * `trackActivity()` / `wp.os.fetch()`. Nothing renders it unless
+	 * an indicator has been mounted — see
+	 * {@link _paintActivityIndicator}.
 	 *
 	 * @internal
 	 */
@@ -1107,23 +1112,40 @@ export class Window {
 			this.toggleMaximize();
 		} );
 
-		// Iframe-only wiring: tab strip, load listener, and
-		// postMessage bridge all presuppose an iframe. Native windows
-		// have none of those affordances, so skip this whole block.
+		/*
+		 * Tab-strip wiring, for BOTH window kinds. It used to sit
+		 * inside the iframe-only block below, which is why native
+		 * windows could not have a strip at all. Nothing in here
+		 * presupposes an iframe: the click handler dispatches on the
+		 * tab's own `data-kind`, and the keyboard and overflow
+		 * observers are pure geometry.
+		 */
+		const tabs = this.element.querySelector< HTMLElement >(
+			'.os-window__tabs',
+		);
+		if ( tabs ) {
+			tabs.addEventListener( 'click', ( e: Event ) =>
+				handleTabStripClick( this, e ),
+			);
+			/*
+			 * One delegated listener rather than one per tab: tabs come
+			 * and go (external tabs open and close, `setTabs()`
+			 * re-declares a native window's), and a per-tab listener
+			 * would have to be re-attached on every one of those.
+			 */
+			tabs.addEventListener( 'keydown', ( e: Event ) =>
+				handleTabStripKeydown( tabs, e ),
+			);
+			// Paint the edge fades only where scrolling would
+			// actually reveal another tab.
+			this._tabOverflowTeardown = observeTabOverflow( tabs );
+		}
+
+		// Iframe-only wiring: the load listener and the postMessage
+		// bridge both presuppose an iframe. Native windows have
+		// neither, so skip this whole block.
 		if ( this.iframe ) {
 			const iframe = this.iframe;
-
-			const tabs = this.element.querySelector< HTMLElement >(
-				'.os-window__tabs',
-			);
-			if ( tabs ) {
-				tabs.addEventListener( 'click', ( e: Event ) =>
-					handleTabStripClick( this, e ),
-				);
-				// Paint the edge fades only where scrolling would
-				// actually reveal another tab.
-				this._tabOverflowTeardown = observeTabOverflow( tabs );
-			}
 
 			// Sync the active tab whenever the iframe finishes a
 			// navigation.
@@ -1137,6 +1159,42 @@ export class Window {
 	/** Add a closeable+detachable sub-tab hosting an external URL. */
 	public addExternalTab( url: string, label: string ): void {
 		addExternalTab( this, url, label );
+	}
+
+	/**
+	 * Declare this native window's tabs in the window chrome.
+	 *
+	 * Each entry's `value` matches the `for` attribute of an
+	 * `<os-tabpanel>` in the window body; the shell shows one pane and
+	 * hides the rest. Panes are toggled, never re-rendered, so a pane
+	 * that owns a canvas or a live preview keeps it across tab
+	 * changes.
+	 *
+	 * ```js
+	 * win.setTabs( [
+	 *   { value: 'calc',    label: 'Calc' },
+	 *   { value: 'convert', label: 'Convert' },
+	 * ] );
+	 * ```
+	 *
+	 * Safe to call again whenever the list changes: it reconciles by
+	 * `value` rather than rebuilding, so the user stays on the tab
+	 * they were on and the keyboard keeps its place. Pass
+	 * `activeValue` only to override that deliberately.
+	 *
+	 * Listen for `os-window-tab-change` on the window element (it
+	 * bubbles) to react to the user's choice.
+	 */
+	public setTabs(
+		entries: readonly PanelTabEntry[],
+		activeValue?: string,
+	): void {
+		setPanelTabs( this.element, entries, activeValue );
+	}
+
+	/** Show one of this window's panel tabs programmatically. */
+	public activateTab( value: string ): void {
+		activatePanelTab( this.element, value );
 	}
 
 	/** Set the z-index of this window. */
@@ -2842,7 +2900,16 @@ export class Window {
 	}
 
 	/**
-	 * Push the current activity state onto the title-bar dot.
+	 * Push the current activity state onto an activity indicator, if
+	 * this window has one.
+	 *
+	 * The framework mounts none by default — the title bar carried an
+	 * always-visible dot once, and an always-visible dot spends a
+	 * permanent mark on a state (`idle`) that is almost always true.
+	 * Anything that wants the dot back puts an `<os-save-status>`
+	 * carrying `data-os-activity-indicator` in a title-bar slot; this
+	 * finds it by that attribute and drives it. With nothing mounted
+	 * the phase machinery still runs and this is a cheap no-op.
 	 *
 	 * @internal
 	 */

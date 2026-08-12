@@ -24,6 +24,7 @@ import {
 } from '../window-channels';
 import { HOOKS, applyFilters } from '../hooks';
 import { createRevealLayers } from '../reveals/surface';
+import { syncTabStripSemantics } from './tab-strip';
 import {
 	LOADING_OVERLAY_CLASS,
 	LOADING_OVERLAY_SHOW_DELAY_MS,
@@ -36,6 +37,13 @@ import {
  * @internal
  */
 export const LOADING_BODY_CLASS = 'os-window__body--loading';
+
+/*
+ * Re-exported: `syncTabStripSemantics` moved to `tab-strip.ts` with
+ * the rest of the strip's own DOM behaviour, and this module is where
+ * its callers have always imported it from.
+ */
+export { syncTabStripSemantics } from './tab-strip';
 
 /**
  * Body modifier while a painted spinner hands off to the content: the
@@ -377,40 +385,6 @@ function createSlotHost( name: string ): HTMLElement {
 }
 
 /**
- * Apply (or strip) the tab strip's navigation semantics based on
- * whether it currently holds any tabs.
- *
- * Every iframe window gets a strip element, because external sub-tabs
- * can be added at runtime to a window that opened with no submenu. A
- * strip that is still empty must not advertise itself: an empty
- * `role="tablist"` is announced as a tab list with no tabs, and a bare
- * `<nav>` is a navigation landmark with nothing to navigate. Both are
- * noise in a landmark/rotor listing. `role="presentation"` drops the
- * element out of the accessibility tree without touching layout.
- *
- * Call after any mutation of the strip's children — `tabs.ts` does so
- * when external tabs are added, when the synthetic "Main" tab is
- * injected, and when either is removed.
- *
- * @internal
- */
-export function syncTabStripSemantics( strip: HTMLElement | null ): void {
-	if ( ! strip ) {
-		return;
-	}
-	if ( strip.querySelector( ':scope > .os-window__tab' ) ) {
-		strip.setAttribute( 'role', 'tablist' );
-		const label = strip.dataset.tablistLabel;
-		if ( label ) {
-			strip.setAttribute( 'aria-label', label );
-		}
-		return;
-	}
-	strip.setAttribute( 'role', 'presentation' );
-	strip.removeAttribute( 'aria-label' );
-}
-
-/**
  * Build a title-bar control button via the `<os-window-button>` web
  * component. The component ships the SVG icon, variant styling,
  * focused-/unfocused-aware coloring (via custom properties set on the
@@ -642,25 +616,19 @@ export function createWindowElement( config: WindowConfig ): HTMLElement {
 	const customRight = document.createElement( 'span' );
 	customRight.className = 'os-window__custom-buttons os-window__custom-buttons--right';
 
-	// Per-window activity indicator — sits between the icon and the
-	// title so it reads as "this window is doing something" without
-	// stealing the icon's role as window identity. Reserves a fixed
-	// width even when idle so its appearance/disappearance never
-	// causes layout shift on the title row. Wired up in
-	// `Window.markActivity()` / `Window.trackActivity()`; populated
-	// automatically by `wp.os.fetch()`.
-	const activityHost = document.createElement( 'span' );
-	activityHost.className = 'os-window__activity';
-	const activityStatus = document.createElement( 'os-save-status' );
-	activityStatus.setAttribute( 'mode', 'dot' );
-	activityStatus.setAttribute( 'animation', 'modem' );
-	activityStatus.setAttribute( 'phase', 'idle' );
-	activityStatus.setAttribute( 'data-os-activity-indicator', '' );
-	activityHost.appendChild( activityStatus );
-
+	// No activity indicator is painted here. The title bar used to
+	// carry an always-visible `<os-save-status>` dot between the icon
+	// and the title, which meant every window wore a small accent ring
+	// for the whole of its life to report a state — idle — that is
+	// true almost all of the time. The activity machinery itself is
+	// untouched: `Window.trackActivity()` / `Window.markActivity()`
+	// still reference-count and still phase, and
+	// `Window._paintActivityIndicator()` still paints onto any
+	// `[data-os-activity-indicator]` element found in the title bar.
+	// A plugin that wants the dot back drops an `<os-save-status>`
+	// carrying that attribute into a title-bar slot.
 	titleBar.appendChild( slotBeforeIcon );
 	titleBar.appendChild( slotIcon );
-	titleBar.appendChild( activityHost );
 	titleBar.appendChild( slotTitle );
 	titleBar.appendChild( slotAfterTitle );
 	titleBar.appendChild( customLeft );
@@ -796,24 +764,65 @@ export function createWindowElement( config: WindowConfig ): HTMLElement {
 	el.appendChild( titleBar );
 	el.appendChild( slotAfterTitlebar );
 
-	// Tab strip — initialized whenever the window has a submenu OR
-	// supports external-link sub-tabs (which iframe windows grow at
-	// runtime via `addExternalTab`). For windows with no submenu, we
-	// still create the strip but hide it via CSS `:empty` when empty.
-	// Each submenu tab is marked `data-kind="submenu"` so the runtime
-	// tab-switching code can tell submenu tabs apart from closeable
-	// external tabs.
-	//
-	// The strip's accessible name is stashed on a data attribute rather
-	// than applied here: navigation semantics are only switched on once
-	// the strip actually holds tabs (see `syncTabStripSemantics`), and
-	// by that point the config object is out of reach of the runtime
-	// tab code in `tabs.ts`.
-	if ( ! config.native ) {
+	/*
+	 * Tab strip — built for EVERY window, iframe or native.
+	 *
+	 * It used to be skipped for native windows, which is why they grew
+	 * a second tab system of their own inside the body. There is one
+	 * strip now and one stylesheet behind it; what differs between the
+	 * two kinds is only what a tab does when you press it. An iframe
+	 * window's submenu tabs swap the iframe URL (seeded below); a
+	 * native window's panel tabs show a pane in its body and are
+	 * declared at runtime through `Window.setTabs()`.
+	 *
+	 * A window with no tabs of either kind still gets the element, so
+	 * `addExternalTab()` and `setTabs()` have somewhere to put one
+	 * later. Empty, CSS collapses it to nothing.
+	 *
+	 * The strip's accessible name is stashed on a data attribute rather
+	 * than applied here: navigation semantics are only switched on once
+	 * the strip actually holds tabs (see `syncTabStripSemantics`), and
+	 * by that point the config object is out of reach of the runtime
+	 * tab code in `tabs.ts` and `tab-strip.ts`.
+	 */
+	{
 		const tabs = document.createElement( 'nav' );
 		tabs.className = 'os-window__tabs';
-		// translators: %s is the window's admin-page title (e.g., "Posts")
-		tabs.dataset.tablistLabel = sprintf( __( '%s sub-pages' ), config.title );
+
+		// The plate — the active tab's surface, as one element that
+		// slides between tabs rather than a fill that switches off on
+		// one and on at the next. Appended FIRST so it paints under
+		// the tab buttons, which carry `z-index: 1`; a plate above
+		// them would hide the active label.
+		//
+		// `positionTabPlate()` in `tab-strip.ts` drives its geometry,
+		// and `observeTabOverflow()` is what calls that — the strip's
+		// existing observer already fires on every moment the plate
+		// would need re-measuring.
+		const plate = document.createElement( 'span' );
+		plate.className = 'os-window__tab-plate';
+		plate.setAttribute( 'aria-hidden', 'true' );
+		const plateFill = document.createElement( 'span' );
+		plateFill.className = 'os-window__tab-plate-fill';
+		const plateJoint = document.createElement( 'span' );
+		plateJoint.className = 'os-window__tab-plate-joint';
+		plate.appendChild( plateFill );
+		plate.appendChild( plateJoint );
+		tabs.appendChild( plate );
+
+		/*
+		 * A native window's tabs are panes of one app, not sub-pages
+		 * of an admin screen, so the tablist says so. Screen-reader
+		 * users hear this on entering the strip and it is the only
+		 * thing telling them what these tabs belong to.
+		 */
+		if ( config.native ) {
+			// translators: %s is the window's title (e.g., "OpenStation Preferences")
+			tabs.dataset.tablistLabel = sprintf( __( '%s sections' ), config.title );
+		} else {
+			// translators: %s is the window's admin-page title (e.g., "Posts")
+			tabs.dataset.tablistLabel = sprintf( __( '%s sub-pages' ), config.title );
+		}
 
 		if ( config.submenu && config.submenu.length > 0 && config.url ) {
 			const initialKey = urlMatchKey( config.url );

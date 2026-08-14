@@ -85,6 +85,17 @@ export interface WindowConfig {
 	 * sub-page.
 	 */
 	parentUrl?: string;
+	/**
+	 * Label for the synthetic first tab — the one that leads back to
+	 * {@link parentUrl}. WordPress's own name for that page: "Themes"
+	 * under Appearance, "All Posts" under Posts.
+	 *
+	 * Falls back to {@link title}, which is the MENU's name, and was
+	 * the only label available before `DockItem.selfLabel` carried the
+	 * stripped self-link through. That fallback still covers menus with
+	 * no self-link at all.
+	 */
+	selfLabel?: string;
 	/** Window title displayed in the title bar. */
 	title: string;
 	/**
@@ -771,6 +782,13 @@ export interface NativeWindowServerEntry {
 	icon: string;
 	/** `'dock'` = render a system tile on the unified dock, `'none'` = register the window but render no tile (plugin opens programmatically). */
 	placement: 'dock' | 'none';
+	/**
+	 * Sort key for the tile among system tiles, ascending. Absent
+	 * means `0`, which puts the tile ahead of the shell's own trailing
+	 * cluster (Mio 10, Overview 20, System 30) — where a plugin's
+	 * launcher belongs. Trash sets 40 to sit at the very end.
+	 */
+	dockOrder?: number;
 	/** Initial window dimensions in px. */
 	width: number;
 	height: number;
@@ -1500,6 +1518,12 @@ export interface DockItemConfig {
 	/** Submenu items. */
 	submenu: { title: string; url: string }[];
 	/**
+	 * WordPress's own label for this menu's landing page ("Themes",
+	 * "All Posts"), stripped out of `submenu` as the self-link. Names
+	 * the in-window tab that leads back to it.
+	 */
+	selfLabel?: string;
+	/**
 	 * Whether this admin page supports multiple open windows. Determined
 	 * server-side — list screens (Posts, Pages, Media, Users, Comments,
 	 * taxonomies) are true by default; Settings / Tools / Dashboard are
@@ -1599,6 +1623,10 @@ export interface DesktopConfig {
 	currentIcon: string;
 	/** Base admin URL (e.g., 'http://localhost:8889/wp-admin/'). */
 	adminUrl: string;
+	/** Site front page, for the System tile's "View site" row. */
+	homeUrl?: string;
+	/** Nonced logout URL — the shell cannot build this one itself. */
+	logoutUrl?: string;
 	/** The active color scheme slug. */
 	colorScheme: string;
 	/**

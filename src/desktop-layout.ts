@@ -61,11 +61,13 @@ import {
 import { doAction, HOOKS } from './hooks';
 
 /**
- * Where a system tile prefers to live. `'core'` follows the rail
- * that holds core admin menus (side bar in Classic, primary rail
- * elsewhere); `'plugin'` always lands on the primary rail with
- * plugin menus. Defaults to `'plugin'` so plugin-registered native-
- * window tiles continue to sit alongside other plugin entries.
+ * What kind of system tile this is: `'core'` for a shell-owned
+ * affordance (System, Exit OpenStation), `'plugin'` for a plugin's
+ * launcher. Defaults to `'plugin'`.
+ *
+ * Descriptive, not positional: every system tile lands on the primary
+ * dock, because Split's side rail is core ADMIN MENUS only. This is
+ * the classification `listSystemTiles()` reports, nothing more.
  */
 export type SystemTileAffinity = 'core' | 'plugin';
 
@@ -155,15 +157,11 @@ export interface LayoutDispatcher {
 	 * tracked set in registration order. Calling twice with the same
 	 * id replaces the previous tile (idempotent).
 	 *
-	 * `affinity` controls which rail the tile lives on:
-	 *
-	 * - `'plugin'` *(default)* — always lands on the primary (bottom)
-	 *   dock alongside plugin admin menus. Used by plugin-registered
-	 *   native-window tiles.
-	 * - `'core'` — lands on the side dock when one exists (Classic
-	 *   layout, alongside core admin menus); falls back to the primary
-	 *   dock in Unified, where there is no side rail. Used
-	 *   by shell-owned affordances like OS Settings.
+	 * `affinity` records what KIND of tile this is — `'core'` for a
+	 * shell-owned affordance, `'plugin'` *(default)* for a plugin's
+	 * launcher — and is reported by {@link listSystemTiles}. It no
+	 * longer picks a rail: every system tile lands on the primary
+	 * dock. Split's side rail is core admin menus and nothing else.
 	 */
 	appendSystemTile(
 		item: SystemDockItem,
@@ -252,14 +250,22 @@ export function createLayoutDispatcher(
 	// (so flipping the setting back restores it) but detached.
 	const attachedSystemTiles = new Set< string >();
 
+	/**
+	 * Which rail hosts a system tile. Always the primary one.
+	 *
+	 * Split's side rail is for CORE ADMIN MENUS, and only those. It is
+	 * the WordPress half of the layout — that is the whole idea the
+	 * split expresses — so shell affordances (System, Exit
+	 * OpenStation, Mio) belong on the bottom dock with everything else
+	 * OpenStation owns, whichever layout is on.
+	 *
+	 * Routing `'core'` tiles to the side rail would put Preferences and
+	 * the exit button under a column of admin menus, making the rail
+	 * mean two things at once.
+	 */
 	const railFor = (
-		affinity: SystemTileAffinity,
-	): DockRailController | null => {
-		if ( affinity === 'core' && side ) {
-			return side;
-		}
-		return primary;
-	};
+		_affinity: SystemTileAffinity,
+	): DockRailController | null => primary;
 
 	const ensureSideDockEl = (): HTMLElement => {
 		const existing = document.getElementById(
@@ -325,6 +331,26 @@ export function createLayoutDispatcher(
 	};
 
 	/**
+	 * Native-window ids with a window open right now.
+	 *
+	 * Feeds `applyDockPlacement`, which synthesizes a dock tile for a
+	 * desktop-only icon while its window is running — see the
+	 * `openWindowIds` note there for why. Read fresh rather than
+	 * cached: the answer changes on every open and close.
+	 */
+	const openWindowIds = (): Set< string > => {
+		const active = deps.windowManager.getActiveDesktopId();
+		const ids = new Set< string >();
+		for ( const win of deps.windowManager.getAll() ) {
+			if ( ( win.config.desktopId || active ) !== active ) {
+				continue;
+			}
+			ids.add( win.config.baseId || win.id );
+		}
+		return ids;
+	};
+
+	/**
 	 * Bring rail attachment in line with the visibility map for every
 	 * tracked system tile: attach tiles the user unhid, detach tiles
 	 * the user hid. Idempotent — called from `refresh()` on every
@@ -345,6 +371,53 @@ export function createLayoutDispatcher(
 		}
 	};
 
+	/**
+	 * The desktop-only icons currently showing a synthesized tile
+	 * because their window is open, as a comparable string.
+	 *
+	 * A window opening or closing is the input that decides whether a
+	 * running app has a tile, but it is emphatically NOT a reason to
+	 * rebuild the rail: opening a window is the single most common
+	 * thing that happens in the shell, and re-rendering the menu host
+	 * each time would discard hover state and cancel an in-flight tile
+	 * drag. So the listener recomputes this signature and only refreshes
+	 * when the answer actually moved — which is the handful of opens
+	 * and closes that involve a desktop-only app.
+	 */
+	const runningIconSignature = (): string => {
+		const open = openWindowIds();
+		const visibility = readSettings().itemVisibility;
+		return serverIcons
+			.filter(
+				( icon ) =>
+					!! icon.window &&
+					open.has( icon.window ) &&
+					// Desktop-only: on the rail purely because it is
+					// running, so its arrival and departure are what
+					// this signature tracks.
+					'desktop' === ( visibility[ icon.id ] ?? 'desktop' ),
+			)
+			.map( ( icon ) => icon.id )
+			.sort()
+			.join( ',' );
+	};
+	let lastRunningIcons = runningIconSignature();
+
+	// Document events rather than the hook bus: these fire for every
+	// window regardless of who opened it, which is the point. Never
+	// torn down, because the dispatcher outlives every layout rebuild
+	// and there is exactly one of it.
+	for ( const event of [ 'os-window-opened', 'os-window-closed' ] ) {
+		document.addEventListener( event, () => {
+			const next = runningIconSignature();
+			if ( next === lastRunningIcons ) {
+				return;
+			}
+			lastRunningIcons = next;
+			dispatcher.refresh();
+		} );
+	}
+
 	const effectiveDockItems = (): DockItem[] => {
 		// System tile ids match the native-window ids the framework
 		// has already mounted on the dock (Recycle Bin's
@@ -361,6 +434,7 @@ export function createLayoutDispatcher(
 			serverIcons,
 			readSettings(),
 			dockedNativeWindows,
+			openWindowIds(),
 		);
 	};
 
@@ -527,6 +601,7 @@ export function createLayoutDispatcher(
 					? item.icon
 					: 'dashicons-admin-generic',
 				submenu: item.submenu,
+				selfLabel: item.selfLabel,
 				multi: !! item.multi,
 			} );
 		},
@@ -546,6 +621,7 @@ export function createLayoutDispatcher(
 					? item.icon
 					: 'dashicons-admin-generic',
 				submenu: item.submenu,
+				selfLabel: item.selfLabel,
 				multi: !! item.multi,
 			} );
 		},

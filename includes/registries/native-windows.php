@@ -92,6 +92,16 @@ defined( 'ABSPATH' ) || exit;
  *     @type string   $placement    'dock' | 'none'. Default 'dock'.
  *                                  'none' skips the tile (plugin
  *                                  opens the window programmatically).
+ *     @type int      $dock_order   Sort key among system tiles,
+ *                                  ascending; ties keep registration
+ *                                  order. Default 0, which places the
+ *                                  tile ahead of the shell's own
+ *                                  trailing cluster (Mio 10, Overview
+ *                                  20, System 30, Exit 35, Trash 40).
+ *                                  Needed because registration order
+ *                                  is not something a plugin controls:
+ *                                  tiles land when their lazy script
+ *                                  resolves.
  *     @type string[] $capabilities User capabilities that gate the
  *                                  registration. ANY miss returns
  *                                  `WP_Error openstation_capability_denied`.
@@ -159,6 +169,7 @@ function openstation_register_window( $id, $args = array() ) {
 		'min_width'        => 280,
 		'min_height'       => 220,
 		'placement'        => 'dock',
+		'dock_order'       => 0,
 		'capabilities'     => array(),
 		'autofocus'        => false,
 		'main_tab_label'   => '',
@@ -217,6 +228,11 @@ function openstation_register_window( $id, $args = array() ) {
 		'min_width'        => (int) $args['min_width'],
 		'min_height'       => (int) $args['min_height'],
 		'placement'        => $placement,
+		// Sort key among system tiles, ascending. `0` (the default)
+		// puts a plugin's tile ahead of the shell's own trailing
+		// cluster — Mio 10, Overview 20, System 30 — which is where a
+		// launcher belongs. Trash uses 40 to sit at the very end.
+		'dock_order'       => (int) $args['dock_order'],
 		'autofocus'        => $args['autofocus'],
 		'main_tab_label'   => (string) $args['main_tab_label'],
 		// Stored as-is (string or int). `openstation_build_native_window_template_html`

@@ -1456,6 +1456,13 @@ body.os-active {
 	 * the dock (200) so it never covers navigation.
 	 */
 	--os-z-mio: 190;
+	/*
+	 * The notch — above every window and above the dock, because it
+	 * overlaps the shell's top edge deliberately and must stay legible
+	 * over a maximized window's title bar. Scoped inside the shell's
+	 * own stacking context, so it never competes with the admin bar.
+	 */
+	--os-z-notch: 9000;
 
 	/*
 	 * Window-link ties (relation splines between windows). The accent

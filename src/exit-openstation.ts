@@ -12,6 +12,8 @@
  */
 
 import type { SystemDockItem } from './dock';
+import { SYSTEM_TILE_ORDER } from './dock-shell-tiles';
+import type { ShortcutsData } from './shortcuts';
 import { __ } from './i18n';
 
 export const EXIT_OPENSTATION_TILE_ID = 'os-exit';
@@ -20,6 +22,12 @@ interface AdminBarConfig {
 	nonce?: string;
 	classicUrl?: string;
 	ajaxUrl?: string;
+	/**
+	 * Keyboard-shortcut reference content, translated server-side.
+	 * Declared here because this module owns the global; rendered by
+	 * `src/shortcuts.ts`, which owns the shape.
+	 */
+	shortcuts?: ShortcutsData;
 }
 
 declare global {
@@ -37,6 +45,10 @@ export function getExitOpenStationTileDef(): SystemDockItem {
 	return {
 		id: EXIT_OPENSTATION_TILE_ID,
 		title: __( 'Exit OpenStation' ),
+		// After the shell cluster, before Trash. Without an explicit
+		// key it defaults to 0 and interleaves with plugin launchers,
+		// whose order is also 0.
+		order: SYSTEM_TILE_ORDER.exit,
 		// `dashicons-exit` (door with arrow) is the clearest "leave"
 		// glyph in the WordPress set, distinct from `dashicons-desktop`
 		// used by OS Settings.

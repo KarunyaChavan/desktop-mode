@@ -85,6 +85,8 @@ function openstation_enqueue_assets() {
 	wp_enqueue_style( 'os-settings' );
 	wp_enqueue_style( 'os-dock' );
 	wp_enqueue_style( 'os-dock-peek' );
+	wp_enqueue_style( 'os-notch' );
+	wp_enqueue_style( 'os-shortcuts' );
 	wp_enqueue_style( 'os-openstation-layout' );
 	wp_enqueue_style( 'desktop-mode-ai-assistant' );
 	wp_enqueue_style( 'desktop-mode-bug-report' );
@@ -450,6 +452,13 @@ function openstation_enqueue_assets() {
 			'currentTitle'                  => wp_strip_all_tags( $title ),
 			'currentIcon'                   => sanitize_html_class( $menu_icon ),
 			'adminUrl'                      => esc_url( admin_url() ),
+			'homeUrl'                       => esc_url( home_url( '/' ) ),
+			// Decoded: the shell assigns this to `window.location`,
+			// where `&amp;` would make `_wpnonce` arrive as
+			// `amp;_wpnonce` and fail the nonce check.
+			'logoutUrl'                     => esc_url_raw(
+				html_entity_decode( wp_logout_url(), ENT_QUOTES, 'UTF-8' )
+			),
 			'colorScheme'                   => sanitize_html_class( get_user_option( 'admin_color' ), 'fresh' ),
 			'dockItems'                     => $dock_items,
 			// Baseline menu fingerprint. The shell seeds its last-known

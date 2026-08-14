@@ -4,7 +4,7 @@ Tags: admin, dashboard, desktop, productivity, ai
 Requires at least: 6.0
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 1.0.1
+Stable tag: 1.1.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -167,6 +167,28 @@ The **Inkfall** game's word list (`assets/games/inkfall/words.txt`) is generated
 * **[LDNOOBW English list](https://github.com/LDNOOBW/List-of-Dirty-Naughty-Obscene-and-Otherwise-Bad-Words)** (CC-BY 4.0) — used as an exclusion filter.
 
 == Changelog ==
+
+= 1.1.0 =
+* Consolidate navigation into a single dock
+* Notes: Merge the sticky-notes into pinned notes
+* Confirm dialog: route Enter to the focused button, trap and restore focus
+* Posts window: Pluralize the bulk-action confirm text
+* Windows: Fix the accessibility semantics of controls, tabs and loading
+* Make the active window tab a frosted plate that slides
+* A11y: keep actionable toasts alive while attended, trap focus in first-run dialogs
+* Add the missing Domain Path header
+* AI: Internationalize the assistant overlay
+* Dashboard: Stop the welcome panel dismiss opening a stray window
+* Shell: exit OpenStation when the plugin stops being active
+* AI: Drop the SSE transport and answer over a single request
+* Activity indicator: settle on the response, not on the promise
+* Native windows: Remove the first-open intro modals
+* Woo relations: a refund is not a purchase; user tiles: carry their key
+* Settings: Redesign of this panel and regrouping
+* Refresh folder share action on settings save
+* Fixes: silent settings loss, folder-sharing visibility, and wallpaper shortcuts
+* Dock: Move the admin bar's jobs into the dock and a notch
+* Trash: Drop the desktop icon, and let a placeable tile choose its rail
 
 = 1.0.1 =
 * AI: the assistant answers over a single request again; live progress streaming is gone

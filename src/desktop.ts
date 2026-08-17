@@ -30,6 +30,7 @@ import {
 	registerNativeUrlRemap,
 	tryNativeUrlRemap,
 } from './native-url-remap';
+import type { NativeUrlRemap } from './native-url-remap';
 import { bindAdminLinkDispatch } from './window/iframe-bridge';
 import type { DestructiveAdminActionEntry } from './destructive-admin-actions';
 // Tile-decoration helpers and the dock-selector registry live in
@@ -668,6 +669,55 @@ export interface OpenStationPublicApi {
 	 * behave like iframe windows do: every "+" yields a duplicate.
 	 */
 	openNewWindow: ( id: string, opts?: { source?: string } ) => boolean;
+	/**
+	 * Load a registered native window's bundle without opening the
+	 * window.
+	 *
+	 * A native window's script loads the first time the window
+	 * opens. Most callers never think about it — the render callback
+	 * is read after the load, so opening a window Just Works. This
+	 * is for the other case: a bundle that ALSO publishes an API on
+	 * `wp.os` which a different bundle calls with no window in
+	 * sight. Await this, then read the API:
+	 *
+	 * ```js
+	 * await wp.os.loadWindowScript( 'desktop-mode-my-wordpress' );
+	 * await wp.os.myWordpress.trashEntity( 'posts', 42 );
+	 * ```
+	 *
+	 * Resolves `true` once the bundle is in the tab (immediately on
+	 * a repeat call), `false` when no native window is registered
+	 * with that id. A network failure still resolves `true` and
+	 * reports through the `SHELL_ERROR` action — check for the API
+	 * you came for rather than trusting the boolean.
+	 */
+	loadWindowScript: ( id: string ) => Promise< boolean >;
+	/**
+	 * Make `<os-*>` tags upgrade, fetching the component kit if the
+	 * page doesn't already have them.
+	 *
+	 * Components register per bundle at import time, so the tags
+	 * that work on a page are the ones some loaded bundle imported
+	 * — after boot, roughly a third of the kit. Code inside this
+	 * repo fixes that with an import. Code outside it could not:
+	 * a plugin shipped as a zip has no path to import from at build
+	 * time, leaving it to bundle a second copy of components the
+	 * page already has, or hand-roll. This is the third route.
+	 *
+	 * ```js
+	 * await wp.os.loadComponents( [ 'os-switch', 'os-number-field' ] );
+	 * panel.innerHTML = '<os-switch label="Live"></os-switch>';
+	 * ```
+	 *
+	 * Call it before each render — it resolves without a fetch when
+	 * the tags are already registered, so the repeat cost is a
+	 * registry lookup. With no argument the whole kit loads. Tags
+	 * that aren't components are reported to the console and don't
+	 * stop the rest.
+	 *
+	 * Rejects only when the bundle was needed and the fetch failed.
+	 */
+	loadComponents: ( tags?: readonly string[] ) => Promise< void >;
 	/**
 	 * Wrapper around native `fetch()` that attributes the request to
 	 * a desktop window's activity indicator. While the fetch is in
@@ -1749,6 +1799,57 @@ export interface OpenStationPublicApi {
 	 * plugin bundles.
 	 */
 	getWindowConfig: < T = Record< string, unknown > >( id: string ) => T | undefined;
+	/**
+	 * What an open window is showing right now — its open-time
+	 * params, live.
+	 *
+	 * `openWindow( id, { params } )` sets them and a render callback
+	 * receives them as `ctx.params`, which is the right way to read
+	 * them when you have a render callback. This is for when you
+	 * don't: a window whose body is a declarative PHP template, a
+	 * module that mounts later, code reacting to a retarget from
+	 * outside a `HOOKS.WINDOW_REOPENED` subscriber.
+	 *
+	 * ```js
+	 * const { formId } = wp.os.getWindowParams( 'my-forms' ) ?? {};
+	 * ```
+	 *
+	 * Returns a copy — mutating it retargets nothing. `undefined`
+	 * when no window with that id is open; `{}` when one is open and
+	 * was never given params.
+	 */
+	getWindowParams: (
+		id: string,
+	) => Record< string, string | number | boolean > | undefined;
+	/**
+	 * Claim an admin URL for a native window.
+	 *
+	 * When anything in the shell would open `url` — a dock tile, an
+	 * in-window link, a desktop shortcut, a Related-menu item, a
+	 * portal deep link — the remap registry is consulted first, and
+	 * a match opens the native window instead of an iframe of the
+	 * classic page. This is how Posts, Pages, Users and Media claim
+	 * `edit.php`, `users.php` and `upload.php`, and it is the same
+	 * registry a plugin's own native replacement should join.
+	 *
+	 * ```js
+	 * wp.os.registerNativeUrlRemap( {
+	 *     id: 'my-plugin/entries',
+	 *     nativeWindowId: 'my-plugin-entries',
+	 *     matches: ( url, parsed ) =>
+	 *         parsed.pathname.endsWith( '/admin.php' ) &&
+	 *         parsed.searchParams.get( 'page' ) === 'my-entries',
+	 *     params: ( url, parsed ) => ( {
+	 *         formId: Number( parsed.searchParams.get( 'form' ) ) || 0,
+	 *     } ),
+	 * } );
+	 * ```
+	 *
+	 * Returns an unregister function. Re-registering the same `id`
+	 * replaces the previous entry; the walker stops at the first
+	 * match in registration order.
+	 */
+	registerNativeUrlRemap: ( entry: NativeUrlRemap ) => () => void;
 	/**
 	 * Read-only diagnostics surface. Plugin authors integrating with
 	 * openstation use these to answer "what state does the framework
@@ -3314,6 +3415,24 @@ function init(): void {
 	bootRelatedEntities( {
 		manager,
 		openUrl: ( item ) => {
+			// A named native window is the unambiguous destination:
+			// no URL to invent, no remap to match it back, and the
+			// params travel as params rather than as query string.
+			// Falls through when nothing is registered under the id,
+			// so an item that carries both still opens its page if
+			// the window's plugin is gone.
+			if (
+				item.windowId &&
+				nativeWindows.openById( item.windowId, {
+					source: 'related-entities',
+					...( item.params ? { params: item.params } : {} ),
+				} )
+			) {
+				return;
+			}
+			if ( ! item.url ) {
+				return;
+			}
 			// Honour native-window remaps first — same as the shell's
 			// link interceptor. When the viewer has opted into a native
 			// window that claims this URL (e.g. Comments for
@@ -3743,6 +3862,7 @@ function init(): void {
 		registerWindow,
 		openWindowById: nativeWindows.openById,
 		openNewWindowById: nativeWindows.openNewById,
+		loadWindowScriptById: nativeWindows.loadScriptById,
 		placeSystemTile,
 		setDefaultWindow,
 		refreshMenu,

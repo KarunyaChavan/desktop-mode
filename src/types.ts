@@ -773,6 +773,21 @@ export interface MonitorEntry {
  *
  * @public
  */
+/**
+ * One companion bundle attached to a native window through the
+ * `scripts` registration arg. Same resolved shape the main script
+ * travels in, so the shell's loader replays `wp_localize_script` /
+ * `wp_add_inline_script` / translation data identically.
+ */
+export interface NativeWindowCompanionScript {
+	scriptUrl: string;
+	scriptHandle: string;
+	scriptBefore?: string[];
+	scriptAfter?: string[];
+	scriptL10n?: string[];
+	scriptTranslations?: string;
+}
+
 export interface NativeWindowServerEntry {
 	/** Window id + dock-tile id. */
 	id: string;
@@ -824,6 +839,24 @@ export interface NativeWindowServerEntry {
 	scriptL10n?: string[];
 	/** `wp.i18n.setLocaleData(…)` snippet from `wp_set_script_translations()`. Injected before everything. */
 	scriptTranslations?: string;
+	/**
+	 * Companion bundles (`scripts` arg) loaded in order immediately
+	 * before `scriptUrl`. For code that extends the window from
+	 * outside it — subscribing to actions the window's own bundle
+	 * fires — and therefore has to be in the tab before its render
+	 * callback paints. Travelling with the window is what keeps such
+	 * a bundle off the boot critical path.
+	 */
+	companionScripts?: NativeWindowCompanionScript[];
+	/**
+	 * Load the bundle at shell boot rather than on the window's first
+	 * open. Absent/false for everything that only publishes a render
+	 * callback (the documented contract, and the overwhelming
+	 * majority). Set by windows whose bundle also carries a boot-time
+	 * job — a badge poller, a `wp.os` API surface — that must run
+	 * whether or not the window is ever opened.
+	 */
+	preloadScript?: boolean;
 	/**
 	 * Absolute URL of the plugin's enqueued stylesheet. Shell injects a
 	 * `<link rel="stylesheet">` into `<head>` when this entry appears
@@ -2180,6 +2213,13 @@ export interface DesktopConfig {
 	 * first user trigger feels instant.
 	 */
 	shellOverlaysBundleUrl?: string;
+	/**
+	 * Fully-qualified URL of the full `<os-*>` component kit —
+	 * every tag in `OS_COMPONENT_TAGS`. The shell never loads it;
+	 * `wp.os.loadComponents()` does, on behalf of plugin code that
+	 * has no way to import the modules at build time.
+	 */
+	componentsBundleUrl?: string;
 	/**
 	 * Mio appearance + physics from PHP
 	 * (`openstation_mio_config()`, filterable via

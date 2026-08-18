@@ -22,7 +22,7 @@ WordPress has rebuilt almost everything else. The editor, the site editor, the p
 
 OpenStation touches it.
 
-https://www.youtube.com/watch?v=jii_gGbqUx4
+https://www.youtube.com/watch?v=g5MLB3WMlCc
 
 Install it and admin screens become draggable, resizable windows. Edit a post while the Media Library sits open next to it. Drag an image from one window straight into the other. Keep comments open in the corner. Reload the browser and your window layout — open pages, positions, sizes, and window states — comes back where you left it.
 

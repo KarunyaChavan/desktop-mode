@@ -4,7 +4,7 @@ Tags: admin, dashboard, desktop, productivity, ai
 Requires at least: 6.0
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 1.1.1
+Stable tag: 1.1.2
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -169,6 +169,22 @@ The **Inkfall** game's word list (`assets/games/inkfall/words.txt`) is generated
 * **[LDNOOBW English list](https://github.com/LDNOOBW/List-of-Dirty-Naughty-Obscene-and-Otherwise-Bad-Words)** (CC-BY 4.0) — used as an exclusion filter.
 
 == Changelog ==
+
+= 1.1.2 =
+* Window: the open-animation deadline must not outlive its window
+* Update notice: show the vinyl card when the release post lands late
+* Add native Station Home dashboard
+* Explorer: better third party apps integration
+* Icons: adopt @wordpress/icons and draw the shell from one set
+* Files: a drag out of the Media Library lands on the desktop
+* Preserve and forward select host aria-label
+* Navigation: one model decides where every menu, app and control lives
+* Take the shell off the editor's typing path
+* Widgets: reveal the add button on hover and snap floating widgets to a grid
+* Appearance → Editor: the window's tab strip goes dark once the site editor loads
+* Replace About scene with RSS-powered journal
+* Tests: End the About CSS slice at the next section, not a named one
+* Dock: keep off-site admin menus out, and put the wp-admin originals back
 
 = 1.1.1 =
 * My WordPress: let the entity hover card follow the desktop theme

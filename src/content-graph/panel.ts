@@ -23,6 +23,7 @@
  */
 
 import { __, _n, sprintf } from '../i18n';
+import { decodeHTML } from '../utils';
 import {
 	fetchCommentStats,
 	fetchTermStats,
@@ -333,7 +334,8 @@ export function renderPanel(
 		backLabel.className =
 			'os-content-graph__panel-breadcrumb-label';
 		backLabel.textContent =
-			currentPost.post.title || `#${ currentPost.post.id }`;
+			decodeHTML( currentPost.post.title ) ||
+			`#${ currentPost.post.id }`;
 		back.appendChild( arrow );
 		back.appendChild( backLabel );
 		back.title = __( 'Back to post' );
@@ -402,7 +404,8 @@ export function renderPanel(
 			meta.textContent = '';
 			return;
 		}
-		title.textContent = detail.post.title || `#${ detail.post.id }`;
+		title.textContent =
+			decodeHTML( detail.post.title ) || `#${ detail.post.id }`;
 		meta.textContent = `${ detail.post.type } · ${ detail.post.status }`;
 
 		currentPage.appendChild( renderAuthorBlock( detail ) );
@@ -526,7 +529,9 @@ export function renderPanel(
 				api.myWordpress!.openDetail( {
 					entityId,
 					postId: detail.post.id,
-					postTitle: detail.post.title || `#${ detail.post.id }`,
+					postTitle:
+						decodeHTML( detail.post.title ) ||
+						`#${ detail.post.id }`,
 				} );
 			} );
 			wrap.appendChild( myWp );
@@ -539,7 +544,7 @@ export function renderPanel(
 			edit.addEventListener( 'click', () =>
 				openAdminUrl(
 					detail.post.edit_url,
-					detail.post.title,
+					decodeHTML( detail.post.title ),
 					'dashicons-admin-post',
 					`post-${ detail.post.id }`,
 				),
@@ -554,7 +559,7 @@ export function renderPanel(
 			view.addEventListener( 'click', () =>
 				openAdminUrl(
 					detail.post.view_url,
-					detail.post.title,
+					decodeHTML( detail.post.title ),
 					'dashicons-admin-post',
 					`post-${ detail.post.id }`,
 				),
@@ -1243,7 +1248,9 @@ export function renderPanel(
 			breadcrumbHost.hidden = true;
 			currentView = { kind: 'post' };
 			prevViewKind = null;
-			title.textContent = fallbackTitle ?? `#${ id }`;
+			title.textContent = fallbackTitle
+				? decodeHTML( fallbackTitle )
+				: `#${ id }`;
 			meta.textContent = __( 'Loading…' );
 			body.replaceChildren();
 			currentPage = createPage();

@@ -4766,6 +4766,29 @@ Public URL of the same directory. Must resolve to the same bytes as
 - **Param** `string $url`
 - **Return** `string`
 
+### `openstation_agent_faces_base_dir` — Experimental *(filter)*
+
+Absolute path of the agent-face storage directory (no trailing slash).
+Default `uploads/desktop-mode-agent-faces`. Each agent's portrait is
+written here as an SVG named `<agentId>-<hash>.svg`, and served as its
+avatar wherever `get_avatar()` runs.
+
+Whatever this points at **must be web-servable**. The directory is
+hardened exec-off rather than deny-all for exactly that reason: a
+portrait that cannot be fetched is a broken avatar on every screen the
+agent appears on.
+
+- **Param** `string $base`
+- **Return** `string`
+
+### `openstation_agent_faces_base_url` — Experimental *(filter)*
+
+Public URL of the same directory. Must resolve to the same bytes as
+`openstation_agent_faces_base_dir`.
+
+- **Param** `string $url`
+- **Return** `string`
+
 ### `openstation_desktop_themes_payload_cap` — Experimental *(filter)*
 
 How many themes are announced to the shell. Default 24.
@@ -4904,6 +4927,24 @@ bounds the prompt (and the bill) per invocation. Default 50.
 
 - **Param** `int $turn_cap`
 
+### `openstation_agent_draft` — Experimental *(filter)*
+
+Pre-filter for `POST /agents/draft`, the "Draft it for me" step of
+the create flow. Return a non-null array shaped like the route's
+response (`{ name, description, vibes, instructions, role, abilities }`,
+or a `WP_Error`) to short-circuit the Core AI Client, the seam PHPUnit
+and alternative runtimes plug into. Whatever comes back is still
+filtered against the site's catalogues: a role outside
+`openstation_agent_allowed_roles()` becomes `''`, unknown ability
+slugs are dropped, `vibes` is cut at 120 characters. Nothing is
+created; the wizard shows the draft for review.
+
+- **Param** `array|WP_Error|null $draft` — null to proceed with the AI Client.
+- **Param** `string $brief` — the brief, trimmed.
+- **Param** `string[] $roles` — role slugs the site allows for agents.
+- **Param** `array $catalogue` — the abilities catalogue rows (`{ slug, label, description, category, readonly }`).
+- **Param** `int $user_id` — requesting user id.
+
 ### `openstation_agent_conversation_cap` — Experimental *(filter)*
 
 How many persisted chat conversations are kept per user (the
@@ -4918,8 +4959,12 @@ rows. Default 100.
 The trigger-kind catalogue (`chat`, `send-to`, `drag`, `hook`,
 `endpoint`, `agent`). Each entry declares `slug`, `label`,
 `description`, `icon`, and a JSON-Schema `config_schema` for its
-`trigger.config` shape. `chat` and `drag` are wired; the other kinds
-are declared so configuration can be stored ahead of their intakes.
+`trigger.config` shape. `chat`, `send-to` and `drag` are wired; the other kinds
+are declared so configuration can be stored ahead of their intakes. The
+UI draws one fixed card per wired kind (chat always on; a kind whose
+`config_schema` has `entityKinds` gets the entity-kind checkboxes, any
+other wired kind an On switch), and preserves stored rows of kinds it
+does not draw.
 The `drag` config's `entityKinds` gates which entity drops the agent
 accepts (empty = every kind; no drag trigger = drops rejected), and
 ships inline on the agent's desktop user-file payload as

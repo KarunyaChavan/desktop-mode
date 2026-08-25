@@ -34,9 +34,28 @@ So the SW registers at root scope, but the fetch handler returns early
 `/wp-admin/`, or the plugin's own assets directory. Behaviorally this is
 "narrow scope" without inheriting the technical limitation.
 
+### Hosts that 404 virtual `.js` paths (WordPress.com)
+
+Some hosts' web servers short-circuit any path with a static-file
+extension straight to the filesystem: `/openstation/sw.js` 404s at
+nginx and never reaches WordPress, while the extensionless manifest
+route works fine. For those hosts the same SW bytes are also served at
+the extensionless fallback **`/?openstation_sw=1`** — registration
+tries the pretty URL first and retries once with
+`PwaConfig.swFallbackUrl` on failure. The fallback URL's path is `/`,
+so root scope needs no `Service-Worker-Allowed` header at all, and a
+SW registered through it is still recognized as OpenStation's own by
+the foreign-SW guard.
+
 If any other service worker (any scope) is already registered on the
 origin, the registration **bails** with a console warning rather than
-usurping it. The "Install \<site\> as an app" tile then surfaces a
+usurping it. OpenStation's **own** registrations are never treated as
+foreign — that includes the current pretty URL, the extensionless
+fallback, and legacy endpoints from before a portal-path move (e.g.
+`/desktop-mode/sw.js`). A browser stuck on such a stale worker (its
+old endpoint no longer serves JavaScript, so it can never self-update)
+is recovered automatically: registering the current URL at the same
+scope replaces it on the next shell load. The "Install \<site\> as an app" tile then surfaces a
 focused toast pointing at the opt-in filter (rather than the generic
 "not available" fallback), so users on affected sites see the
 actionable message instead of silently broken behaviour.
@@ -58,9 +77,58 @@ OpenStation and you want OpenStation to take over the install path.
 |---|---|---|
 | `/wp-content/plugins/desktop-mode/assets/**.{css,png,jpg,svg,…}` | Stale-while-revalidate (runtime cache) | Returning users open the shell instantly; the SW updates the cache in the background. |
 | `/wp-content/plugins/desktop-mode/assets/**.js` | Network-first with `cache: 'reload'` + cache fallback | JS bundles change per deploy — a fresh deploy reaches online users on the next load, with no stale-revalidate window where a freshly-pushed fix is invisible. The cache still serves offline users. |
+| **Opt-in** — versioned Core statics (`/wp-admin/**`, `/wp-includes/**` with `?ver=`) and `load-scripts.php` / `load-styles.php` | Exact-URL cache-first (`os-admin` bucket) | The `ver` query embeds the WordPress version, so bytes behind a URL only change when the URL changes — the same contract Core expresses by serving the loader endpoints with a one-year `Cache-Control`. A warm window-open costs zero HTTP requests for these. Requires the `openstation_pwa_admin_asset_cache` filter (default off). |
+| **Opt-in** — versioned plugin/theme statics (`/wp-content/plugins|themes/**` with `?ver=`) | Stale-while-revalidate (`os-admin` bucket) | Same `ver` contract in principle, but authors edit files without bumping versions often enough that cache-first would pin stale bytes; SWR serves instantly and self-heals on the next load. Uploads are excluded (quota, thumbnail regeneration keeps the URL). |
 | Navigation requests under our scope | Network-first with offline fallback | wp-admin HTML carries nonces and per-request screen state; caching it would desynchronise the user. The fallback is a tiny inline placeholder so an offline user sees something coherent. |
-| REST / AJAX / non-asset GETs | Pass-through (no SW handling) | Same reason as navigation — auth-bound dynamic content must hit the network. |
+| REST / AJAX / non-asset GETs / unversioned asset URLs | Pass-through (no SW handling) | Same reason as navigation — auth-bound dynamic content must hit the network; an asset URL without a `ver` cache-buster carries no immutability contract. |
 | `install`-time precache | A handful of CSS files, the three critical-path JS bundles (`desktop.min.js`, `window-system.min.js`, `shell-overlays.min.js`), and the plugin logo | Just enough to render the offline shell skeleton. Anything else is picked up at runtime by the caching paths above. |
+
+### The shared admin-asset cache (opt-in)
+
+The two opt-in rows above are the **shared admin-asset cache**: because
+the SW is root-scoped, it sees asset requests from the shell *and from
+every window's chromeless iframe*, and Cache Storage is origin-wide —
+so a stylesheet fetched by one window is served locally to every later
+window, revalidation round-trips included.
+
+Users enable it per account in **OpenStation Preferences → Features →
+Beta features → "Shared asset cache (experimental)"**
+(`adminAssetCacheEnabled`, default off; applies after the next reload).
+That preference is the default of the `openstation_pwa_admin_asset_cache`
+filter, which operators can use to force it site-wide or veto every
+per-user opt-in:
+
+```php
+add_filter( 'openstation_pwa_admin_asset_cache', '__return_true' );  // force on
+add_filter( 'openstation_pwa_admin_asset_cache', '__return_false' ); // kill switch
+```
+
+Per-user works because the SW script is fetched with credentials — the
+served bytes reflect whoever is logged in on that browser profile,
+which is also who the SW will be serving.
+
+Mechanics and caveats:
+
+- The flag (plus the plugin URL) reaches the SW as a
+  `self.__OS_SW_CONFIG = {…};` preamble injected by the PHP endpoint
+  that serves `sw.js`. Flipping the filter changes the served bytes,
+  which is exactly what the browser's SW update check watches — the
+  change takes effect via a normal SW update on the next load, with no
+  re-registration.
+- Classification logic lives in `src/pwa/sw-policy.ts` (pure,
+  unit-tested). Only `200`, non-redirected, same-origin responses
+  without `no-store` / `private` are cached; `Range` requests bypass
+  the cache entirely.
+- Because `/wp-includes/` assets are also referenced by front-end
+  pages, a versioned wp-includes asset requested by the front end is
+  cached and served under the same policy — same URL contract, shared
+  benefit.
+- The bucket is capped (~500 entries, FIFO pruning) and dropped
+  wholesale on every SW version bump, so it cannot grow without bound.
+- Known trade-off: a **core-path** asset edited in place without a
+  `ver` change (rare outside development) stays pinned until the URL
+  or the SW version changes. Development setups should keep the filter
+  off or run with `SCRIPT_DEBUG`.
 
 The cache is keyed by version (`os-static-<v>`,
 `os-runtime-<v>`). The `activate` step deletes any cache whose
@@ -73,9 +141,12 @@ stale buckets.
 |---|---|
 | `openstation_pwa_manifest_url()` | Absolute URL of the manifest endpoint. |
 | `openstation_pwa_sw_url()` | Absolute URL of the service worker. |
+| `openstation_pwa_sw_fallback_url()` | Extensionless fallback URL for the same SW script (`/?openstation_sw=1`) — for hosts whose web server 404s virtual `.js` paths. |
 | `openstation_pwa_get_user_state( $user_id = 0 )` | Read the per-user PWA UI state. |
 | `openstation_pwa_update_user_state( array $patch, $user_id = 0 )` | Merge a partial update into the state. |
+| `openstation_pwa_admin_asset_cache_enabled()` | Whether the shared admin-asset cache is on (resolves the filter below). |
 | `openstation_pwa_manifest` (filter) | Mutate manifest fields before encoding. |
+| `openstation_pwa_admin_asset_cache` (filter) | Force or veto the shared admin-asset cache site-wide. Default: the requesting user's `adminAssetCacheEnabled` preference (off until they opt in). |
 
 REST routes:
 

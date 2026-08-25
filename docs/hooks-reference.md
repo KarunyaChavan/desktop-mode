@@ -1758,6 +1758,51 @@ apply_filters( 'openstation_chromeless_admin_bar_top_values', string[] $values )
 
 ---
 
+### `openstation_chromeless_trimmed_scripts` — Experimental
+
+Script handles dequeued inside chromeless windows, where the admin bar is suppressed and its assets would load, parse and execute against markup that never reaches the DOM. Defaults cover the whole admin-bar family: core's `admin-bar`, OpenStation's own `os-admin-bar` toggle bundle, and the WordPress.com / Jetpack masterbar handles (`wpcom-admin-bar`, `wpcom-notes-common`, `wpcom-notes-admin-bar`, `a8c-faux-inline-help`). Measured on a live install, that family cost **48.8 KB and three cross-origin round trips per window**.
+
+The whole family ships in the defaults deliberately — leaving one queued drags core's `admin-bar` back in as its dependency and undoes the trim. Handles are **dequeued, never deregistered**, so a script that genuinely declares one as a dependency still resolves it and keeps working.
+
+```php
+// Reclaim another chrome-only bundle per window.
+add_filter( 'openstation_chromeless_trimmed_scripts', static function ( array $handles ) {
+    $handles[] = 'my-plugin-admin-bar-widget';
+    return $handles;
+} );
+```
+
+### `openstation_chromeless_trimmed_styles` — Experimental
+
+The stylesheet counterpart. Defaults: `admin-bar`, `wpcom-notes-admin-bar`. Dropping core's `admin-bar` stylesheet also removes the source of the 32px `html.wp-toolbar` padding — the `!important` override in `chromeless.css` stays as the belt-and-braces half of that pair and must not be removed.
+
+```php
+apply_filters( 'openstation_chromeless_trimmed_styles', string[] $handles );
+```
+
+### `openstation_chromeless_trim_emoji` — Experimental
+
+Whether WordPress's emoji polyfill is dropped inside chromeless windows. Default `true`.
+
+Worth being precise about what this is: the inline detection script tests the browser against the newest Unicode emoji set and, when anything is missing, pulls in `wp-emoji-release.min.js` (Twemoji, 22 KB) to swap those characters for images. It is a real polyfill, not dead code — measured loading on current Chrome inside a window. Dropping it means a very new emoji in admin content renders with the operating system's own glyph instead of a Twemoji image. Core sets the precedent: `wp-admin/edit-form-blocks.php` removes the same action on the block-editor screen.
+
+```php
+// Keep Twemoji's image replacement inside windows.
+add_filter( 'openstation_chromeless_trim_emoji', '__return_false' );
+```
+
+### `openstation_chromeless_trimmed_assets` — Experimental (action)
+
+Fires after the trim runs inside a window — the point to dequeue anything else that only decorates chrome a window does not draw.
+
+```php
+add_action( 'openstation_chromeless_trimmed_assets', static function () {
+    wp_dequeue_script( 'my-plugin-toolbar-extras' );
+} );
+```
+
+---
+
 ### `openstation_native_window_allowed_html` — Experimental
 
 The `wp_kses`-shaped allowlist used when escaping native-window `<template>` payloads. The default extends `wp_kses_allowed_html( 'post' )` with form controls, `<os-*>` web components, dashicon spans, and permissive `data-*` / `aria-*` attributes. Plugins registering their own native windows can extend the list with custom tags or attributes if their templates need markup not covered by the default.
@@ -4167,12 +4212,44 @@ Use this to unblock the "Install \<site\> as an app" affordance on sites
 where another PWA plugin's SW is shadowing OpenStation and Chromium
 therefore won't fire `beforeinstallprompt`.
 
+### `openstation_pwa_admin_asset_cache` — Experimental (filter)
+
+Opt in to the service worker's **shared admin-asset cache**. When
+enabled, versioned admin static assets — Core CSS/JS, the
+`load-scripts.php` / `load-styles.php` concat responses, and
+plugin/theme assets carrying a `?ver=` query — are served from one
+origin-wide Cache Storage bucket shared by the shell and every window's
+chromeless iframe. An asset fetched by one window is answered locally
+for every later window, revalidation round-trips included.
+
+The filter's default is the requesting user's OpenStation preference
+(**OpenStation Preferences → Features → Beta features → "Shared asset
+cache (experimental)"**, `adminAssetCacheEnabled`, default `false`) —
+the toggle is the intended opt-in path. Hook the filter to force the
+cache site-wide or to veto every per-user opt-in:
+
+```php
+add_filter( 'openstation_pwa_admin_asset_cache', '__return_true' );  // force on
+add_filter( 'openstation_pwa_admin_asset_cache', '__return_false' ); // kill switch
+```
+
+The value reaches the SW inside the served script bytes, so flipping
+the filter triggers a normal SW update on the next page load — no
+re-registration needed. Core-path assets are cached exact-URL
+cache-first (their `ver` embeds the WordPress version); plugin/theme
+assets use stale-while-revalidate so an author editing files without a
+version bump self-heals on the next load. Uploads, unversioned URLs,
+HTML, REST, and AJAX are never cached. See
+[`docs/pwa.md`](./pwa.md#caching-policy) for the full policy table.
+
 ### PHP helpers — Stable
 
 ```php
 openstation_pwa_manifest_url();
 openstation_pwa_sw_url();
+openstation_pwa_sw_fallback_url();
 openstation_pwa_force_replace_sw();
+openstation_pwa_admin_asset_cache_enabled();
 openstation_pwa_get_user_state( $user_id = 0 );
 openstation_pwa_update_user_state( array $patch, $user_id = 0 );
 ```

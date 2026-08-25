@@ -26,6 +26,13 @@ export interface SwConfig {
 	 */
 	adminAssetCache: boolean;
 	/**
+	 * Whether hover prewarming is on for this user. Gates the
+	 * speculative-document hand-off: the shell asks for a screen on
+	 * hover, the worker fetches and holds it, and the iframe's
+	 * navigation is answered from those bytes.
+	 */
+	windowPrewarm: boolean;
+	/**
 	 * Absolute URL of the plugin directory (trailing slash). Lets the
 	 * SW resolve its own asset paths on hosts with a non-default
 	 * `wp-content` layout (Bedrock, moved `WP_CONTENT_DIR`, …).
@@ -81,6 +88,7 @@ export function readSwConfig(
 ): SwConfig {
 	const cfg: SwConfig = {
 		adminAssetCache: false,
+		windowPrewarm: false,
 		pluginUrl: fallbackPluginUrl,
 	};
 	if ( ! raw || typeof raw !== 'object' ) {
@@ -88,6 +96,7 @@ export function readSwConfig(
 	}
 	const obj = raw as Record< string, unknown >;
 	cfg.adminAssetCache = obj.adminAssetCache === true;
+	cfg.windowPrewarm = obj.windowPrewarm === true;
 	if (
 		typeof obj.pluginUrl === 'string' &&
 		obj.pluginUrl.startsWith( 'http' )
@@ -157,6 +166,53 @@ export function classifyAdminAssetRequest(
 		return 'content-swr';
 	}
 	return 'bypass';
+}
+
+/**
+ * Query keys that mean a URL *does something*.
+ *
+ * Speculation must never act. Anything carrying an action or a nonce
+ * is a request to change state — activating a plugin, emptying a
+ * trash, applying an update — and fetching it ahead of a click the
+ * user has not made yet would perform it.
+ */
+const ACTING_QUERY_KEYS = [
+	'action',
+	'action2',
+	'_wpnonce',
+	'nonce',
+	'delete_all',
+] as const;
+
+/**
+ * Whether a URL is a plain admin screen safe to fetch early.
+ *
+ * Three conditions, all required: it is an admin page, it is the
+ * chromeless variant a window actually loads, and it does nothing.
+ *
+ * The chromeless flag is not incidental. It is what makes serving the
+ * result to an iframe navigation safe at all — the server reads that
+ * query flag before it consults `Sec-Fetch-Dest`, so a document
+ * fetched this way is already correctly chromeless, and the hazard
+ * that stops the worker answering iframe navigations generally (a
+ * re-fetch arriving as `Sec-Fetch-Dest: empty`, collapsing the whole
+ * desktop into a window) cannot apply.
+ *
+ * @param url Parsed, same-origin URL.
+ */
+export function isSpeculatableDocument( url: URL ): boolean {
+	if ( ! url.pathname.includes( '/wp-admin/' ) ) {
+		return false;
+	}
+	if ( ! url.searchParams.has( 'openstation_chromeless' ) ) {
+		return false;
+	}
+	for ( const key of ACTING_QUERY_KEYS ) {
+		if ( url.searchParams.has( key ) ) {
+			return false;
+		}
+	}
+	return true;
 }
 
 /**

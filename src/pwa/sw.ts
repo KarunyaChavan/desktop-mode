@@ -46,8 +46,10 @@
 import {
 	classifyAdminAssetRequest,
 	isCacheableResponse,
+	isSpeculatableDocument,
 	readSwConfig,
 } from './sw-policy';
+import { SPECULATIVE_MAX, SpeculativeStore } from './speculative-store';
 
 // Minimal local typings for the service-worker global scope. We
 // intentionally don't pull in `lib.webworker.d.ts` — it re-declares
@@ -81,8 +83,13 @@ interface SWPushEvent {
 interface SWFetchEvent {
 	request: Request;
 	respondWith: ( r: Response | Promise< Response > ) => void;
+	waitUntil: ( p: Promise< unknown > ) => void;
 }
 interface SWExtendableEvent {
+	waitUntil: ( p: Promise< unknown > ) => void;
+}
+interface SWMessageEvent {
+	data?: unknown;
 	waitUntil: ( p: Promise< unknown > ) => void;
 }
 interface SWEventMap {
@@ -91,6 +98,7 @@ interface SWEventMap {
 	fetch: SWFetchEvent;
 	push: SWPushEvent;
 	notificationclick: SWNotificationEvent;
+	message: SWMessageEvent;
 }
 interface SWGlobal {
 	addEventListener< K extends keyof SWEventMap >(
@@ -266,7 +274,40 @@ sw.addEventListener( 'fetch', ( event: SWFetchEvent ) => {
 		return;
 	}
 
+	// A window navigating to a document the shell asked us to fetch
+	// early. Answered from the held response — never re-fetched, which
+	// is what keeps the Sec-Fetch hazard described below out of play.
+	// Exact-URL, single-use; anything not waiting falls through to the
+	// normal pass-through for iframes.
+	if ( req.mode === 'navigate' && speculative.size > 0 ) {
+		const held = speculative.take( url.toString() );
+		if ( held ) {
+			event.respondWith(
+				held.then( ( res ) => {
+					if ( res ) {
+						return res;
+					}
+					// The speculative fetch failed or came back
+					// unusable. Re-fetching is safe for exactly these
+					// URLs — every one carries
+					// `openstation_chromeless=1`, which the server
+					// reads before it ever consults Sec-Fetch, so the
+					// hazard the navigate branch below guards against
+					// cannot bite here.
+					// eslint-disable-next-line no-restricted-syntax -- service-worker context, no `wp.os` global available; raw fetch is the API.
+					return fetch( req );
+				} ),
+			);
+			return;
+		}
+	}
+
 	if ( req.mode === 'navigate' && req.destination === 'document' ) {
+		// The shell is being loaded. Start its windows' documents now,
+		// in parallel with the server building this one, instead of
+		// after it — see `replayRestoreTargets()`. Fire-and-forget:
+		// the navigation below must not wait on speculation.
+		event.waitUntil( replayRestoreTargets() );
 		// Only intercept TOP-LEVEL navigations. Iframe navigations
 		// (`req.destination === 'iframe'`) pass through directly to
 		// the browser. If the SW called `fetch( req )` for an iframe
@@ -288,6 +329,231 @@ sw.addEventListener( 'fetch', ( event: SWFetchEvent ) => {
 	// don't want to cache REST / AJAX (they carry nonces, per-request
 	// screen state) and HTML in admin pages is never safe to cache.
 } );
+
+/* -------------------------------------------------------------------------
+ * Speculative documents.
+ *
+ * The asset cache took the network out of a window's *assets*. What it
+ * cannot touch is the document: admin HTML carries nonces and
+ * per-request screen state, so it is never cacheable, and on this
+ * install it is the majority of a window open — measured at ~2.1 s of
+ * a ~3.8 s tab click, against ~1.7 s for everything the browser then
+ * does with it.
+ *
+ * That cost does not have to be paid *after* the click. The shell
+ * knows every URL a window can reach (dock items and submenu tabs come
+ * straight from the menu payload) and already reads hover intent. What
+ * was missing is the hand-off: the shell asks for a document ahead of
+ * time, the worker fetches it once and holds it, and the iframe's own
+ * navigation is answered from that held response.
+ *
+ * This is deliberately NOT keeping the tab alive. Nothing rendered is
+ * retained — no DOM, no live iframe, no memory beyond a Response body
+ * that expires in seconds. The page is still built fresh; it is simply
+ * built while the user is still deciding.
+ *
+ * **Why answering an iframe navigation is safe here, when the fetch
+ * handler otherwise refuses to.** The hazard it avoids (see the
+ * navigate branch above, and issue #171) is the worker *re-fetching*
+ * an iframe request: Chrome then sends `Sec-Fetch-Dest: empty`, the
+ * server's chromeless detection falls through, and the whole desktop
+ * renders inside a window. A speculative document is never re-fetched.
+ * It is fetched once, ahead of time, from a URL the shell built with
+ * `openstation_chromeless=1` present — and the server checks that
+ * query flag first, treating Sec-Fetch only as a fallback. So the
+ * bytes held here are already correctly chromeless, and serving them
+ * involves no second request at all.
+ *
+ * Single-use and short-lived on purpose: a document carries nonces and
+ * a moment-in-time view of the screen, so it is served at most once
+ * and only within {@link SPECULATIVE_TTL_MS}.
+ * ---------------------------------------------------------------------- */
+
+/**
+ * Held documents, keyed by exact URL.
+ *
+ * The store itself lives in `speculative-store.ts` so its rules — hold
+ * the promise rather than the settled response, take once, expire —
+ * can be tested without a service-worker global scope.
+ */
+const speculative = new SpeculativeStore();
+
+/**
+ * Where the restore list lives between visits.
+ *
+ * A Cache entry rather than IndexedDB because the worker already owns
+ * caches, and this is one small JSON blob read once per boot. The key
+ * is a synthetic same-origin URL that nothing ever navigates to.
+ */
+const SESSION_CACHE = `os-session-${ VERSION }`;
+const SESSION_KEY = '/__openstation_restore_targets__';
+
+/**
+ * When the restore list was last replayed.
+ *
+ * Deliberately a timestamp rather than a "done" flag. A worker outlives
+ * any single page load — it stays resident across navigations and can
+ * be reused for hours — so a boolean would fire on the first shell load
+ * this worker ever saw and never again, leaving every later boot
+ * unaccelerated. That is exactly what the first live measurement
+ * showed: one window's TTFB halved, the other untouched.
+ *
+ * The throttle only exists to stop a burst of navigations stacking
+ * duplicate work; `beginSpeculation()` already de-duplicates by URL.
+ */
+let lastReplayAt = 0;
+const REPLAY_THROTTLE_MS = 3_000;
+
+/**
+ * Start fetching the windows this session will restore, without
+ * waiting to be asked.
+ *
+ * Called the moment the shell's own top-level navigation reaches the
+ * worker — which is *before* the server has finished building the
+ * shell document, and long before the shell's JavaScript exists to ask
+ * for anything. That is the entire point: the two server renders are
+ * independent, and this is the only place in the system that can see
+ * the second one coming early enough to overlap them.
+ */
+async function replayRestoreTargets(): Promise< void > {
+	const now = Date.now();
+	if ( ! CONFIG.windowPrewarm || now - lastReplayAt < REPLAY_THROTTLE_MS ) {
+		return;
+	}
+	lastReplayAt = now;
+	try {
+		const cache = await caches.open( SESSION_CACHE );
+		const stored = await cache.match( SESSION_KEY );
+		if ( ! stored ) {
+			return;
+		}
+		const urls = ( await stored.json() ) as unknown;
+		if ( ! Array.isArray( urls ) ) {
+			return;
+		}
+		for ( const raw of urls.slice( 0, SPECULATIVE_MAX ) ) {
+			if ( typeof raw !== 'string' ) {
+				continue;
+			}
+			try {
+				const url = new URL( raw );
+				if (
+					url.origin === sw.location.origin &&
+					isSpeculatableDocument( url )
+				) {
+					beginSpeculation( url.toString() );
+				}
+			} catch {
+				// Skip anything unparseable.
+			}
+		}
+	} catch {
+		// Best-effort: a boot must never fail because speculation did.
+	}
+}
+
+sw.addEventListener( 'message', ( event: SWMessageEvent ) => {
+	const data = event.data as
+		| { type?: string; url?: string; urls?: unknown }
+		| undefined;
+
+	// The restore list for the NEXT boot. Gated like everything else
+	// here: the shell already checks the opt-in before posting, and
+	// checking again means a stray message can never make an
+	// opted-out browser start writing caches.
+	if ( data && data.type === 'os-remember-session' ) {
+		if ( ! CONFIG.windowPrewarm ) {
+			return;
+		}
+		const urls = Array.isArray( data.urls ) ? data.urls : [];
+		event.waitUntil(
+			( async () => {
+				try {
+					const cache = await caches.open( SESSION_CACHE );
+					await cache.put(
+						SESSION_KEY,
+						new Response( JSON.stringify( urls.slice( 0, SPECULATIVE_MAX ) ), {
+							headers: { 'Content-Type': 'application/json' },
+						} ),
+					);
+				} catch {
+					// Best-effort.
+				}
+			} )(),
+		);
+		return;
+	}
+
+	if ( ! data || data.type !== 'os-speculate-doc' || ! data.url ) {
+		return;
+	}
+	if ( ! CONFIG.windowPrewarm ) {
+		// Same opt-in the dock's hover prewarming uses — this is that
+		// feature, applied to the document instead of a whole window.
+		return;
+	}
+	let url: URL;
+	try {
+		url = new URL( data.url );
+	} catch {
+		return;
+	}
+	if ( url.origin !== sw.location.origin || ! isSpeculatableDocument( url ) ) {
+		return;
+	}
+	const started = beginSpeculation( url.toString() );
+	if ( started ) {
+		event.waitUntil( started );
+	}
+} );
+
+/**
+ * Fetch a document now and hold it for the navigation that follows.
+ *
+ * Returns the in-flight promise, or `null` when this URL is already
+ * being held — the caller only needs it to keep the worker alive.
+ *
+ * The entry is registered *before* the fetch resolves, so a navigation
+ * that lands mid-flight finds the promise and waits on it rather than
+ * starting a duplicate request for the same screen.
+ */
+function beginSpeculation( href: string ): Promise< Response | null > | null {
+	if ( speculative.has( href ) ) {
+		return null;
+	}
+	const inFlight = ( async () => {
+		try {
+			// A plain same-origin GET: no `Referer`, no `Accept-Language`
+			// carried over from the navigation this stands in for.
+			// Deliberate — an admin screen's HTML does not branch on
+			// either (locale comes from the user's profile, server
+			// side), and forwarding request headers we did not receive
+			// would be guessing. If a screen ever did vary by them, the
+			// symptom would be a speculative copy differing from the
+			// real navigation, which is a reason to exclude that screen
+			// rather than to fabricate headers here.
+			// eslint-disable-next-line no-restricted-syntax -- service-worker context, no `wp.os` global available; raw fetch is the API.
+			const res = await fetch( href, {
+				credentials: 'same-origin',
+				redirect: 'follow',
+			} );
+			// Only a clean, non-redirected 200 is worth holding: a
+			// redirect means the server wanted to send the user
+			// somewhere else, and replaying the destination under the
+			// original URL would hide that.
+			if ( res.status !== 200 || res.redirected ) {
+				return null;
+			}
+			return res;
+		} catch {
+			// Speculation is best-effort by definition.
+			return null;
+		}
+	} )();
+
+	speculative.put( href, inFlight );
+	return inFlight;
+}
 
 sw.addEventListener( 'push', ( event: SWPushEvent ) => {
 	// v1: no-op. Phase 4 will populate this from the push payload.

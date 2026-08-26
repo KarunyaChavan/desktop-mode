@@ -37,9 +37,13 @@ import {
 import type { SystemDockItem } from './dock';
 import type {
 	NativeRenderContext,
+	NativeWindowCompanionScript,
 	NativeWindowDef,
 	NativeWindowIframeContent,
+	NativeWindowScriptData,
 	NativeWindowServerEntry,
+	NativeWindowTabEntry,
+	NativeWindowWireEntry,
 } from './types';
 import type { WindowManager } from './window-manager';
 import type { Window as DesktopWindow } from './window';
@@ -1005,6 +1009,84 @@ function declareServerTabs(
 	);
 }
 
+/**
+ * Join wire-format native-window entries with the handle-keyed
+ * script-data map into the full entries the sync consumes.
+ *
+ * The payload ships script data ONCE per handle
+ * (`nativeWindowScriptData`) because several windows share one
+ * bundle — Posts, Pages, Users and Profile all ride
+ * `os-posts-window`, and inlining each entry's resolved copy
+ * serialized the same blobs four times over. Entries reference
+ * handles; this join puts the resolved url / inline data back on
+ * each entry, companions and tabs included.
+ *
+ * Tolerant of the OLD inline format on purpose: a live session that
+ * predates the split can receive a bridge payload from a newer
+ * server (or vice versa during a deploy), so an entry that still
+ * carries its own resolved fields — or companion OBJECTS rather
+ * than handle strings — passes through untouched.
+ */
+export function hydrateServerEntries(
+	entries: NativeWindowWireEntry[],
+	scriptData?: NativeWindowScriptData,
+): NativeWindowServerEntry[] {
+	const data = scriptData ?? {};
+	return entries.map( ( entry ) => {
+		const own = entry.scriptHandle ? data[ entry.scriptHandle ] : undefined;
+
+		const companions: NativeWindowCompanionScript[] = [];
+		for ( const companion of entry.companionScripts ?? [] ) {
+			if ( typeof companion !== 'string' ) {
+				companions.push( companion );
+				continue;
+			}
+			const resolved = data[ companion ];
+			if ( ! resolved?.url ) {
+				continue;
+			}
+			companions.push( {
+				scriptUrl: resolved.url,
+				scriptHandle: companion,
+				scriptBefore: resolved.before,
+				scriptAfter: resolved.after,
+				scriptL10n: resolved.l10n,
+				scriptTranslations: resolved.translations,
+			} );
+		}
+
+		const tabs: NativeWindowTabEntry[] = ( entry.tabs ?? [] ).map(
+			( tab ) => {
+				if ( typeof tab.scriptUrl === 'string' ) {
+					return tab as NativeWindowTabEntry;
+				}
+				const resolved = tab.scriptHandle
+					? data[ tab.scriptHandle ]
+					: undefined;
+				return {
+					...tab,
+					scriptUrl: resolved?.url ?? '',
+					scriptBefore: resolved?.before,
+					scriptAfter: resolved?.after,
+					scriptL10n: resolved?.l10n,
+					scriptTranslations: resolved?.translations,
+				};
+			},
+		);
+
+		return {
+			...entry,
+			scriptUrl: entry.scriptUrl ?? own?.url ?? '',
+			scriptBefore: entry.scriptBefore ?? own?.before,
+			scriptAfter: entry.scriptAfter ?? own?.after,
+			scriptL10n: entry.scriptL10n ?? own?.l10n,
+			scriptTranslations: entry.scriptTranslations ?? own?.translations,
+			companionScripts: companions,
+			tabs,
+		};
+	} );
+}
+
 export function createNativeWindowSync(
 	deps: NativeWindowRegistryDeps,
 ): NativeWindowSync {
@@ -1160,14 +1242,18 @@ export function createNativeWindowSync(
 	/**
 	 * Per-entry inline data already replayed, keyed `id|url`.
 	 *
-	 * The script TAG dedupes by URL, but the harvested data does not
-	 * belong to the URL — it belongs to the entry. Four windows share
-	 * `os-posts-window[.min].js` (Posts, Pages, Users, Profile), and
-	 * each entry's `scriptL10n` carries its OWN synthesized
-	 * `openStationWindowConfig[ id ]` assignment. Skipping a
-	 * sibling's data because the bundle was already fetched is how
-	 * the Pages window opened to "[desktop-mode-pages] config blob is
-	 * missing" whenever Posts had opened first.
+	 * The script TAG dedupes by URL, but the harvested data an entry
+	 * carries is not guaranteed to have ridden the tag that loaded
+	 * the URL. Four windows share `os-posts-window[.min].js` (Posts,
+	 * Pages, Users, Profile); with the handle-keyed script-data map,
+	 * every sibling hydrates from the SAME blobs — including the
+	 * whole handle's `openStationWindowConfig[ id ]` set — so this
+	 * replay is normally a harmless idempotent repeat. It stays
+	 * because it is also the safety net for old-format payloads
+	 * (entries carrying genuinely per-entry data), where skipping a
+	 * sibling's data because the bundle was already fetched is
+	 * exactly how the Pages window opened to "[desktop-mode-pages]
+	 * config blob is missing" whenever Posts had opened first.
 	 */
 	const injectedScriptData = new Set< string >();
 

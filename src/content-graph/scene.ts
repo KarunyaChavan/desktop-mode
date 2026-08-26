@@ -41,6 +41,7 @@
  */
 
 import { __ } from '../i18n';
+import { decodeHTML } from '../utils';
 import { resolveDashicon } from '../ui/components/os-icon/dashicons-map';
 import {
 	getPixi,
@@ -691,7 +692,7 @@ export class GraphScene {
 			labelBox.addChild( labelBg );
 
 			const label = new this.pixi.Text( {
-				text: this.truncate( n.title || `#${ n.id }`, 32 ),
+				text: this.truncate( decodeHTML( n.title ) || `#${ n.id }`, 32 ),
 				style: {
 					fill: 0x1f2937,
 					fontSize: 11,

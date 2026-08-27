@@ -3949,11 +3949,13 @@ array(
 
 ## Corkboard
 
-An interactive PixiJS map of post links — every public post type participates as a node; internal links, terms, authors, and comments form the edges. Registers a native window (`desktop-mode-content-graph`) plus a desktop icon on `init` priority 20. The filterable surface mirrors WP Explorer’s module shape.
+An interactive PixiJS map of post links — every public post type participates as a node, and a **thread** is drawn between two nodes when one post's content links to the other. Terms, authors, comments, media and revisions are not threads: they fan out as satellites around the focused post, and terms, authors and dates double as the Group by facets that cluster the board. Registers a native window (`desktop-mode-content-graph`) plus a desktop icon on `init` priority 20. The filterable surface mirrors WP Explorer’s module shape.
 
 The window and icon are titled **Corkboard** — a thing you can have on a desk, rather than the name of the data structure behind it. The module directory, window id, REST routes, and every hook below keep the `content_graph` slug.
 
 Nodes are drawn as **discs coloured by post type**, using the same palette the relationship satellites use so a focused post and the bubbles fanned around it read as one system. The original **pin** look — the post type's Dashicon glyph as the node body — is one row away in the window's ⋯ menu ("Show pins"), and the choice persists in `localStorage` under `desktop-mode/corkboard-node-style`. Either way the focused node reveals its glyph, so focus never costs the user the type information. The row is an ordinary checkbox registered through the public [`registerWindowAction`](./javascript-reference.md#wposregisterwindowaction--experimental) surface — see [`examples/window-action.md`](./examples/window-action.md) to add your own.
+
+A sparse board explains itself. Small boards (up to twelve nodes) are laid out deterministically around the centre of the stage and settled before the first paint, so a site with two posts opens onto two nodes side by side rather than two dots drifting off under the dock. A board with nodes but no thread between any of them carries a note saying what a thread is and where the other relationships live (hidden while a grouping is active, when the cluster labels need the space); an empty board says whether the site has nothing to pin yet, the toolbar has filtered everything out, or every type is switched off. The full-canvas loading wash paints only for a graph fetch that runs past 400 ms; shorter waits show as the toolbar's status line, and the window shell's own loader covers just the cold bundle + renderer start-up. The `/nodes` route tells an omitted `types` query (every registered type) apart from an explicitly empty one (no types); the shell sends the latter when every chip is off.
 
 ### `openstation_content_graph_user_can_use` — Experimental (filter)
 

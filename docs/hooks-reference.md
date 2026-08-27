@@ -1842,11 +1842,31 @@ The handles treated as command-palette roots. Defaults: `wp-commands` (the `core
 apply_filters( 'openstation_command_palette_root_handles', string[] $handles );
 ```
 
+
+### `openstation_command_palette_trim_dependents` — Experimental
+
+Whether handles that merely *depend on* the palette are dropped alongside the roots. Default `true`.
+
+Dropping the roots alone reclaims nothing while one dependent survives — `WP_Dependencies::all_deps()` pulls the whole chain back in on its behalf — so the walk earns its place. Return `false` to trim only the two Core roots: that gives up the saving on sites carrying palette extensions, and keeps all of it on a site where Core's palette is the only consumer of that chain. It is the safest setting and rarely a necessary one; prefer naming the individual exception through `openstation_command_palette_family` below.
+
+```php
+add_filter( 'openstation_command_palette_trim_dependents', '__return_false' );
+```
+
 ### `openstation_command_palette_family` — Experimental
 
-The full set of handles dropped by the palette trim: the roots plus every scanned handle that reaches one of them **without routing through one of Core's own packages**.
+The full set of handles dropped by the palette trim: the roots plus every scanned handle that reaches one of them and survives the structural exclusions below.
 
-That second condition is load-bearing, not tidiness. `wp-block-editor` declares `wp-commands` directly — the editor *registers* commands, so the dependency runs the opposite way from a palette extension's — and `wp-editor` does the same. A plain closure walk therefore convicts the whole block-editor stack, and every plugin block script above it, of being palette contributors. Core packages are consequently never trimmed as dependents, and the walk will not travel through one to reach a root: a handle qualifies only when the palette appears in its own chain, the way Astra's and WooCommerce's palette scripts both name `wp-commands` themselves.
+**The dependency graph records "needs", not "is."** `wp-block-editor` declares `wp-commands`; so does Gutenberg's Connectors bootstrap; so does a genuine palette extension — all three because their UI needs the commands *store*. Nothing about the dependency separates the palette from something merely using it, and both regressions in this area came from pretending otherwise.
+
+Conviction is therefore fenced by **structural** exclusions, never by inference about intent, and each says something about what trimming could possibly save:
+
+- **Core's own packages** (`/wp-includes/js/dist/`) are never convicted, and the walk will not travel *through* one to reach a root. They are libraries `WP_Dependencies` already knows how to include or omit, and the palette is a feature *of* the editor, so the dependency there runs backwards. Without this, a plugin's block script is convicted by way of `wp-block-editor` — Contact Form 7's was the real case.
+- **A handle with no `src`** is never convicted. There is no file to stop downloading, so the saving is zero, while dropping it discards its inline payload. Gutenberg's Connectors screen registers exactly such a handle and hangs its whole app bootstrap on it; convicting it rendered a blank page for a saving of nothing.
+
+Neither rule names a plugin or reads a handle's name, so a site with a completely different plugin set gets the same treatment, derived from the graph in front of it.
+
+A residue remains: a plugin bundle with a real `src` that depends on the palette *and* paints part of its own screen would still be convicted. This filter is the escape hatch for it — a site knows its own handles, and can name the exception the framework has no way to infer.
 
 This is a family trim for the same reason the admin-bar trim above is: dropping the roots alone saves nothing while a single dependent survives, because `WP_Dependencies::all_deps()` pulls the whole chain back in on that dependent's behalf. Measured with only Core's enqueue deferred, a Settings window still pulled 14.28 MB of the original 14.49 MB — Astra's `command-palette.js` and WooCommerce's `command-palette.js` / `command-palette-analytics.js` each declare `wp-commands` and were still queued.
 

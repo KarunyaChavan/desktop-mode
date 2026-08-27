@@ -2421,6 +2421,10 @@ export class Window {
 		// navigation. Cleared by `os-ready` / the iframe
 		// `load` event, exactly like a fresh open.
 		this.markContentLoading();
+		// Optimistic click highlight so Gutenberg's `replaceState`
+		// racing the `load` event doesn't leave the tab strip blank
+		// or on the old tab.
+		syncActiveTab( this, url );
 		const inner = this.iframe.contentWindow;
 		if ( inner ) {
 			try {

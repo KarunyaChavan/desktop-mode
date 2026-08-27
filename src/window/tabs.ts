@@ -15,7 +15,11 @@
 
 import { __, sprintf } from '../i18n';
 import { showToast } from '../toast';
-import { pageIdentityKey, urlMatchKey } from '../utils';
+import {
+	pageIdentityKey,
+	PAGE_IDENTITY_PARAMS,
+	urlMatchKey,
+} from '../utils';
 import { EXTERNAL_IFRAME_READY_TIMEOUT_MS } from './constants';
 import { syncTabStripSemantics, withChromelessParam } from './dom';
 import {
@@ -99,11 +103,13 @@ function findPageOwnerTab(
 		for ( const [ key, value ] of parsed.searchParams ) {
 			if (
 				key === 'openstation_chromeless' ||
-				key === 'desktop_mode_portal'
+				key === 'desktop_mode_portal' ||
+				PAGE_IDENTITY_PARAMS.includes( key )
 			) {
 				continue;
 			}
-			if ( current.searchParams.get( key ) !== value ) {
+			const curVal = current.searchParams.get( key );
+			if ( curVal !== value ) {
 				contradicted = true;
 				break;
 			}

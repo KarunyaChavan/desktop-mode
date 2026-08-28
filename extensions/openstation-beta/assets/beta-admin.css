@@ -1,0 +1,66 @@
+/**
+ * Tools → OpenStation Beta page styles.
+ *
+ * Only the classic wp-admin context uses these — the OS Settings tab
+ * renders with <wpd-*> components that carry their own styling.
+ */
+
+.openstation-beta-wrap {
+	max-inline-size: 900px;
+}
+
+.openstation-beta-section {
+	background: #fff;
+	border: 1px solid #c3c4c7;
+	border-radius: 4px;
+	margin-block-start: 16px;
+	padding: 4px 16px 16px;
+}
+
+.openstation-beta-row {
+	align-items: center;
+	border-block-start: 1px solid #f0f0f1;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 10px;
+	padding-block: 8px;
+}
+
+.openstation-beta-row:first-of-type {
+	border-block-start: none;
+}
+
+.openstation-beta-badge {
+	border-radius: 10px;
+	display: inline-block;
+	font-size: 11px;
+	font-weight: 600;
+	line-height: 1;
+	padding: 4px 8px;
+	text-transform: uppercase;
+}
+
+.openstation-beta-badge.is-success {
+	background: #edfaef;
+	color: #007017;
+}
+
+.openstation-beta-badge.is-warning {
+	background: #fcf9e8;
+	color: #996800;
+}
+
+.openstation-beta-badge.is-danger {
+	background: #fcf0f1;
+	color: #b32d2e;
+}
+
+.openstation-beta-badge.is-info {
+	background: #f0f6fc;
+	color: #135e96;
+}
+
+.openstation-beta-badge.is-neutral {
+	background: #f0f0f1;
+	color: #50575e;
+}

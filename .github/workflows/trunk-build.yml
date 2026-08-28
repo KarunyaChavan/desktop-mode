@@ -1,0 +1,64 @@
+name: Trunk Build
+
+# Publishes a "bleeding edge" build on every push to trunk, consumed by
+# the OpenStation Beta companion plugin (extensions/openstation-beta/). Two
+# fixed-name assets are maintained on the same rolling `ci-artifacts`
+# release the PR preview flow uses:
+#
+#   trunk.zip  — the built plugin zip for the pushed commit
+#   trunk.json — { sha, version, built_at } so consumers can tell which
+#                commit trunk.zip was built from without an API call
+#
+# Fixed names + `--clobber` mean no asset cleanup is ever needed. The
+# zip is uploaded before the json: trunk.json is the announcement, so a
+# consumer that reads it never sees a sha whose zip isn't there yet.
+
+on:
+  push:
+    branches:
+      - trunk
+
+permissions:
+  contents: write
+
+# Queue rather than cancel: the publish step uploads trunk.zip before
+# trunk.json, and cancelling a run between the two would leave a manifest
+# describing a different zip until the next push. Queued runs execute in
+# order, so the pair always lands together.
+concurrency:
+  group: trunk-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - name: Build
+        run: |
+          npm ci
+          npm run build
+          npm run package
+
+      - name: Publish trunk build to the ci-artifacts release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view ci-artifacts --json tagName >/dev/null 2>&1; then
+            gh release create ci-artifacts --prerelease --title 'CI artifacts' \
+              --notes 'Rolling release hosting CI build artifacts (PR preview + trunk builds). Not a OpenStation release.'
+          fi
+          cp openstation.zip trunk.zip
+          version=$(node -p "require('./package.json').version")
+          printf '{"sha":"%s","version":"%s","built_at":"%s"}\n' \
+            "$GITHUB_SHA" "$version" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > trunk.json
+          gh release upload ci-artifacts trunk.zip --clobber
+          gh release upload ci-artifacts trunk.json --clobber

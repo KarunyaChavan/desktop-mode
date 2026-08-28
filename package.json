@@ -85,6 +85,7 @@
 		"lint:php:fix": "wp-env run --config=.wp-env.tests.json cli --env-cwd=wp-content/plugins/desktop-mode vendor/bin/phpcbf",
 		"typecheck": "tsc --noEmit",
 		"package": "bin/package.sh",
+		"package:beta": "bin/package-beta.sh",
 		"package:legacy-theme": "bin/package-legacy-theme.sh",
 		"test": "npm run test:js",
 		"test:js": "vitest run",

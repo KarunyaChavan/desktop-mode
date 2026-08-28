@@ -347,6 +347,22 @@ first page is saved through the UI. If the sync job fails with "Could not
 clone", enable the wiki, save any page (its content will be replaced), and
 re-run the workflow.
 
+## Testing branch builds on a live site (OpenStation Beta)
+
+Any live site can run an unreleased build without touching FTP or wp-cli:
+the **OpenStation Beta** companion plugin (`extensions/openstation-beta/`,
+own zip attached to every GitHub release) installs the built
+zip of any open PR, the trunk build, or the latest stable release over
+the `desktop-mode` plugin in place. See
+[`extensions/openstation-beta/README.md`](../extensions/openstation-beta/README.md) for how
+it discovers builds (PR preview artifacts + `trunk-build.yml` on the
+`ci-artifacts` release) and its guard rails.
+
+It is a separate plugin on purpose — the GitHub-installer machinery
+must never ship in the wp.org distribution, and the switcher has to
+survive a branch build that breaks OpenStation itself. Package it
+locally with `npm run package:beta`.
+
 ## Where things are tested
 
 - **Vitest** — `tests/vitest/*.test.ts` + colocated

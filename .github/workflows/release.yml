@@ -77,6 +77,9 @@ jobs:
       - name: Package plugin zip
         run: bin/package.sh
 
+      - name: Package OpenStation Beta companion zip
+        run: bin/package-beta.sh
+
       # Skipped on a manual dispatch: the Release already exists, and
       # `gh release create` is not idempotent — it would fail the job
       # before it ever reached the deploy.
@@ -93,7 +96,7 @@ jobs:
             --title "$TAG" \
             --generate-notes \
             "${flags[@]}" \
-            openstation.zip
+            openstation.zip openstation-beta.zip
 
       - name: Unpack zip for wp.org deploy
         if: ${{ !contains(env.TAG, '-') }}

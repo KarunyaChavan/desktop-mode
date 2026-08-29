@@ -79,7 +79,7 @@ const IDENTITY_PARAMS: readonly string[] = [
  * `p` here left that URL owned by no submenu tab and the Appearance
  * window's whole strip went dark once the editor loaded.
  */
-const PAGE_IDENTITY_PARAMS: readonly string[] = IDENTITY_PARAMS.filter(
+export const PAGE_IDENTITY_PARAMS: readonly string[] = IDENTITY_PARAMS.filter(
 	( key ) => key !== 'p',
 );
 
@@ -211,6 +211,12 @@ export function pageIdentityKey( url: string ): string {
 			const value = parsed.searchParams.get( key );
 			if ( value ) {
 				significant.set( key, value );
+			} else if (
+				key === 'post_type' &&
+				( parsed.pathname.endsWith( '/edit.php' ) ||
+					parsed.pathname.endsWith( '/post-new.php' ) )
+			) {
+				significant.set( key, 'post' );
 			}
 		}
 		significant.sort();

@@ -97,6 +97,17 @@ describe( 'syncActiveTab', () => {
 		expect( activeLabels( win ) ).toEqual( [ 'All Posts' ] );
 	} );
 
+	test( 'navigating to post-new.php with or without post_type lights Add Post tab', () => {
+		const win = mockTabbedWindow( [
+			[ 'All Posts', ADMIN + 'edit.php' ],
+			[ 'Add Post', ADMIN + 'post-new.php' ],
+		] );
+
+		syncActiveTab( win, ADMIN + 'post-new.php?post_type=post' );
+
+		expect( activeLabels( win ) ).toEqual( [ 'Add Post' ] );
+	} );
+
 	test( 'identity params still separate sibling tabs', () => {
 		const win = mockTabbedWindow( [
 			[ 'Categories', ADMIN + 'edit-tags.php?taxonomy=category' ],

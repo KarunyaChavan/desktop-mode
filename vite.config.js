@@ -300,16 +300,9 @@ const TARGETS = {
 		fileBase: 'gutenberg-drop-receiver',
 		iifeName: 'openStationGutenbergDropReceiver',
 	},
-	// Recycle Bin app — a thin bundle that registers a render
-	// callback on `window.openStationNativeWindows['desktop-mode-recycle-bin']`
-	// and renders a `<os-table>` populated from the REST list. The
-	// `<os-*>` elements themselves are defined by the main desktop
-	// bundle, so this module just consumes them.
-	'recycle-bin': {
-		entry:    'src/recycle-bin/index.ts',
-		fileBase: 'recycle-bin',
-		iifeName: 'openStationRecycleBin',
-	},
+	// The Recycle Bin window is an App Framework app (`apps/trash/`),
+	// built by `build:apps`; the closed tile's art is the one piece the
+	// shell keeps (`src/desktop-files/recycle-bin-icon-state.ts`).
 	// Station Home — always-on native replacement for `index.php`.
 	// Publishes the dashboard render callback and ships only when the
 	// Dashboard entry point is opened.
@@ -333,7 +326,7 @@ const TARGETS = {
 	// merchant panels. Loaded as the app window's companion only when
 	// WooCommerce is active, so stores without it ship none of this.
 	'my-wordpress-woocommerce': {
-		entry:    'src/my-wordpress/integrations/woocommerce.ts',
+		entry:    'src/plugins/my-wordpress-woocommerce/index.ts',
 		fileBase: 'my-wordpress-woocommerce',
 		iifeName: 'openStationMyWordpressWoo',
 	},

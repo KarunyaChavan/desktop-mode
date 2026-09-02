@@ -67,6 +67,12 @@ export interface AppConfig {
 	tabs?: TabDef[];
 	/** The app ships a `.os.ts` client view (loaded with the window). */
 	client?: boolean;
+	/**
+	 * `App::data()` computed at registration (`App::prefetch()`), so a
+	 * client view paints from the declared state before the `mount`
+	 * round trip instead of behind a spinner for its duration.
+	 */
+	data?: unknown;
 }
 
 /** One item of a `menu` effect. */
@@ -92,6 +98,7 @@ export type Effect =
 	| { type: 'announce'; contentType: string; action: string; ids: number[] }
 	| { type: 'menu'; items: MenuItemDef[] }
 	| { type: 'send'; channel: string; payload?: unknown }
+	| { type: 'refresh_menu' }
 	| { type: string; [ key: string ]: unknown };
 
 /** A successful dispatch. */
@@ -149,6 +156,12 @@ export interface RuntimeHost {
 		pick: ( item: MenuItemDef ) => void,
 	) => void;
 	send?: ( channel: string, payload: unknown ) => void;
+	/**
+	 * Rebuild the shell's registries from a fresh menu payload — the
+	 * `refresh_menu` effect, for an action that changed what the
+	 * server registers.
+	 */
+	refreshMenu?: () => void;
 	/** Subscribe to a shell broadcast topic (`'*'` = all); returns the unsubscribe. */
 	onBroadcast?: ( topic: string, cb: ( firedTopic: string ) => void ) => () => void;
 	loadComponents?: ( tags: string[] ) => Promise< void >;

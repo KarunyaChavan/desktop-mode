@@ -2410,7 +2410,12 @@ export class Dock {
 		if ( item.windowId && ! item.url ) {
 			const existing = this.windowManager.getById( item.windowId );
 			if ( existing ) {
+				// Read before focus() — restore() mutates state to 'normal'.
+				const wasMinimized = existing.state === 'minimized';
 				this.windowManager.focus( existing );
+				if ( wasMinimized ) {
+					existing.restore();
+				}
 				return;
 			}
 			const wp = ( window as unknown as {

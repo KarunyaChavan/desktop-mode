@@ -2171,7 +2171,7 @@ export class Window {
 							},
 						],
 						{
-							duration: 380,
+							duration: 480,
 							easing: 'cubic-bezier(0.32, 0.72, 0, 1)',
 							fill: 'forwards',
 						},
@@ -2308,7 +2308,7 @@ export class Window {
 							{ transform: 'translate(0px, 0px) scale(1)', opacity: 1 },
 						],
 						{
-							duration: 380,
+							duration: 480,
 							easing: 'cubic-bezier(0.32, 0.72, 0, 1)',
 							fill: 'forwards',
 						},

@@ -351,6 +351,18 @@ export class Window {
 	private _stateBeforeMinimize: WindowState | null = null;
 
 	/**
+	 * In-flight WAAPI handle for the genie minimize flight.
+	 * @internal
+	 */
+	private _minimizeAnimation: Animation | null = null;
+
+	/**
+	 * In-flight WAAPI handle for the reverse genie restore flight.
+	 * @internal
+	 */
+	private _restoreAnimation: Animation | null = null;
+
+	/**
 	 * External-link sub-tabs keyed by a generated tab id. Each carries
 	 * its own iframe, its label, and a cleanup hook for the readiness
 	 * probe. Exists only for iframe windows — native windows skip the
@@ -1881,31 +1893,128 @@ export class Window {
 		return this.element.classList.contains( 'os-window--focused' );
 	}
 
-	public minimize(): void {
-		// Re-entering minimize from minimize would clobber the saved
-		// underlying state, leaking the 'minimized' value into the
-		// restore target.
-		if ( this.state === 'minimized' ) {
-			return;
+	/**
+	 * Whether the user prefers reduced motion. When true, genie
+	 * flights are skipped and the window toggles via the CSS
+	 * `transition-duration: 0.01ms` fallback instead.
+	 * @internal
+	 */
+	private _prefersReducedMotion(): boolean {
+		try {
+			return window.matchMedia( '(prefers-reduced-motion: reduce)' ).matches;
+		} catch {
+			return false;
 		}
-		this._stateBeforeMinimize = this.state;
-		this.state = 'minimized';
-		this.element.classList.add( 'os-window--minimized' );
+	}
 
-		// After the transition completes, stop the hidden window doing
-		// rendering work. `opacity: 0` alone leaves the subtree in the
-		// render tree: the iframe keeps compositing and its rAF loops
-		// keep firing, and with several minimized wp-admin pages that's
-		// real background cost. `visibility: hidden` on the iframe plus
-		// `content-visibility: hidden` on the window root skip paint,
-		// layout, and in-iframe rAF entirely while preserving all DOM /
-		// iframe state for an instant restore. (Timers and Heartbeat
-		// inside the iframe still run — stopping those would require
-		// unloading the page.) Browsers without content-visibility
-		// ignore the property and keep today's behavior.
-		this.element.addEventListener( 'transitionend', ( e: TransitionEvent ) => {
+	/**
+	 * Resolve the dock tile that owns this window, if any. Tests
+	 * every id the tile could be keyed under (`id`, `baseId`) and
+	 * every attribute a rail writes (`data-menu-slug`, `data-system-id`,
+	 * `data-nav-id`, `data-system-id` on the primary). Returns the
+	 * *primary* button when present so the rect is the 40×40 icon
+	 * rather than the padded tile wrapper.
+	 *
+	 * Returns `null` when the window has no tile (e.g. a transient
+	 * app/runtime window), when the dock is parked (`display:none`
+	 * → zero rect), or when the tile is offscreen.
+	 * @internal
+	 */
+	private _getDockTarget(): HTMLElement | null {
+		const candidates: string[] = [];
+		const push = ( v: string | undefined ): void => {
+			if ( typeof v === 'string' && v !== '' && ! candidates.includes( v ) ) {
+				candidates.push( v );
+			}
+		};
+		push( this.id );
+		push( this.config.baseId );
+		// Some native windows set baseId === id; still try once.
+		for ( const id of candidates ) {
+			let esc = id;
+			try {
+				if ( typeof CSS !== 'undefined' && typeof CSS.escape === 'function' ) {
+					esc = CSS.escape( id );
+				}
+			} catch {
+				esc = id;
+			}
+			const selectors = [
+				`.os-dock__item[data-os-window-base-id="${ esc }"] .os-dock__item-primary`,
+				`.os-dock__item[data-os-window-base-id="${ esc }"]`,
+				`.os-dock__item[data-menu-slug="${ esc }"] .os-dock__item-primary`,
+				`.os-dock__item[data-system-id="${ esc }"] .os-dock__item-primary`,
+				`.os-dock__item[data-nav-id="${ esc }"] .os-dock__item-primary`,
+				`.os-dock__item[data-menu-slug="${ esc }"]`,
+				`.os-dock__item[data-system-id="${ esc }"]`,
+				`.os-dock__item[data-nav-id="${ esc }"]`,
+			];
+			for ( const sel of selectors ) {
+				const el = document.querySelector< HTMLElement >( sel );
+				if ( el ) {
+					const rect = el.getBoundingClientRect();
+					if ( rect.width > 0 && rect.height > 0 ) {
+						return el;
+					}
+				}
+			}
+		}
+		// System Preferences and other System-menu rows have no dedicated
+		// tile — their launcher lives inside the System flyout. Target
+		// the System tile itself so the genie has a correct anchor.
+		const systemSelectors = [
+			'.os-dock__item[data-os-window-base-id="os-system"] .os-dock__item-primary',
+			'.os-dock__item[data-system-id="os-system"] .os-dock__item-primary',
+			'.os-dock__item[data-os-window-base-id="os-system"]',
+			'.os-dock__item[data-system-id="os-system"]',
+		];
+		if (
+			this.id === 'desktop-mode-os-settings' ||
+			this.id === 'os-settings' ||
+			this.config.baseId === 'desktop-mode-os-settings'
+		) {
+			for ( const sel of systemSelectors ) {
+				const el = document.querySelector< HTMLElement >( sel );
+				if ( el ) {
+					const rect = el.getBoundingClientRect();
+					if ( rect.width > 0 && rect.height > 0 ) {
+						return el;
+					}
+				}
+			}
+		}
+		// Fallback: animate to the dock itself so every window gets a
+		// genie even if its tile is on another desktop or has no tile
+		// at all (transient windows, hidden nav items).
+		const dock =
+			document.querySelector< HTMLElement >( '#os-dock' ) ??
+			document.querySelector< HTMLElement >( '.os-dock' );
+		if ( dock ) {
+			const rect = dock.getBoundingClientRect();
+			if ( rect.width > 0 && rect.height > 0 ) {
+				return dock;
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * After the minimize transition / animation completes, stop the
+	 * hidden window doing rendering work. `opacity: 0` alone leaves the
+	 * subtree in the render tree: the iframe keeps compositing and its
+	 * rAF loops keep firing, and with several minimized wp-admin pages
+	 * that's real background cost. `visibility: hidden` on the iframe
+	 * plus `content-visibility: hidden` on the window root skip paint,
+	 * layout, and in-iframe rAF entirely while preserving all DOM /
+	 * iframe state for an instant restore. (Timers and Heartbeat
+	 * inside the iframe still run — stopping those would require
+	 * unloading the page.) Browsers without content-visibility ignore
+	 * the property and keep today's behavior.
+	 * @internal
+	 */
+	private _installMinimizeContentVisibilityGuard(): void {
+		const applyHidden = (): void => {
 			if (
-				e.propertyName === 'opacity' &&
 				this.state === 'minimized' &&
 				! this.element.classList.contains( 'os-window--overview' )
 			) {
@@ -1914,7 +2023,166 @@ export class Window {
 				}
 				this.element.style.setProperty( 'content-visibility', 'hidden' );
 			}
-		}, { once: true } );
+		};
+		applyHidden();
+		this.element.addEventListener(
+			'transitionend',
+			( e: TransitionEvent ) => {
+				if ( e.propertyName === 'opacity' ) {
+					applyHidden();
+				}
+			},
+			{ once: true },
+		);
+	}
+
+	public minimize(): void {
+		// Re-entering minimize from minimize would clobber the saved
+		// underlying state, leaking the 'minimized' value into the
+		// restore target.
+		if ( this.state === 'minimized' ) {
+			return;
+		}
+		// Cancel a restore flight that is still in the air — the user
+		// hit minimize again before the restore genie landed.
+		if ( this._restoreAnimation ) {
+			try {
+				this._restoreAnimation.cancel();
+			} catch {
+				/* ignore */
+			}
+			this._restoreAnimation = null;
+			this.element.classList.remove( 'os-window--restoring' );
+			this.element.style.removeProperty( 'will-change' );
+			this.element.style.removeProperty( 'transform' );
+			this.element.style.removeProperty( 'opacity' );
+		}
+		if ( this._minimizeAnimation ) {
+			try {
+				this._minimizeAnimation.cancel();
+			} catch {
+				/* ignore */
+			}
+			this._minimizeAnimation = null;
+			this.element.classList.remove( 'os-window--minimizing' );
+		}
+
+		this._stateBeforeMinimize = this.state;
+
+		const dockTarget = this._getDockTarget();
+		const canAnimate =
+			!! dockTarget &&
+			! this._prefersReducedMotion() &&
+			typeof this.element.animate === 'function' &&
+			! document.hidden &&
+			! this.element.classList.contains( 'os-window--overview' );
+
+		if ( canAnimate && dockTarget ) {
+			const startRect = this.element.getBoundingClientRect();
+			const targetRect = dockTarget.getBoundingClientRect();
+			const hasGeometry =
+				startRect.width > 0 &&
+				startRect.height > 0 &&
+				targetRect.width > 0 &&
+				targetRect.height > 0;
+			if ( hasGeometry ) {
+				// State flips immediately so the window manager and
+				// dock indicator see "minimized" during the flight;
+				// the visual stays alive via WAAPI until we add the
+				// class on finish.
+				this.state = 'minimized';
+				this.element.classList.add( 'os-window--minimizing' );
+				this.element.style.willChange = 'transform';
+
+				const dx =
+					( targetRect.left + targetRect.width / 2 ) -
+					( startRect.left + startRect.width / 2 );
+				const dy =
+					( targetRect.top + targetRect.height / 2 ) -
+					( startRect.top + startRect.height / 2 );
+				const rawScale = Math.min(
+					targetRect.width / startRect.width,
+					targetRect.height / startRect.height,
+				);
+				// 0.22 is the visual ceiling — a window collapsing to
+				// its dock icon already reads as "gone" at that scale;
+				// beyond it the flight overshoots and reads as a zoom.
+				const scale = Math.max( 0.06, Math.min( rawScale, 0.22 ) );
+
+				let anim: Animation | null = null;
+				try {
+					anim = this.element.animate(
+						[
+							{ transform: 'translate(0px, 0px) scale(1)', opacity: 1 },
+							{
+								transform: `translate(${ dx }px, ${ dy }px) scale(${ scale })`,
+								opacity: 1,
+							},
+						],
+						{
+							duration: 380,
+							easing: 'cubic-bezier(0.32, 0.72, 0, 1)',
+							fill: 'forwards',
+						},
+					);
+				} catch {
+					anim = null;
+				}
+
+				if ( anim ) {
+					this._minimizeAnimation = anim;
+					const finalize = (): void => {
+						if ( this._minimizeAnimation !== anim ) {
+							return;
+						}
+						this._minimizeAnimation = null;
+						this.element.classList.add( 'os-window--minimized' );
+						this.element.classList.remove( 'os-window--minimizing' );
+						this.element.style.removeProperty( 'will-change' );
+						this.element.style.removeProperty( 'transform' );
+						this.element.style.removeProperty( 'opacity' );
+						try {
+							anim!.cancel();
+						} catch {
+							/* ignore */
+						}
+						this._installMinimizeContentVisibilityGuard();
+					};
+					anim.onfinish = finalize;
+					anim.oncancel = (): void => {
+						if ( this._minimizeAnimation === anim ) {
+							this._minimizeAnimation = null;
+							this.element.style.removeProperty( 'will-change' );
+							this.element.style.removeProperty( 'transform' );
+							this.element.style.removeProperty( 'opacity' );
+							this.element.classList.remove( 'os-window--minimizing' );
+						}
+					};
+
+					this.onMinimize?.( this );
+					this._emitChange( 'state' );
+					doAction( HOOKS.WINDOW_MINIMIZED, {
+						windowId: this.id,
+						element: this.element,
+					} );
+					if ( this._stateBeforeMinimize === 'fullscreen' ) {
+						updateFullscreenBodyClass();
+					}
+					return;
+				}
+
+				// WAAPI threw or returned null — fall through to the
+				// CSS transition path.
+				this.element.classList.remove( 'os-window--minimizing' );
+				this.element.style.removeProperty( 'will-change' );
+				this.element.style.removeProperty( 'transform' );
+				this.element.style.removeProperty( 'opacity' );
+			}
+		}
+
+		this.state = 'minimized';
+		this.element.classList.add( 'os-window--minimized' );
+		this._installMinimizeContentVisibilityGuard();
 
 		this.onMinimize?.( this );
 		this._emitChange( 'state' );
@@ -1937,14 +2205,171 @@ export class Window {
 	 * out of sync with `this.state`.
 	 */
 	public restore(): void {
-		// Restore renderability before the animation starts — the
-		// un-minimize transition needs the subtree painting again.
+		// Cancel an in-flight minimize — the user hit restore before
+		// the genie landed.
+		if ( this._minimizeAnimation ) {
+			try {
+				this._minimizeAnimation.cancel();
+			} catch {
+				/* ignore */
+			}
+			this._minimizeAnimation = null;
+			this.element.classList.remove( 'os-window--minimizing' );
+			this.element.style.removeProperty( 'will-change' );
+			this.element.style.removeProperty( 'transform' );
+			this.element.style.removeProperty( 'opacity' );
+		}
+		if ( this._restoreAnimation ) {
+			try {
+				this._restoreAnimation.cancel();
+			} catch {
+				/* ignore */
+			}
+			this._restoreAnimation = null;
+			this.element.classList.remove( 'os-window--restoring' );
+			this.element.style.removeProperty( 'will-change' );
+			this.element.style.removeProperty( 'transform' );
+			this.element.style.removeProperty( 'opacity' );
+		}
+
+		const wasMinimized = this.state === 'minimized';
+		const dockTarget = wasMinimized ? this._getDockTarget() : null;
+		const canAnimate =
+			wasMinimized &&
+			!! dockTarget &&
+			! this._prefersReducedMotion() &&
+			typeof this.element.animate === 'function' &&
+			! document.hidden &&
+			! this.element.classList.contains( 'os-window--overview' );
+
+		if ( canAnimate && dockTarget ) {
+			// Make the subtree paintable again before we measure its
+			// natural rect — `content-visibility: hidden` would give a
+			// zero rect otherwise.
+			this.element.style.removeProperty( 'content-visibility' );
+			if ( this.iframe ) {
+				this.iframe.style.visibility = '';
+			}
+			// Flip state immediately so the manager, dock indicator,
+			// and fullscreen body class see the restored value during
+			// the flight; the visual is still at the dock via WAAPI.
+			this.element.classList.remove( 'os-window--minimized' );
+			this.element.classList.add( 'os-window--restoring' );
+			this.element.style.willChange = 'transform';
+
+			const nextState = this._stateBeforeMinimize ?? 'normal';
+			this.state = nextState;
+			this._stateBeforeMinimize = null;
+			if ( nextState === 'fullscreen' ) {
+				updateFullscreenBodyClass();
+				this.updateFocusButtonState();
+			}
+
+			// Natural rect at the restored position/scale.
+			const endRect = this.element.getBoundingClientRect();
+			const targetRect = dockTarget.getBoundingClientRect();
+			const hasGeometry =
+				endRect.width > 0 &&
+				endRect.height > 0 &&
+				targetRect.width > 0 &&
+				targetRect.height > 0;
+
+			if ( hasGeometry ) {
+				const dx =
+					( targetRect.left + targetRect.width / 2 ) -
+					( endRect.left + endRect.width / 2 );
+				const dy =
+					( targetRect.top + targetRect.height / 2 ) -
+					( endRect.top + endRect.height / 2 );
+				const rawScale = Math.min(
+					targetRect.width / endRect.width,
+					targetRect.height / endRect.height,
+				);
+				const scale = Math.max( 0.06, Math.min( rawScale, 0.24 ) );
+
+				let anim: Animation | null = null;
+				try {
+					anim = this.element.animate(
+						[
+							{
+								transform: `translate(${ dx }px, ${ dy }px) scale(${ scale })`,
+								opacity: 1,
+							},
+							{ transform: 'translate(0px, 0px) scale(1)', opacity: 1 },
+						],
+						{
+							duration: 380,
+							easing: 'cubic-bezier(0.32, 0.72, 0, 1)',
+							fill: 'forwards',
+						},
+					);
+				} catch {
+					anim = null;
+				}
+
+				if ( anim ) {
+					this._restoreAnimation = anim;
+					const cleanup = (): void => {
+						if ( this._restoreAnimation !== anim ) {
+							return;
+						}
+						this._restoreAnimation = null;
+						this.element.classList.remove( 'os-window--restoring' );
+						this.element.style.removeProperty( 'will-change' );
+						this.element.style.removeProperty( 'transform' );
+						this.element.style.removeProperty( 'opacity' );
+						try {
+							anim!.cancel();
+						} catch {
+							/* ignore */
+						}
+					};
+					anim.onfinish = cleanup;
+					anim.oncancel = (): void => {
+						if ( this._restoreAnimation === anim ) {
+							this._restoreAnimation = null;
+							this.element.style.removeProperty( 'will-change' );
+							this.element.style.removeProperty( 'transform' );
+							this.element.style.removeProperty( 'opacity' );
+							this.element.classList.remove( 'os-window--restoring' );
+						}
+					};
+
+					this.onRestore?.( this );
+					this.onFocusRequest?.( this );
+					this._emitChange( 'state' );
+					doAction( HOOKS.WINDOW_RESTORED, {
+						windowId: this.id,
+						element: this.element,
+					} );
+					return;
+				}
+			}
+
+			// WAAPI threw or geometry was degenerate — clean up and
+			// fall through to the instant path.
+			this.element.classList.remove( 'os-window--restoring' );
+			this.element.style.removeProperty( 'will-change' );
+			this.element.style.removeProperty( 'transform' );
+			this.element.style.removeProperty( 'opacity' );
+			// State already flipped above; still need to fire the
+			// focus/restore hooks for the non-animated case.
+			this.onRestore?.( this );
+			this.onFocusRequest?.( this );
+			this._emitChange( 'state' );
+			doAction( HOOKS.WINDOW_RESTORED, {
+				windowId: this.id,
+				element: this.element,
+			} );
+			return;
+		}
+
+		// Instant fallback — no dock target or reduced-motion.
 		this.element.style.removeProperty( 'content-visibility' );
 		if ( this.iframe ) {
 			this.iframe.style.visibility = '';
 		}
 
-		const wasMinimized = this.state === 'minimized';
 		this.element.classList.remove( 'os-window--minimized' );
 		if ( wasMinimized ) {
 			// `null` fallback covers windows whose state was already
@@ -4074,6 +4499,26 @@ export class Window {
 			);
 			this._onCloseTransitionEnd = null;
 		}
+		if ( this._minimizeAnimation ) {
+			try {
+				this._minimizeAnimation.cancel();
+			} catch {
+				/* ignore */
+			}
+			this._minimizeAnimation = null;
+		}
+		if ( this._restoreAnimation ) {
+			try {
+				this._restoreAnimation.cancel();
+			} catch {
+				/* ignore */
+			}
+			this._restoreAnimation = null;
+		}
+		this.element.classList.remove( 'os-window--minimizing', 'os-window--restoring' );
+		this.element.style.removeProperty( 'will-change' );
+		this.element.style.removeProperty( 'transform' );
+		this.element.style.removeProperty( 'opacity' );
 
 		// Visible-DOM teardowns deferred from `close()`'s pre-animation
 		// block — run them here, after the closing animation has faded

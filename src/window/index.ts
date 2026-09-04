@@ -1999,6 +1999,88 @@ export class Window {
 	}
 
 	/**
+	 * Remove the three inline genie-flight styles in one call.
+	 * Called on both normal completion and on cancel/abort.
+	 * @internal
+	 */
+	private _clearGenieStyles(): void {
+		this.element.style.removeProperty( 'will-change' );
+		this.element.style.removeProperty( 'transform' );
+		this.element.style.removeProperty( 'opacity' );
+	}
+
+	/**
+	 * Cancel an in-flight genie animation by name, null its handle,
+	 * and strip the matching flight class. Safe to call when the
+	 * handle is already null — no-op.
+	 * @internal
+	 */
+	private _cancelGenieAnimation( which: 'minimize' | 'restore' ): void {
+		const isMinimize = which === 'minimize';
+		const anim = isMinimize ? this._minimizeAnimation : this._restoreAnimation;
+		if ( ! anim ) {
+			return;
+		}
+		try {
+			anim.cancel();
+		} catch {
+			/* ignore */
+		}
+		if ( isMinimize ) {
+			this._minimizeAnimation = null;
+			this.element.classList.remove( 'os-window--minimizing' );
+		} else {
+			this._restoreAnimation = null;
+			this.element.classList.remove( 'os-window--restoring' );
+		}
+		this._clearGenieStyles();
+	}
+
+	/**
+	 * Compute the `translate + scale` values for a genie flight
+	 * between a window rect and its dock-icon rect.
+	 *
+	 * @param winRect  - The window's `getBoundingClientRect()`.
+	 * @param dockRect - The dock tile's `getBoundingClientRect()`.
+	 * @param maxScale - Scale ceiling (0.22 for minimize, 0.24 for restore).
+	 * @return `{ dx, dy, scale }` ready for a WAAPI keyframe.
+	 * @internal
+	 */
+	private _buildGenieTransform(
+		winRect: DOMRect,
+		dockRect: DOMRect,
+		maxScale: number,
+	): { dx: number; dy: number; scale: number } {
+		const dx =
+			( dockRect.left + dockRect.width / 2 ) -
+			( winRect.left + winRect.width / 2 );
+		const dy =
+			( dockRect.top + dockRect.height / 2 ) -
+			( winRect.top + winRect.height / 2 );
+		const rawScale = Math.min(
+			dockRect.width / winRect.width,
+			dockRect.height / winRect.height,
+		);
+		return { dx, dy, scale: Math.max( 0.06, Math.min( rawScale, maxScale ) ) };
+	}
+
+	/**
+	 * Whether the genie animation is eligible right now.
+	 * Returns a type-predicate so callers don't need to re-check
+	 * `dockTarget` after the call.
+	 * @internal
+	 */
+	private _canGenieAnimate( dockTarget: HTMLElement | null ): dockTarget is HTMLElement {
+		return (
+			!! dockTarget &&
+			! this._prefersReducedMotion() &&
+			typeof this.element.animate === 'function' &&
+			! document.hidden &&
+			! this.element.classList.contains( 'os-window--overview' )
+		);
+	}
+
+	/**
 	 * After the minimize transition / animation completes, stop the
 	 * hidden window doing rendering work. `opacity: 0` alone leaves the
 	 * subtree in the render tree: the iframe keeps compositing and its
@@ -2043,41 +2125,15 @@ export class Window {
 		if ( this.state === 'minimized' ) {
 			return;
 		}
-		// Cancel a restore flight that is still in the air — the user
-		// hit minimize again before the restore genie landed.
-		if ( this._restoreAnimation ) {
-			try {
-				this._restoreAnimation.cancel();
-			} catch {
-				/* ignore */
-			}
-			this._restoreAnimation = null;
-			this.element.classList.remove( 'os-window--restoring' );
-			this.element.style.removeProperty( 'will-change' );
-			this.element.style.removeProperty( 'transform' );
-			this.element.style.removeProperty( 'opacity' );
-		}
-		if ( this._minimizeAnimation ) {
-			try {
-				this._minimizeAnimation.cancel();
-			} catch {
-				/* ignore */
-			}
-			this._minimizeAnimation = null;
-			this.element.classList.remove( 'os-window--minimizing' );
-		}
+
+		// Cancel any in-flight genie animations before starting a new one.
+		this._cancelGenieAnimation( 'restore' );
+		this._cancelGenieAnimation( 'minimize' );
 
 		this._stateBeforeMinimize = this.state;
 
 		const dockTarget = this._getDockTarget();
-		const canAnimate =
-			!! dockTarget &&
-			! this._prefersReducedMotion() &&
-			typeof this.element.animate === 'function' &&
-			! document.hidden &&
-			! this.element.classList.contains( 'os-window--overview' );
-
-		if ( canAnimate && dockTarget ) {
+		if ( this._canGenieAnimate( dockTarget ) ) {
 			const startRect = this.element.getBoundingClientRect();
 			const targetRect = dockTarget.getBoundingClientRect();
 			const hasGeometry =
@@ -2085,6 +2141,7 @@ export class Window {
 				startRect.height > 0 &&
 				targetRect.width > 0 &&
 				targetRect.height > 0;
+
 			if ( hasGeometry ) {
 				// State flips immediately so the window manager and
 				// dock indicator see "minimized" during the flight;
@@ -2094,20 +2151,7 @@ export class Window {
 				this.element.classList.add( 'os-window--minimizing' );
 				this.element.style.willChange = 'transform';
 
-				const dx =
-					( targetRect.left + targetRect.width / 2 ) -
-					( startRect.left + startRect.width / 2 );
-				const dy =
-					( targetRect.top + targetRect.height / 2 ) -
-					( startRect.top + startRect.height / 2 );
-				const rawScale = Math.min(
-					targetRect.width / startRect.width,
-					targetRect.height / startRect.height,
-				);
-				// 0.22 is the visual ceiling — a window collapsing to
-				// its dock icon already reads as "gone" at that scale;
-				// beyond it the flight overshoots and reads as a zoom.
-				const scale = Math.max( 0.06, Math.min( rawScale, 0.22 ) );
+				const { dx, dy, scale } = this._buildGenieTransform( startRect, targetRect, 0.22 );
 
 				let anim: Animation | null = null;
 				try {
@@ -2131,16 +2175,14 @@ export class Window {
 
 				if ( anim ) {
 					this._minimizeAnimation = anim;
-					const finalize = (): void => {
+					anim.onfinish = (): void => {
 						if ( this._minimizeAnimation !== anim ) {
 							return;
 						}
 						this._minimizeAnimation = null;
 						this.element.classList.add( 'os-window--minimized' );
 						this.element.classList.remove( 'os-window--minimizing' );
-						this.element.style.removeProperty( 'will-change' );
-						this.element.style.removeProperty( 'transform' );
-						this.element.style.removeProperty( 'opacity' );
+						this._clearGenieStyles();
 						try {
 							anim!.cancel();
 						} catch {
@@ -2148,14 +2190,11 @@ export class Window {
 						}
 						this._installMinimizeContentVisibilityGuard();
 					};
-					anim.onfinish = finalize;
 					anim.oncancel = (): void => {
 						if ( this._minimizeAnimation === anim ) {
 							this._minimizeAnimation = null;
-							this.element.style.removeProperty( 'will-change' );
-							this.element.style.removeProperty( 'transform' );
-							this.element.style.removeProperty( 'opacity' );
 							this.element.classList.remove( 'os-window--minimizing' );
+							this._clearGenieStyles();
 						}
 					};
 
@@ -2171,12 +2210,9 @@ export class Window {
 					return;
 				}
 
-				// WAAPI threw or returned null — fall through to the
-				// CSS transition path.
+				// WAAPI threw or returned null — fall through to the CSS path.
 				this.element.classList.remove( 'os-window--minimizing' );
-				this.element.style.removeProperty( 'will-change' );
-				this.element.style.removeProperty( 'transform' );
-				this.element.style.removeProperty( 'opacity' );
+				this._clearGenieStyles();
 			}
 		}
 
@@ -2205,44 +2241,14 @@ export class Window {
 	 * out of sync with `this.state`.
 	 */
 	public restore(): void {
-		// Cancel an in-flight minimize — the user hit restore before
-		// the genie landed.
-		if ( this._minimizeAnimation ) {
-			try {
-				this._minimizeAnimation.cancel();
-			} catch {
-				/* ignore */
-			}
-			this._minimizeAnimation = null;
-			this.element.classList.remove( 'os-window--minimizing' );
-			this.element.style.removeProperty( 'will-change' );
-			this.element.style.removeProperty( 'transform' );
-			this.element.style.removeProperty( 'opacity' );
-		}
-		if ( this._restoreAnimation ) {
-			try {
-				this._restoreAnimation.cancel();
-			} catch {
-				/* ignore */
-			}
-			this._restoreAnimation = null;
-			this.element.classList.remove( 'os-window--restoring' );
-			this.element.style.removeProperty( 'will-change' );
-			this.element.style.removeProperty( 'transform' );
-			this.element.style.removeProperty( 'opacity' );
-		}
+		// Cancel any in-flight genie animations.
+		this._cancelGenieAnimation( 'minimize' );
+		this._cancelGenieAnimation( 'restore' );
 
 		const wasMinimized = this.state === 'minimized';
 		const dockTarget = wasMinimized ? this._getDockTarget() : null;
-		const canAnimate =
-			wasMinimized &&
-			!! dockTarget &&
-			! this._prefersReducedMotion() &&
-			typeof this.element.animate === 'function' &&
-			! document.hidden &&
-			! this.element.classList.contains( 'os-window--overview' );
 
-		if ( canAnimate && dockTarget ) {
+		if ( wasMinimized && this._canGenieAnimate( dockTarget ) ) {
 			// Make the subtree paintable again before we measure its
 			// natural rect — `content-visibility: hidden` would give a
 			// zero rect otherwise.
@@ -2275,17 +2281,7 @@ export class Window {
 				targetRect.height > 0;
 
 			if ( hasGeometry ) {
-				const dx =
-					( targetRect.left + targetRect.width / 2 ) -
-					( endRect.left + endRect.width / 2 );
-				const dy =
-					( targetRect.top + targetRect.height / 2 ) -
-					( endRect.top + endRect.height / 2 );
-				const rawScale = Math.min(
-					targetRect.width / endRect.width,
-					targetRect.height / endRect.height,
-				);
-				const scale = Math.max( 0.06, Math.min( rawScale, 0.24 ) );
+				const { dx, dy, scale } = this._buildGenieTransform( endRect, targetRect, 0.24 );
 
 				let anim: Animation | null = null;
 				try {
@@ -2315,9 +2311,7 @@ export class Window {
 						}
 						this._restoreAnimation = null;
 						this.element.classList.remove( 'os-window--restoring' );
-						this.element.style.removeProperty( 'will-change' );
-						this.element.style.removeProperty( 'transform' );
-						this.element.style.removeProperty( 'opacity' );
+						this._clearGenieStyles();
 						try {
 							anim!.cancel();
 						} catch {
@@ -2328,10 +2322,8 @@ export class Window {
 					anim.oncancel = (): void => {
 						if ( this._restoreAnimation === anim ) {
 							this._restoreAnimation = null;
-							this.element.style.removeProperty( 'will-change' );
-							this.element.style.removeProperty( 'transform' );
-							this.element.style.removeProperty( 'opacity' );
 							this.element.classList.remove( 'os-window--restoring' );
+							this._clearGenieStyles();
 						}
 					};
 
@@ -2349,9 +2341,7 @@ export class Window {
 			// WAAPI threw or geometry was degenerate — clean up and
 			// fall through to the instant path.
 			this.element.classList.remove( 'os-window--restoring' );
-			this.element.style.removeProperty( 'will-change' );
-			this.element.style.removeProperty( 'transform' );
-			this.element.style.removeProperty( 'opacity' );
+			this._clearGenieStyles();
 			// State already flipped above; still need to fire the
 			// focus/restore hooks for the non-animated case.
 			this.onRestore?.( this );
@@ -4499,26 +4489,8 @@ export class Window {
 			);
 			this._onCloseTransitionEnd = null;
 		}
-		if ( this._minimizeAnimation ) {
-			try {
-				this._minimizeAnimation.cancel();
-			} catch {
-				/* ignore */
-			}
-			this._minimizeAnimation = null;
-		}
-		if ( this._restoreAnimation ) {
-			try {
-				this._restoreAnimation.cancel();
-			} catch {
-				/* ignore */
-			}
-			this._restoreAnimation = null;
-		}
-		this.element.classList.remove( 'os-window--minimizing', 'os-window--restoring' );
-		this.element.style.removeProperty( 'will-change' );
-		this.element.style.removeProperty( 'transform' );
-		this.element.style.removeProperty( 'opacity' );
+		this._cancelGenieAnimation( 'minimize' );
+		this._cancelGenieAnimation( 'restore' );
 
 		// Visible-DOM teardowns deferred from `close()`'s pre-animation
 		// block — run them here, after the closing animation has faded

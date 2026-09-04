@@ -2158,9 +2158,16 @@ export class Window {
 					anim = this.element.animate(
 						[
 							{ transform: 'translate(0px, 0px) scale(1)', opacity: 1 },
+							// Hold opacity through most of the flight so the
+							// path is readable, then vanish in the final 40%.
+							{
+								offset: 0.6,
+								transform: `translate(${ dx * 0.6 }px, ${ dy * 0.6 }px) scale(${ 1 - ( 1 - scale ) * 0.6 })`,
+								opacity: 1,
+							},
 							{
 								transform: `translate(${ dx }px, ${ dy }px) scale(${ scale })`,
-								opacity: 1,
+								opacity: 0,
 							},
 						],
 						{
@@ -2287,8 +2294,15 @@ export class Window {
 				try {
 					anim = this.element.animate(
 						[
+							// Start invisible at the dock tile, fade in through
+							// the first 40% — symmetric with the minimize vanish.
 							{
 								transform: `translate(${ dx }px, ${ dy }px) scale(${ scale })`,
+								opacity: 0,
+							},
+							{
+								offset: 0.4,
+								transform: `translate(${ dx * 0.4 }px, ${ dy * 0.4 }px) scale(${ 1 - ( 1 - scale ) * 0.4 })`,
 								opacity: 1,
 							},
 							{ transform: 'translate(0px, 0px) scale(1)', opacity: 1 },

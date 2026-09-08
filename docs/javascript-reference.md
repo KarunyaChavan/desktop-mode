@@ -565,8 +565,8 @@ true (the current user has `edit_posts`):
 One companion CustomEvent (document-level):
 
 ```javascript
-// A note was created outside the layer (the widget's keyboard
-// "Pin to desktop" path POSTs from its own bundle) — the layer
+// A note was created outside the layer (the widget's Ctrl+Enter
+// keyboard path POSTs from its own bundle) — the layer
 // listens and pins it with the insertion animation.
 document.addEventListener( 'os-note-created', ( e ) => {
     // e.detail.note — the REST `Note` shape from /desktop-mode/v1/notes.
@@ -600,6 +600,7 @@ messages into the iframe under the cursor:
 | postMessage type | Direction | When | Payload shape |
 | --- | --- | --- | --- |
 | `os-drag-over` | parent → iframe | cursor entered the iframe | `{ type, payload: DragBridgePayload }` |
+| `os-drag-move` | parent → iframe | cursor moved over the iframe (once per animation frame) | `{ type, position: { x, y } }` in the iframe's coordinates |
 | `os-drag-leave` | parent → iframe | cursor left the iframe | `{ type }` |
 | `os-drop` | parent → iframe | pointerup over the iframe | `{ type, payload: DragBridgePayload, position: { x, y } }` |
 | `os-drag-start` | iframe → parent | iframe initiated its own drag | `{ type, payload: DragBridgePayload }` |
@@ -615,8 +616,30 @@ type DragBridgePayload =
       sizes?: Record<string, unknown> }
   | { kind: 'post'; id: number; postType: string; url: string;
       title: string }
-  | { kind: 'user'; id: number; url: string; title: string };
+  | { kind: 'user'; id: number; url: string; title: string }
+  | { kind: 'upload'; fileId: number; title: string; mime: string;
+      thumbnailUrl?: string };
 ```
+
+`upload` is a stored desktop file (the `upload` file type) lifted
+from a tile — a file the Media Library would accept, dragged by a
+viewer who may add to it. It carries no attachment id and no URL, so
+the shell resolves it when the drop lands: the file is copied into
+the Media Library (idempotently) and the iframe receives an
+`attachment` payload on `os-drop`. A receiver only ever sees
+`kind: 'upload'` on `os-drag-over` or a payload pull. The resolver
+registry is public:
+
+```ts
+import {
+  registerBridgePayloadResolver, // ( kind, resolver ) => deregister
+  resolveBridgePayload,          // ( payload ) => Promise< payload | null >
+} from '…/drag-bridge';
+```
+
+A plugin lifting its own not-yet-deliverable kind registers a
+resolver the same way; kinds without one are posted unchanged. See
+[bridge-protocol.md → Payloads resolved at drop time](bridge-protocol.md#payloads-resolved-at-drop-time).
 
 Public `DragBridgeApi` surface:
 
@@ -648,6 +671,16 @@ listens for `os-drop` and inserts a block:
 - `attachment` `audio/*` → `core/audio`
 - `attachment` other → `core/file`
 - `post` / `user` → `core/paragraph` with `<a href="URL">title</a>`
+
+While the drag is over the editor the receiver turns each
+`os-drag-move` into an insertion point — the innermost block under
+the pointer, before or after it by its midpoint (the cross axis in a
+horizontal list such as Columns), or a position in a list's empty
+space — and draws Gutenberg's own insertion line there with the
+block-editor store's `showInsertionPoint`, so the user steers the
+drop the way they would a block. `os-drop` inserts at that
+`( rootClientId, index )`; a pointer outside the block list gets no
+line and a plain insert. The lookup is `src/gutenberg-insertion-point.ts`.
 
 ### OS-file drop hooks — Experimental
 
@@ -1714,7 +1747,6 @@ Multiple "Spaces" with windows distributed across them. Each desktop has an id, 
 interface Desktop {
     id:    string;
     label: string;
-    scope?: string;   // a site Space: the admin this desktop hosts — see below
     // A desktop with a job — which apps show on it, what it opens
     // with, how they are arranged. Absent means a plain Space, which
     // is what every session saved before workspaces carries.
@@ -1726,20 +1758,20 @@ manager.getDesktops(): Desktop[];          // every desktop, in order
 manager.getActiveDesktop(): Desktop;       // the one currently visible
 manager.getActiveDesktopId(): string;
 manager.getPrimaryDesktopId(): string;     // see below
-manager.createDesktop( init? ): Desktop;   // append a new one + return it; `init` may set `label` and `scope`
+manager.createDesktop( init? ): Desktop;   // append a new one + return it; `init` may set `label`
 manager.switchDesktop( id ): void;         // make `id` the active desktop
-manager.closeDesktop( id ): void;          // delete `id`; windows migrate to the neighbour — except a scoped desktop's own admin's windows, which close with it
+manager.closeDesktop( id ): void;          // delete `id`; windows migrate to the neighbour
 manager.renameDesktop( id, label ): boolean;  // relabel `id`; see below
 manager.moveWindowToDesktop( windowId, desktopId ): boolean;  // one window to another desk; see below
 ```
 
-`scope` marks a **site Space** — a desktop hosting another admin of the same origin, expressed as an admin-scope path (`/site2/wp-admin/`, `/wp-admin/network/`; the rule lives in `src/admin-scope.ts`). It is what lets the desktop's cross-admin windows persist through the per-admin session scoping, quarantines their menu payloads, and makes closing the desktop close them. Set it through `createDesktop( { label, scope } )` — normally only by the shared cross-admin opener; see [multisite.md](./multisite.md#site-spaces).
-
-`moveWindowToDesktop()` moves one window and nothing else about it — geometry, state, focus order and iframe stay as they are; it shows or hides at once according to whether its new desk is the active one. `false` when either id is unknown, `true` (and nothing fired) when it is already there. The phone layer uses it to fold every desk onto the active one while the mode is `mobile` (see [`docs/mobile.md`](./mobile.md#the-session-on-a-phone)) — the session still records each window on the desk it came from, which is what keeps a site Space's windows through the per-admin session scoping; a plugin can use it for a "move to desk" action.
+`moveWindowToDesktop()` moves one window and nothing else about it — geometry, state, focus order and iframe stay as they are; it shows or hides at once according to whether its new desk is the active one. `false` when either id is unknown, `true` (and nothing fired) when it is already there. The phone layer uses it to fold every desk onto the active one while the mode is `mobile` (see [`docs/mobile.md`](./mobile.md#the-session-on-a-phone)) — the session still records each window on the desk it came from, so leaving the mode puts everything back; a plugin can use it for a "move to desk" action.
 
 **Workspaces** build on this: a desktop plus the answer to what it is FOR — which apps show on it, which widgets sit on it, what it looks like, what it opens with. `wp.os.workspaces.*` creates them, `wp.os.workspaces.registerPreset()` adds a template, and three ship: Commerce, Learning and Publishing — named for the job, built around the products that do it. The `+` in the **overview top bar** opens a wizard whose first step is a blank desk one Enter away; Edit under a tile opens the same wizard on that desk. Overview is already the Spaces surface, and the desk itself belongs to the user's windows.
 
 The one rule the whole feature rests on: **a workspace is a view, never a write.** The rails, the widget column and the appearance are all computed on top of the user's own state and restored the moment they leave, so a workspace they delete costs them nothing. See **[Workspaces](./workspaces.md)** for the whole surface: it is documented there rather than here because it is a layer above Spaces, not a change to them.
+
+**On a network, every site is its own OpenStation** with its own desktops, and the overview top bar carries a **site switcher** above the tiles: `installOverviewHeader( build )` (`src/window-manager/overview.ts`) is the seam the shell uses to put that row there, and `openstation_overview=1` on the shell screen boots it straight into overview, a one-shot boot arg stripped from the address bar with `target` and `intent`. The switch animates on both sides through shell-root classes (`os-shell--arriving`, `os-shell--hop-out-next` / `-prev`) and a one-shot `sessionStorage` hint, `openstation-hop-direction`. See [multisite.md](./multisite.md#site-instances).
 
 Lifecycle hooks fire on each operation: `HOOKS.DESKTOP_CREATED`, `HOOKS.DESKTOP_CLOSED { desktopId, migratedTo }`, `HOOKS.DESKTOP_SWITCHED { from, to }`, `HOOKS.DESKTOP_RENAMED { desktopId, label, previousLabel }`, `HOOKS.WINDOW_DESKTOP_CHANGED { windowId, from, to }`.
 
@@ -1806,6 +1838,19 @@ If a `Window.close()` throws, the loop catches and continues — one bad window 
 The confirmation carries a **"Don't ask again"** checkbox. Ticking it writes `confirmCloseAllWindows: false` to the user's OpenStation Preferences (user meta, so the choice follows them to other browsers) and the chord closes immediately from then on — the per-window unsaved-changes prompt still fires for any page that raises one. **OpenStation Preferences → Windows → "Ask before closing all windows"** turns it back on, which is what keeps the checkbox a preference rather than a one-way door.
 
 `Cmd/Ctrl+Shift+W` is deliberately not the binding — the browser owns it and a page can't take it back.
+
+#### The text-entry guard — what a `document` keydown listener sees — Stable
+
+Every `<os-*>` text control keeps its real `<input>` / `<textarea>` in a shadow root, and a keydown typed into one reaches `document` with `event.target` **retargeted to the host element** (`OS-TEXT-FIELD`, not `INPUT`). A script that guards a bare-letter shortcut with `e.target.tagName === 'INPUT'` — the WordPress.com notifications panel's `n`, for one — therefore fires while the user is typing, and steals focus mid-word.
+
+The shell closes that gap structurally in `src/text-entry-guard.ts`: one capture-phase listener on `window` calls `stopPropagation()` on a keydown that is **printable and unmodified** (`key.length === 1`, no Ctrl/Alt/Meta) and whose real target — the head of `composedPath()` — is a text-entry element **inside a shadow root**. The default action is untouched, so the character is still inserted. Consequences for anything listening on `document` or below:
+
+- A bare printable key typed into an `<os-*>` field is **never delivered** to a listener on `document`, `body`, or the shell — in either phase. Escape, Enter, Tab, the arrows, function keys and every chord are delivered exactly as before, so a dialog's Enter / Escape handling, `dismissable`, the window switcher and the palette shortcut are unaffected.
+- A light-DOM `<input>` is not covered — its keystrokes already read as `INPUT` to every tag-name guard, and the guard changes nothing for them.
+- A listener on `window` sees everything: `stopPropagation()` does not stop siblings on the same target. That is where the presence probe counts typing as activity, and where a plugin that needs raw keystrokes regardless of focus should listen — behind its own text-entry check, `composedPath()[ 0 ]` being the element to test.
+- The stop happens **before the event reaches the input itself**, so a component cannot read characters off `keydown` on a shadow input; it reads them off `input` / `beforeinput` (see [`components-reference.md`](./components-reference.md#read-characters-off-input-not-keydown)).
+
+`tests/vitest/text-entry-guard.test.ts` pins the policy; `isShadowTextEntryKeydown( e )` exported from the module *is* the policy, for anything that needs to agree with it.
 
 ---
 
@@ -2085,7 +2130,7 @@ const off = wp.os.workArea.subscribe( ( snapshot ) => relayout( snapshot.rect ) 
 
 **CSS custom properties.** The same numbers are written on `#os-shell` so a stylesheet can reserve the band without JS: `--os-work-area-inset-top`, `--os-work-area-inset-right`, `--os-work-area-inset-bottom`, `--os-work-area-inset-left` (px) and `--os-work-area-width`, `--os-work-area-height`. Give the `bottom` inset an `80px` fallback (the bottom pill at its default size, the placement almost every user has) and the others `0px`; those apply until the shell has measured once. `.os-area`'s own padding, the `.os-icons` grid and the `.os-widgets` column read them the same way.
 
-**What claims an inset.** Only chrome that floats **over** the area: the bottom dock pill, and anything a custom dock-rail renderer floats over it (every `.os-dock` in the shell body is measured; a rail claims the edge it is nearest to). A left or right dock is a flex sibling of the area, so the area is already narrower and its inset is 0. The admin bar sits above the shell in every mode, so `viewport` is already below it. The notch floats and claims nothing, by contract. There is no API for a plugin to claim a band, on purpose: a work area is only useful while few things carve it.
+**What claims an inset.** Only chrome that floats **over** the area: the bottom dock pill, and anything a custom dock-rail renderer floats over it (every `.os-dock` in the shell body is measured; a rail claims the edge it is nearest to). A left or right dock is a flex sibling of the area, so the area is already narrower and its inset is 0. The admin bar sits above the shell in every mode, so `viewport` is already below it — below where the bar *actually ends*, not where Core says it should: the shell measures `#wpadminbar` and publishes its bottom edge in viewport px as **`--os-admin-bar-height`** on `<html>` (`src/admin-bar-height.ts`), and `.os-shell`, the notch, the toast stack and the release card all read `var( --os-admin-bar-height, var( --wp-admin--admin-bar--height, 32px ) )`. Core's token is Core's promise about Core's bar; a host that makes the bar taller, gives it a border or pushes it down under a fixed strip of its own (WordPress.com's staff debug chrome does) moves the measured edge and the shell follows. The property is present only while the bar is laid out at the top edge — a bar hidden by a mode, a mobile viewport, solo or a fullscreen window, or parked above the viewport in the `dynamic` mode, publishes nothing, so those states keep resolving Core's token. Chrome of your own that hangs below the bar should read the same chain. The notch floats and claims nothing, by contract. There is no API for a plugin to claim a band, on purpose: a work area is only useful while few things carve it.
 
 **Outside the contract.** Body-level popovers — context menus, tooltips, the dock's constellation and peek cards — position against the viewport and may open over the dock; they are transient chrome, not content, and stay that way. The Exposé overview collapses every rail while it is open and lays its grid out against the whole area on purpose.
 
@@ -5725,7 +5770,7 @@ Four things follow from a system tile's menu being *actions* rather than admin p
 - The panel is the same three sections an admin menu gets. The head shows the tile's icon and title and, having no landing page to open, runs the **first row** on click.
 - Live windows are resolved from the rows. An admin menu has one window key; an action menu has none, so each row that opens a window declares it with `windowId` and the section lists the union. Rows that open nothing leave it unset.
 - `onSelect` is **client-side only**. The server builds admin-menu submenus as JSON and a function cannot survive that trip; only JS-registered tiles can set it.
-- Both `onOpen` and `onSelect` receive the originating `MouseEvent` when there is one (keyboard activation and programmatic calls pass nothing), so a handler that navigates can honour the browser-tab gestures — cmd/ctrl/shift and middle click. The Network Admin tile's Space opener (`src/multisite/spaces.ts`, [multisite.md](./multisite.md#site-spaces)) is the shipped example; handlers that ignore the argument are unaffected.
+- Both `onOpen` and `onSelect` receive the originating `MouseEvent` when there is one (keyboard activation and programmatic calls pass nothing), so a handler that navigates can honour the browser-tab gestures — cmd/ctrl/shift and middle click. The Network Admin tile's instance hop (`src/multisite/hop.ts`, [multisite.md](./multisite.md#site-instances)) is the shipped example; handlers that ignore the argument are unaffected.
 - `dock-peek` stands down for the tile, the same way it does for menu tiles. Give the tile an `onOpen` that does something defensible on its own, because a keyboard or touch user never sees the menu.
 
 Declare `submenu` as a getter if the rows depend on live state — it is read fresh each time the flyout opens.
@@ -6488,10 +6533,13 @@ contract: [files-on-desktop.md → Real file storage](files-on-desktop.md#real-f
 
 ```ts
 interface DesktopStorageConfig {
-	canUpload: boolean;    // viewer holds the (filterable) upload capability
-	maxBytes: number;      // per-file cap, 0 = no client cap
-	quotaBytes: number;    // per-user quota, 0 = unlimited
-	zipAvailable: boolean; // server has ZipArchive → folder-zip affordances render
+	canUpload: boolean;      // viewer holds the (filterable) upload capability
+	maxBytes: number;        // per-file cap, 0 = no client cap
+	quotaBytes: number;      // per-user quota, 0 = unlimited
+	zipAvailable: boolean;   // server has ZipArchive → folder-zip affordances render
+	canAddToMedia: boolean;  // viewer holds `upload_files` → "Add to Media Library" renders
+	canStartPost: boolean;   // …and may create posts → "Start a post with this image"
+	canStartPage: boolean;   // …and may create pages → "Start a page with this image"
 }
 ```
 
@@ -6500,8 +6548,11 @@ interface DesktopStorageConfig {
 does (`files-detected`, `dialog-fields`, `before-upload`,
 `upload-started`, `upload-progress`, `after-upload`,
 `upload-failed`) — subscribers don't branch on the destination. The
-`AFTER_UPLOAD` payload's `result` is `{ placement, storedFileId }`
-for the desktop sink (vs. the attachment shape for media). The
+`AFTER_UPLOAD` payload's `result` is `{ placement, storedFileId,
+createdFolders }` for the desktop sink (vs. the attachment shape for
+media); `createdFolders` is the `{ folder, placement }` list of
+directories that upload created from its `relativePath`, already
+ingested into the files store by the time the action fires. The
 upload dialog's destination default follows the drop's intent:
 folder-targeted drops and the desktop pickers → Desktop; WordPress
 admin windows → Media Library; flat desk drops → Media Library when
@@ -6511,16 +6562,45 @@ open replaces its pending batch with the latest drop (one dialog,
 never stacked modals, never mixed batches).
 
 **Serialized shape** — `upload` placements carry
-`file.ownerId`, `file.sizeBytes`, `file.mime`, and `file.kind`
-(`image | video | audio | pdf | archive | text | file`) on top of
-the base `DesktopFileShape`.
+`file.ownerId`, `file.sizeBytes`, `file.mime`, `file.kind`
+(`image | video | audio | pdf | archive | text | file`) and
+`file.isMedia` (the Media Library would accept the file — decided
+server-side, filterable via `openstation_stored_file_is_media`) on
+top of the base `DesktopFileShape`.
 
 **Tile menu** — the built-in entries injected through the standard
 `os.files.tile-menu` filter: `desktop-mode/upload-download`
 (every viewer), `desktop-mode/upload-share` (owner),
-`desktop-mode/upload-leave` (recipient's root tile), and
+`desktop-mode/upload-leave` (recipient's root tile),
+`desktop-mode/upload-add-to-media` (every viewer with
+`canAddToMedia`, when `file.isMedia`; multi-select aware),
+`desktop-mode/upload-start-post` / `desktop-mode/upload-start-page`
+(images, with `canStartPost` / `canStartPage`), and
 `desktop-mode/folder-zip-download` on folder tiles when
 `zipAvailable`. Plugins reorder/hide them like any other item.
+
+**Media Library routes** — `POST /uploads/<id>/media` copies the
+file into the Media Library and answers `{ attachmentId, created,
+title, url, editUrl }`; it is idempotent per stored file (`created:
+false` on a repeat). `POST /uploads/<id>/post` with `{ postType }`
+does the same copy, starts an `auto-draft` with the attachment as
+its content (and featured image, for images) and answers `{ postId,
+postType, editUrl, attachment }`; the shell opens `editUrl` in a
+window. `POST /posts/<id>/uploads` with `{ fileIds }` puts stored
+files into an existing post — copy, append as blocks, attach, first
+image as featured image when there is none — and answers `{ postId,
+title, editUrl, appended, featuredImageSet, attachments }`. Server
+contract: [files-on-desktop.md → Into the Media
+Library](files-on-desktop.md#into-the-media-library).
+
+**Drag** — a media upload tile carries an `upload` bridge payload
+(see [`wp.os.dragBridge`](#wposdragbridge--cross-iframe-drag--stable)),
+so it can be dropped into the block editor in an iframe window; the
+copy into the Media Library happens at drop time. Dropped on a
+`post` tile (wallpaper or folder window), the `desktop-file` payload
+is accepted through the tile-payload seam — every dragged tile has
+to be a media upload — and lands through `POST /posts/<id>/uploads`;
+the ghost chip reads "Add to post" / "Add to page".
 
 **Heartbeat invites** — single-file share invites ride the existing
 `shares.pending` channel with `targetType: 'file'`, `fileId`, and
@@ -6611,8 +6691,8 @@ sections) renders inside it, the activity footprint included.
 The app fires the `os.my-wordpress.*` hooks documented below over its
 DOM — `preview-extras` (the `header`/`meta`/`footer` slots),
 `list-tile`, `list-bands`, `tile-context-menu`, `preview-actions`,
-`group-extras`, `user-activate`, `user-preview-actions` and
-`user-dossier-sections` — and its rows carry the REST-visible fields
+`group-extras`, `hover-card`, `user-activate`, `user-preview-actions`
+and `user-dossier-sections` — and its rows carry the REST-visible fields
 subscribers read (`meta`, per-taxonomy term ids, `openstation_woo`;
 the Customers section's rows carry `openstation_woo_customer` — the
 built-in Users folder deliberately ships no money on its rows, and
@@ -6792,6 +6872,64 @@ read as the answer. Drop what doesn't apply.
 The filter does not fire for the author / contributor sub-folders
 inside a post's detail view — those have no section context and always
 render every block.
+
+### Filter — `os.my-wordpress.hover-card`
+
+Paint a card that follows the pointer over a tile. **OpenStation
+paints nothing here by default** — a card that inflates every
+thumbnail the pointer crosses gets in the way of a marquee, a bulk
+pick and a drag-out, so the stock card is opt-in. The filter runs
+once per tile the pointer enters (grid, folder and canvas views; the
+list view never asks, its rows already say what a card would) and
+receives `null`. Return an `HTMLElement` and the app owns it from
+there: appended to `document.body`, kept beside the pointer, clamped
+to the viewport, and removed on leave, press, right-click or unmount.
+Return anything else and nothing is painted.
+
+```ts
+// Bring back the stock card — title, lock banner, thumbnail, excerpt.
+wp.hooks.addFilter(
+    'os.my-wordpress.hover-card',
+    'my-plugin/hover-card',
+    ( card, item, ctx ) => ctx.build( item ),
+);
+
+// Or paint your own, only for media.
+wp.hooks.addFilter(
+    'os.my-wordpress.hover-card',
+    'my-plugin/media-peek',
+    ( card, item ) => {
+        if ( ! item.thumb ) {
+            return card;
+        }
+        const img = document.createElement( 'img' );
+        img.className = 'my-plugin-peek';
+        img.src = item.thumb;
+        img.alt = '';
+        return img;
+    },
+);
+```
+
+Arguments after the value:
+
+```ts
+/** The row under the pointer — title, thumb, excerpt, subtitle, lockedBy, … */
+item: Record< string, unknown >;
+ctx: {
+    /** The stock card for this row, built on demand. Themed by the `--os-my-wordpress-card-*` tokens. */
+    build: ( item ) => HTMLElement;
+    /** The tile element the pointer entered. */
+    cell: HTMLElement;
+    /** The `mouseover` that asked. */
+    event: MouseEvent;
+}
+```
+
+The element you return is positioned with `left` / `top` in viewport
+pixels, so give it `position: fixed` and a `z-index` above the
+windows; the stock card's class, `os-my-wordpress__tooltip`, already
+carries both.
 
 ### Filter — `os.my-wordpress.user-activate`
 

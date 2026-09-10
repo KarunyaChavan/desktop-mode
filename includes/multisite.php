@@ -220,6 +220,7 @@ function openstation_site_table_names() {
 		'desktop_mode_stored_files',
 		'desktop_mode_game_scores',
 		'desktop_mode_game_challenges',
+		'openstation_presence',
 	);
 }
 

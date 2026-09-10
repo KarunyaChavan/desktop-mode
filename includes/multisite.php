@@ -38,7 +38,7 @@ function openstation_multisite_payload() {
 	}
 	if ( ! is_multisite() ) {
 		$member = openstation_network_member_payload();
-		return null !== $member ? $member : openstation_network_hub_payload();
+		return openstation_multisite_with_hop( null !== $member ? $member : openstation_network_hub_payload() );
 	}
 
 	$network_admin = null;
@@ -47,15 +47,32 @@ function openstation_multisite_payload() {
 			'url'      => esc_url_raw( network_admin_url() ),
 			'shellUrl' => esc_url_raw( network_admin_url( 'admin.php?page=' . OPENSTATION_SHELL_PAGE_SLUG ) ),
 			'rows'     => openstation_multisite_network_admin_rows(),
+			'foreign'  => false,
 		);
 	}
 
-	return array(
-		'isNetworkAdmin' => is_network_admin(),
-		'networkAdmin'   => $network_admin,
-		'current'        => is_network_admin() ? 'network' : (string) get_current_blog_id(),
-		'sites'          => openstation_multisite_sites(),
+	return openstation_multisite_with_hop(
+		array(
+			'isNetworkAdmin' => is_network_admin(),
+			'networkAdmin'   => $network_admin,
+			'current'        => is_network_admin() ? 'network' : (string) get_current_blog_id(),
+			'sites'          => openstation_multisite_sites(),
+		)
 	);
+}
+
+/**
+ * The mint route for hop tokens, on any block that has somewhere to
+ * hop to. See `includes/network/hop.php`.
+ *
+ * @param array|null $block The multisite block.
+ * @return array|null
+ */
+function openstation_multisite_with_hop( $block ) {
+	if ( is_array( $block ) ) {
+		$block['hopUrl'] = esc_url_raw( rest_url( 'desktop-mode/v1/network/hop' ) );
+	}
+	return $block;
 }
 
 /**
@@ -149,6 +166,8 @@ function openstation_multisite_sites() {
 			'id'       => (string) $blog_id,
 			'name'     => $name,
 			'shellUrl' => esc_url_raw( get_admin_url( $blog_id, 'admin.php?page=' . OPENSTATION_SHELL_PAGE_SLUG ) ),
+			'kind'     => 'local',
+			'foreign'  => false,
 		);
 	}
 	foreach ( openstation_network_member_entries() as $member ) {
@@ -156,6 +175,8 @@ function openstation_multisite_sites() {
 			'id'       => $member['id'],
 			'name'     => $member['name'],
 			'shellUrl' => $member['shellUrl'],
+			'kind'     => 'member',
+			'foreign'  => true,
 		);
 	}
 
@@ -166,7 +187,11 @@ function openstation_multisite_sites() {
 	 * a different set. A site dropped here is not offered, though the
 	 * admin bar still reaches it.
 	 *
-	 * @param array[] $sites Each `id` (blog id as a string, or `member:<id>`), `name`, `shellUrl`.
+	 * @param array[] $sites Each `id` (blog id as a string, or `member:<id>`), `name`, `shellUrl`,
+	 *                       `kind` (`local` for a site of this network, `member` for an install
+	 *                       that joined from elsewhere, which the switcher marks as external),
+	 *                       `foreign` (whether the entry is another install, which a switch to
+	 *                       it needs a login token for).
 	 */
 	return apply_filters( 'openstation_multisite_sites', $sites );
 }

@@ -187,8 +187,9 @@ how the palette declares a token before answering it:
 
 One accent to declare, and everything the palette computes from it
 follows. `Tests_OpenStation_DesktopThemesLegacy` asserts both halves —
-that Legacy answers every palette literal, and that it answers none of
-the accent-driven derivations.
+that Legacy answers every literal in the shared `body.os-active` palette,
+and that it answers none of the accent-driven derivations. Component-scoped
+overrides are not global palette defaults and do not need snapshot entries.
 
 *Context-dependent tokens* — `--os-fg`, `--os-tooltip-bg` / `-fg` —
 **used to be on that list and are not any more.** The
@@ -1903,3 +1904,11 @@ for a complete plugin.
 - **Uninstall cleanup.** The plugin has no `uninstall.php`; the
   `desktop_mode_desktop_themes` option and the uploads directory
   survive plugin deletion today.
+
+### MIO conversation tokens
+
+The floating window companion chat accepts `--os-mio-chat-{bg,fg,muted,border,user-bg,glow,radius}`. Defaults, meanings and fallback semantics are listed in [Window-scoped MIO](./mio-window-assistant.md#conversation-and-themed-chat). Declare them in the theme like other shell tokens; the frozen Legacy manifest is unchanged.
+
+MIO’s `--os-mio-chat-hover-bg` derives an opaque hover surface from its chat background and foreground. It applies to Ask MIO and the chat’s ghost controls, retaining contrast over light window bodies. See the [MIO token table](./mio-window-assistant.md#conversation-and-themed-chat).
+
+The idle Ask MIO surface uses `--os-mio-launcher-bg`, a translucent mix of its chat surface, while hover retains the opaque contrast surface. Explicit callouts use `--os-mio-callout-bg` (chat surface), `--os-mio-callout-fg` and `--os-mio-callout-border`; all are inherited theme tokens declared in `variables.css`.

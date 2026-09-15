@@ -53,7 +53,7 @@ The search box above the list filters on the flattened descriptor, not just the 
 | `<os-token-field>` | `OsTokenField` | `os-token-field/os-token-field.ts` | Text / textarea whose value contains tokens (`{field:2}`, `{all_fields}`), with a grouped catalogue that inserts at the caret and a live "reads as" preview built from each token's sample. |
 | `<os-repeater>` | `OsRepeater` | `os-repeater/os-repeater.ts` | Add / remove / reorder a list of rows whose content you supply. Keyed by stable strings, so a remove or move never rebuilds the rows that didn't change. Reports intent; the consumer owns the data. |
 | `<os-text-field>` | `OsTextField` | `os-text-field/os-text-field.ts` | Single-line text input. |
-| `<os-textarea>` | `OsTextarea` | `os-textarea/os-textarea.ts` | Multi-line text input. |
+| `<os-textarea>` | `OsTextarea` | `os-textarea/os-textarea.ts` | Multi-line text input. `auto-grow` expands to `max-rows`, including the border, then scrolls vertically; Enter submission respects IME composition. |
 | `<os-number-field>` | `OsNumberField` | `os-number-field/os-number-field.ts` | Numeric input with min/max/step. |
 | `<os-color-field>` | `OsColorField` | `os-color-field/os-color-field.ts` | Color picker with swatches. |
 | `<os-range-field>` | `OsRangeField` | `os-range-field/os-range-field.ts` | Slider with live numeric readout. |
@@ -175,6 +175,8 @@ in the value, or on `beforeinput`, where it can still be refused.
 | --- | --- | --- | --- |
 | `<os-button>` | `OsButton` | `os-button/os-button.ts` | Primary / secondary / ghost button. |
 | `<os-window-button>` | `OsWindowButton` | `os-window-button/os-window-button.ts` | Title-bar icon button (minimize / maximize / close / custom). |
+
+`<os-window-button disabled>` forwards disabled state to its native button, preventing activation and keyboard focus. Optional `aria-pressed="true|false|mixed"` is forwarded to that same focusable button; `active` controls its visual pressed state.
 
 `<os-window-button>` paints an `aria-hidden` glyph inside a shadow
 `<button>`, so it has no accessible name of its own — **always set

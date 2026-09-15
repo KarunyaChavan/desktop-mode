@@ -83,7 +83,7 @@ The full surface is documented in [`javascript-reference.md`](./javascript-refer
 | `registerWallpaper` | `( def: WallpaperDef ) => void` | Stable |
 | `wallpaper` | `WallpaperSuspendApi` *(`suspend( reason )` / `resume( reason )` / `isSuspended()` — refcounted wallpaper pause)* | Experimental |
 | `games` | `GamesApi` *(`register` / `unregister` / `list` / `get` / `subscribe` / `launch` / `getPlaytime` — desktop games + unified scoreboard)* | Experimental |
-| `mio` | `MioApi` *(`isEnabled` / `enable` / `disable` / `toggle` / `getPosition` / `setPosition` / `getConfig` / `setConfig` / `setStyle` / `getLook` / `commitStyle` / `resetStyle` — the soft-body desk companion; see [`mio.md`](./mio.md))* | Experimental |
+| `mio` | `MioApi` *(`registerWindow` / `getWindowId` / `isEnabled` / `enable` / `disable` / `toggle` / `getPosition` / `setPosition` / `getConfig` / `setConfig` / `setStyle` / `getLook` / `commitStyle` / `resetStyle` — the soft-body desk companion; see [`mio.md`](./mio.md))* | Experimental |
 
 ### Cross-bundle / cross-window state
 
@@ -347,3 +347,5 @@ Typed messages between the parent shell and iframe windows. Full shapes in [`bri
 - Web Components — `static help` block on each `<os-*>` class, plus `components-reference.md`.
 
 When a status changes (Experimental → Stable, or anything → removed), update **all three** of: the JSDoc, this table, and the relevant per-doc reference. The doc lint guidance in `AGENTS.md` enforces this rule of thumb: a hook change without a doc update ships a lie.
+
+- **Experimental:** [MIO response buttons](mio-window-assistant.md#assistant-response-buttons) — `MioWindowContext.responseActions`, `MioResponseAction`, `MioResponseActionContext`, `MioResponseContext`, and optional `MioChatMessage.id` / `actionIds`; lease-local read/navigation controls.

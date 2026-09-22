@@ -7,6 +7,7 @@
  */
 
 import { trackedFetch } from '../tracked-fetch';
+import { RestError, restErrorFromResponse, unreadableReplyError } from '../core/api-client';
 import { joinRestUrl } from '../rest-url';
 
 export interface RestPlacementShape {
@@ -189,8 +190,15 @@ async function call< T >( path: string, init: RequestInit ): Promise< T > {
 			}
 		}
 		const err = body as { code?: string; message?: string } | null;
-		throw new Error(
-			`[openstation] files REST ${ res.status }: ${ err?.code ?? '' } ${ err?.message ?? '' }`.trim(),
+		const serverMessage = typeof err?.message === 'string' ? err.message : '';
+		throw new RestError(
+			`[openstation] files REST ${ res.status }: ${ err?.code ?? '' } ${ serverMessage }`.trim(),
+			{
+				status: res.status,
+				code: typeof err?.code === 'string' ? err.code : undefined,
+				data: ( err as { data?: unknown } | null )?.data,
+				serverMessage,
+			},
 		);
 	}
 	// A 2xx with an empty or unparseable body is something the
@@ -215,12 +223,14 @@ async function call< T >( path: string, init: RequestInit ): Promise< T > {
 	if ( null === body ) {
 		if ( parseError && text ) {
 			const head = text.slice( 0, 120 ).replace( /\s+/g, ' ' );
-			throw new Error(
+			throw unreadableReplyError(
+				res.status,
 				`[openstation] files REST ${ res.status } returned non-JSON body — ` +
 					`${ parseError.message }. First 120 chars: ${ head }`,
 			);
 		}
-		throw new Error(
+		throw unreadableReplyError(
+			res.status,
 			`[openstation] files REST ${ res.status }: empty or unparseable body.`,
 		);
 	}
@@ -301,7 +311,7 @@ export async function restoreTrashedItem(
 		{ source: 'desktop-mode/files' },
 	);
 	if ( ! res.ok ) {
-		throw new Error( `[openstation] restore ${ res.status }` );
+		throw await restErrorFromResponse( res );
 	}
 	return ( await res.json() ) as { ok: number[]; errors: unknown[] };
 }

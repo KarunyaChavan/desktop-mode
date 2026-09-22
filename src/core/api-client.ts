@@ -46,22 +46,72 @@ export interface RequestOptions extends TrackedFetchOpts {
 	recover?: ( errorBody: unknown, response: Response ) => unknown;
 }
 
-/** A normalized REST error with the WP-style fields preserved when present. */
+/**
+ * A failed request, with the WP-style fields preserved when present.
+ *
+ * Every feature client throws this (or a subclass) so one helper,
+ * `describeRestFailure()` in `./rest-failure`, can say WHY in the UI.
+ * `message` is whatever the thrower wants the console to show, or `''`
+ * for the server's words else the status; the human part the server
+ * sent lives in `serverMessage`, so a caller never has to parse the
+ * console line to recover it. A 2xx whose body was not the JSON the
+ * route promised is thrown through `unreadableReplyError()`: that 2xx
+ * status with an empty `serverMessage` is what says "unreadable".
+ */
 export class RestError extends Error {
 	public readonly status: number;
 	public readonly code?: string;
 	public readonly data?: unknown;
+	/** The `WP_Error` message from the body, verbatim, or `''`. */
+	public readonly serverMessage: string;
 
 	constructor(
 		message: string,
-		opts: { status: number; code?: string; data?: unknown },
+		opts: { status: number; code?: string; data?: unknown; serverMessage?: string },
 	) {
-		super( message );
+		// An empty message means "the server's words, else the status".
+		super( message || opts.serverMessage || String( opts.status ) );
 		this.name = 'RestError';
 		this.status = opts.status;
 		this.code = opts.code;
 		this.data = opts.data;
+		this.serverMessage = opts.serverMessage ?? '';
 	}
+}
+
+export function isRestError( err: unknown ): err is RestError {
+	return err instanceof RestError;
+}
+
+/**
+ * A failed `Response` as a `RestError`, for callers that use
+ * `trackedFetch` directly rather than a client. Reads the body once
+ * for the WP-style fields; a non-JSON body leaves `serverMessage`
+ * empty and the status as the message.
+ */
+export async function restErrorFromResponse( response: Response ): Promise< RestError > {
+	let body: { code?: unknown; message?: unknown; data?: unknown } | null = null;
+	try {
+		body = ( await response.json() ) as { code?: unknown; message?: unknown; data?: unknown };
+	} catch {
+		body = null;
+	}
+	return new RestError( '', {
+		status: response.status,
+		code: typeof body?.code === 'string' ? body.code : undefined,
+		data: body?.data,
+		serverMessage: typeof body?.message === 'string' ? body.message : '',
+	} );
+}
+
+/**
+ * A 2xx whose body was not the JSON the route promised. The 2xx status
+ * with an empty `serverMessage` is what tells the UI helper
+ * "unreadable"; `message` is the client's own console line, with as
+ * much diagnostic as it has.
+ */
+export function unreadableReplyError( status: number, message: string ): RestError {
+	return new RestError( message, { status, code: 'openstation_bad_response' } );
 }
 
 export interface RestClient {
@@ -146,16 +196,12 @@ export function createRestClient( opts: RestClientOptions ): RestClient {
 				typeof parsed === 'object' && parsed !== null
 					? ( parsed as { message?: unknown; code?: unknown; data?: unknown } )
 					: undefined;
-			throw new RestError(
-				typeof wpErr?.message === 'string'
-					? wpErr.message
-					: `${ response.status } ${ response.statusText }`,
-				{
-					status: response.status,
-					code: typeof wpErr?.code === 'string' ? wpErr.code : undefined,
-					data: wpErr?.data,
-				},
-			);
+			throw new RestError( '', {
+				status: response.status,
+				code: typeof wpErr?.code === 'string' ? wpErr.code : undefined,
+				data: wpErr?.data,
+				serverMessage: typeof wpErr?.message === 'string' ? wpErr.message : '',
+			} );
 		}
 
 		return parsed as T;

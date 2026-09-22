@@ -4488,6 +4488,7 @@ function init(): void {
 		'desktop-mode/shell-toast',
 		( payload: {
 			message?: string;
+			type?: string;
 			action?: { label: string; onClick: () => void };
 			duration?: number;
 		} ) => {
@@ -4496,6 +4497,7 @@ function init(): void {
 			}
 			showToast( {
 				message: payload.message,
+				type: typeof payload.type === 'string' ? payload.type : undefined,
 				action: payload.action,
 				duration: payload.duration,
 			} );
@@ -5008,8 +5010,8 @@ function init(): void {
 		hasNotes: Boolean( config.hasNotes ),
 		host: desktopArea,
 		config,
-		onError: ( message ) => {
-			showToast( { message } );
+		onError: ( toast ) => {
+			showToast( toast );
 		},
 	} );
 

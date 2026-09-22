@@ -8,25 +8,12 @@
  */
 
 import { beginTrashChange, trashItem } from '../desktop-files/trash-optimistic';
+import { describeRestFailure } from '../core/rest-failure';
+import { shellToast } from '../core/shell-toast';
 import { __ } from '../i18n';
 import { broadcastNotesChange } from './broadcast';
 import { deleteNote, restoreNote } from './rest';
 import { NOTES_POST_TYPE, type Note } from './types';
-
-interface ToastApi {
-	showToast?: ( opts: {
-		message: string;
-		duration?: number;
-		action?: { label: string; onClick: () => void };
-	} ) => void;
-}
-
-function getToastApi(): ToastApi | null {
-	const api = (
-		window as { wp?: { os?: ToastApi } }
-	).wp?.os;
-	return api && typeof api.showToast === 'function' ? api : null;
-}
 
 export interface TrashNoteCallbacks {
 	/** Remove the note from the wall (optimistic). */
@@ -53,7 +40,7 @@ export async function trashNoteWithUndo(
 		// The bin gained an item — tell its icon.
 		broadcastNotesChange( 'trashed', [ note.id ] );
 		void optimistic.finish( true );
-		getToastApi()?.showToast?.( {
+		shellToast( {
 			message: __( 'Note moved to Trash', 'desktop-mode' ),
 			duration: 6000,
 			action: {
@@ -73,6 +60,14 @@ export async function trashNoteWithUndo(
 								'[openstation] notes: restore failed:',
 								err,
 							);
+							// The Undo toast is gone by now; say why the
+							// note did not come back rather than nothing.
+							shellToast( {
+								...describeRestFailure( err, {
+									fallback: __( 'Could not restore the note.', 'desktop-mode' ),
+								} ),
+								duration: 5000,
+							} );
 						} );
 				},
 			},
@@ -82,8 +77,10 @@ export async function trashNoteWithUndo(
 		console.error( '[openstation] notes: trash failed:', err );
 		void optimistic.finish( false );
 		callbacks.onRestore( note );
-		getToastApi()?.showToast?.( {
-			message: __( 'Could not move the note to the Trash.', 'desktop-mode' ),
+		shellToast( {
+			...describeRestFailure( err, {
+				fallback: __( 'Could not move the note to the Trash.', 'desktop-mode' ),
+			} ),
 			duration: 5000,
 		} );
 	}

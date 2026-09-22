@@ -671,6 +671,14 @@ export interface OpenStationPublicApi {
 	 * `openstation_register_game()`.
 	 */
 	games: GamesApi;
+	/**
+	 * The deactivation feedback dialog. Published by the lazy
+	 * `deactivation-feedback[.min].js` bundle once it has loaded —
+	 * absent until then. The native Plugins app is its one in-shell
+	 * caller; the classic `plugins.php` runs the same bundle without
+	 * the shell.
+	 */
+	deactivationFeedback?: import( './deactivation-feedback' ).DeactivationFeedbackApi;
 	/** Convenience: register a widget via `os.widgets` filter. */
 	registerWidget: ( def: import( './widgets/types' ).WidgetDef ) => void;
 	/**
@@ -2730,12 +2738,20 @@ function init(): void {
 		captureAppearance: currentWorkspaceLook,
 	} );
 
-	/** The `+`: open the wizard to make a desk. */
-	const createWorkspaceWithWizard = (): void => {
+	/**
+	 * The `+`: open the wizard over the desk it is about to dress.
+	 *
+	 * The desk exists before the wizard does, so the user configures a
+	 * canvas they can see rather than one they are promised. The `+`
+	 * makes it and lands on it, and hands the id here; a programmatic
+	 * caller has done neither, so make it here instead.
+	 */
+	const createWorkspaceWithWizard = ( desktopId?: string ): void => {
 		if ( ! workspaceDeps ) {
 			return;
 		}
 		const deps = workspaceDeps;
+		const target = desktopId ?? createWorkspace( deps ).id;
 		openWorkspaceWizard( {
 			mode: 'create',
 			...wizardWorld( deps ),
@@ -2745,11 +2761,17 @@ function init(): void {
 				// would have from the old dropdown. Anything customized
 				// carries its own profile; a blank desk carries none.
 				createWorkspace( deps, {
+					desktopId: target,
 					label: result.label || undefined,
 					...( result.preset
 						? { preset: result.preset }
 						: { profile: result.profile ?? undefined } ),
 				} );
+				// The desk is already the active one, so the switch that
+				// normally triggers provisioning is a no-op — a template
+				// would land with its look and none of its windows.
+				applyWorkspaceViewForMode( deps, target );
+				provisionWorkspaceForMode( deps, target );
 			},
 		} );
 	};
@@ -3619,21 +3641,13 @@ function init(): void {
 			: manager.open( bugReportConfig ) );
 	}
 
-	// Admin-bar "Report a bug" button. Inline JS in
-	// `assets/js/admin-bar.js` dispatches the event; the shell
-	// answers here, decoupled from the early-running admin-bar IIFE.
-	document.addEventListener( 'os-open-bug-report', () => {
-		openBugReport();
-	} );
-
 	if ( layoutDispatcher ) {
-		// Bug Report has no tile of its own anymore — it is a row in
-		// the System menu. `openBugReport` is still the one opener,
-		// reached from there and from the `os-open-bug-report` event.
+		// Bug Report has no tile of its own — it is a row in the
+		// System menu, and `openBugReport` is its one opener.
 
-		// Exit OpenStation tile — last on the core rail so users have
-		// a discoverable in-shell way out, complementing the admin-bar
-		// "Switch to Classic Admin" toggle. Reuses the existing
+		// Exit OpenStation tile — last on the core rail, and the only
+		// way out of the shell: the admin bar carries no OpenStation
+		// nodes while the desktop is up. Reuses the existing
 		// save-openstation AJAX endpoint via the
 		// `window.openStationAdminBar` global; no new PHP surface.
 		layoutDispatcher.appendSystemTile( getExitOpenStationTileDef() );
@@ -3677,12 +3691,13 @@ function init(): void {
 			},
 		} );
 
-		// Overview tile — the same surface ArrowUp toggles. A tile for
-		// it because the gesture is undiscoverable: a shortcut nobody
-		// pressed is a feature nobody has.
+		// Workspaces tile — the same surface ArrowUp toggles. A tile
+		// for it because the gesture is undiscoverable: a shortcut
+		// nobody pressed is a feature nobody has. The id stays
+		// `os-overview`: it keys visibility overrides in Preferences.
 		layoutDispatcher.appendSystemTile( {
 			id: OVERVIEW_TILE_ID,
-			title: 'Overview',
+			title: 'Workspaces',
 			icon: OS_OVERVIEW_ICON,
 			navKind: 'control',
 			placeable: true,

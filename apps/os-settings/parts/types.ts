@@ -45,8 +45,6 @@ export interface AppData {
 	canManageDesktopThemes: boolean;
 	/** Null for a non-admin: the section is never painted for them. */
 	extendedOptions: ExtendedOptions | null;
-	/** Null when the Comments AI feature is not loaded. */
-	commentsAi: { enabled: boolean; providerConfigured: boolean } | null;
 	/** Null when the AI Copilot is not loaded. */
 	aiAssistant: AiAssistantConfig | null;
 }
@@ -100,7 +98,6 @@ export interface UiState {
 		resetting: boolean;
 		extendedSaving: boolean;
 		extendedError: string;
-		commentsAiSaving: boolean;
 	};
 	components: {
 		entries: ComponentEntry[] | null;
@@ -110,7 +107,7 @@ export interface UiState {
 	};
 	/** Null until the About page is first shown. */
 	about: AboutFeedState | null;
-	/** The nav search: the query, and the index built on first use. */
+	/** The nav search: the query, and the latest rendered page index. */
 	search: { query: string; index: Map< string, string > | null };
 	/** Which registry tab each host element was last painted with. */
 	mountedTabs: WeakMap< HTMLElement, DesktopSettingsTab >;
@@ -141,7 +138,6 @@ export const freshUi = (): UiState => ( {
 		resetting: false,
 		extendedSaving: false,
 		extendedError: '',
-		commentsAiSaving: false,
 	},
 	components: { entries: null, activeTag: '', query: '', paintedTag: '' },
 	about: null,

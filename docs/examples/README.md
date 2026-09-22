@@ -26,7 +26,6 @@ defined( 'ABSPATH' ) || exit;
 - [Add an action that works on a whole selection](./multi-selection-action.md)
 - [Window lifecycle hooks (one subscriber per state)](./window-lifecycle.md)
 - [Open a child window its owner can't cover](./child-windows.md)
-- [Custom arrange-menu action](./arrange-action.md)
 - [Ship a workspace template](./workspace-preset.md)
 - [Style a specific admin page inside the iframe](./chromeless-style-override.md)
 - [Window themes — per-window CSS variables](./window-theme.md)
@@ -59,6 +58,7 @@ defined( 'ABSPATH' ) || exit;
 - [Iframe-initiated window opens — open/talk to a sibling window from inside a chromeless iframe](./iframe-initiated-window.md)
 - [Native window with tabs (auto-swap pattern)](./native-window-with-tabs.md)
 - [Use `<os-*>` components from a plugin that ships as a zip](./load-components.md)
+- [App layouts: dashboard grids, scrolling settings, list/detail and editor/preview](./app-layouts.md) — Stable
 - [Layout primitives (body → panel → row → col)](./layout-primitives.md)
 - [`<os-flyout>` — sliding edge-anchored panel](./os-flyout.md)
 - [Render a data table — filters, sticky columns, sub-tables](./data-table.md)
@@ -96,3 +96,5 @@ defined( 'ABSPATH' ) || exit;
 If your use case isn't here, check [Hooks Reference](../hooks-reference.md) and [JavaScript Reference](../javascript-reference.md) — everything we fire is documented there.
 
 - [Repairable form edits with MIO](mio-form-editing.md) — Experimental: structured validation, revisioned operations, status reconciliation, large-document history and receipt-bound Preview buttons.
+
+- [Edit a mixed-field record](form-record-editor.md) — collect, populate and reset scalar, boolean and tag fields through one form API.

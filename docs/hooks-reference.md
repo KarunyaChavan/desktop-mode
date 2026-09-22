@@ -984,6 +984,34 @@ add_action( 'openstation_chromeless_after', function ( $hook_suffix ) {
 
 ---
 
+### `openstation_user_enabled` — Experimental
+
+Fires when a user turns OpenStation on, from either path that does so (the admin bar's "Switch to OpenStation" AJAX handler and the portal's auto-enable), after the first-run stamps are written: the user's own `openstation_enabled_at` meta and, on the first enable anywhere on the site, the `openstation_first_enabled_at` option. Fires on every enable, not only the first for that user; `$first_on_site` is `true` only when nobody on the site had enabled before.
+
+```php
+do_action( 'openstation_user_enabled', int $user_id, bool $first_on_site );
+```
+
+```php
+add_action( 'openstation_user_enabled', function ( $user_id, $first_on_site ) {
+    if ( $first_on_site ) {
+        // The install just became an activated install.
+    }
+}, 10, 2 );
+```
+
+---
+
+### `openstation_user_disabled` — Experimental
+
+Fires when a user switches back to the classic admin from the "Exit OpenStation" dock tile. No stamp is written (the enable stamps are "first time" facts and survive a switch back), so this is the other half of the lifecycle and nothing more.
+
+```php
+do_action( 'openstation_user_disabled', int $user_id );
+```
+
+---
+
 ### `openstation_prepare_window` — Planned
 Will fire once per window the shell is about to construct (both on fresh open and session restore). Planned signature:
 
@@ -1185,6 +1213,42 @@ The filter only fires after OpenStation has already verified that:
 Dismissal persists through the same `POST /desktop-mode/v1/intros/seen` route the in-shell announcements use, with one wrinkle: because the dialog only appears while OpenStation is **disabled**, that route makes a scoped exception for the `activation-welcome` slug and accepts it from any logged-in `read`-capable account (every other slug still requires OpenStation enabled). Without it the dismissal would `403` and the dialog would re-appear on every classic-admin page load.
 
 Return `false` to suppress the dialog — useful for managed-host onboarding flows that ship their own welcome UX.
+
+---
+
+### `openstation_deactivation_feedback_enabled` — Experimental
+
+Whether the deactivation feedback dialog exists on this site. It gates all three surfaces at once: the bundle on `plugins.php` (classic, chromeless and network admin), the native Plugins app's config block, and the `POST /desktop-mode/v1/feedback/deactivation` route, which answers `403` when this returns `false`.
+
+```php
+apply_filters( 'openstation_deactivation_feedback_enabled', bool $enabled );
+```
+
+```php
+add_filter( 'openstation_deactivation_feedback_enabled', '__return_false' );
+```
+
+---
+
+### `openstation_deactivation_feedback_payload` — Experimental
+
+The anonymous submission, after it is built and before it is forwarded. The keys are the ones `readme.txt` discloses under "External services" (`id`, `reasons`, `details`, `plugin_version`, `wp_version`, `php_version`, `locale`, `multisite`, `install_age_days`, `ever_enabled`, `enabled_user_count`, `first_enable_delay_days`, `deactivator_enabled`, `active_plugins`, `context`). Return an empty array to suppress the send; the route still answers `200` with `sent: false`.
+
+```php
+apply_filters( 'openstation_deactivation_feedback_payload', array $payload );
+```
+
+Do not add anything that identifies the site or the person: the disclosure in `readme.txt` is the contract, and `tests/phpunit/tests/deactivationFeedback.php` pins the key list.
+
+---
+
+### `openstation_deactivation_feedback_endpoint` — Experimental
+
+The intake URL, `https://openstation.blog/wp-json/openstation-feedback/v1/deactivation` by default (the OpenStation Feedback Intake plugin on the plugin's own site). Hosts that run their own intake point this at it; it receives the payload above as a JSON `POST` with a three-second timeout and no redirects. An empty string skips the forward.
+
+```php
+apply_filters( 'openstation_deactivation_feedback_endpoint', string $url );
+```
 
 ---
 
@@ -1412,7 +1476,7 @@ The sites the overview's site switcher offers on a network: every site the user 
 apply_filters( 'openstation_multisite_sites', array $sites );
 ```
 
-Each entry: `id` (the blog id, as a string, or `member:<id>` for an install of an OpenStation network), `name`, `shellUrl` (that site's shell screen), `kind` (`local` for a site of this network, `member` for an install that joined from elsewhere, which the switcher marks as external). Trim it on a large network, reorder it, or rename an entry; a site dropped here is not offered, though the admin bar still reaches it.
+Each entry: `id` (the blog id, as a string, or `member:<id>` for an install of an OpenStation network), `name`, `shellUrl` (that site's shell screen), `adminUrl` and `active` on a site of this network (whether OpenStation is active there; a site without it opens `adminUrl` in a browser tab instead), `kind` (`local` for a site of this network, `member` for an install that joined from elsewhere, which the switcher marks as external). Trim it on a large network, reorder it, or rename an entry; a site dropped here is not offered, though the admin bar still reaches it.
 
 ```php
 add_filter( 'openstation_multisite_sites', function ( $sites ) {
@@ -1432,7 +1496,7 @@ apply_filters( 'openstation_network_request_url', string $url, string $base );
 
 ### `openstation_workspace_presets` — Stable
 
-The workspace templates offered as cards on the wizard's Start step, beside Blank desktop. A **[workspace](workspaces.md)** is a desktop plus the answer to what it is for: which apps show on it, which windows it opens with, how they are arranged. Three ship — Commerce, Learning and Publishing, named for the job and built around the products that do it (the Commerce tokens name WooCommerce, the Learning ones name Sensei).
+The workspace templates offered as cards on the wizard's Start step, beside Blank workspace. A **[workspace](workspaces.md)** is a desktop plus the answer to what it is for: which apps show on it, which windows it opens with, how they are arranged. Three ship — Commerce, Learning and Publishing, named for the job and built around the products that do it (the Commerce tokens name WooCommerce, the Learning ones name Sensei).
 
 ```php
 apply_filters( 'openstation_workspace_presets', array $presets );
@@ -1488,58 +1552,6 @@ add_filter( 'openstation_workspace_presets', function ( $presets ) {
 Every entry is sanitized, shipped ones included: an entry with no `id` is dropped, an unknown `layout` falls back to `'free'`, and one with no `label` is named after its id. A malformed template costs that template, never the wizard.
 
 See [`docs/workspaces.md`](workspaces.md) and [`docs/examples/workspace-preset.md`](examples/workspace-preset.md).
-
----
-
-### `openstation_arrange_menu_items` — Stable
-
-The list of plugin-contributed items appended to the admin bar's **Arrange** submenu — the dropdown that sits next to the "Switch to…" toggle when OpenStation is active. Built-ins (Cascade, Overview, Snap to grid, Tile all windows) are always present; this filter adds to them. Only invoked when the user is viewing the desktop shell.
-
-```php
-apply_filters( 'openstation_arrange_menu_items', array $items );
-```
-
-Each item is an associative array:
-
-```php
-array(
-    'id'          => string, // unique slug; letters/digits/dashes only
-    'title'       => string, // menu label (already translated)
-    'description' => string, // optional; tooltip + accessible description
-    'position'    => int,    // optional sort key (default 10); lower sorts earlier
-)
-```
-
-Items with missing `id` or `title` are silently dropped — plugins can't accidentally create an unrouteable entry. Ties on `position` preserve registration order.
-
-**Click wiring:** clicking a custom item fires the JS action `os.arrange.custom-action` with payload `{ id }`. Subscribe via `wp.hooks.addAction()`:
-
-```php
-add_filter( 'openstation_arrange_menu_items', function ( $items ) {
-    $items[] = array(
-        'id'          => 'diagonal',
-        'title'       => __( 'Diagonal cascade', 'my-ext' ),
-        'description' => __( 'Cascade windows along a 45° line.', 'my-ext' ),
-        'position'    => 15,
-    );
-    return $items;
-} );
-```
-
-```js
-// In your shell-side script (enqueued with `wp-hooks` as a dependency):
-wp.hooks.addAction(
-    'os.arrange.custom-action',
-    'my-ext/diagonal',
-    function ( payload ) {
-        if ( payload.id !== 'diagonal' ) {
-            return;
-        }
-        const windows = wp.os.windowManager.getAll();
-        windows.forEach( ( w, i ) => w.move( i * 40, i * 40 ) );
-    }
-);
-```
 
 ---
 
@@ -1759,9 +1771,11 @@ add_filter( 'openstation_default_wallpaper', fn () => 'aurora' );
 
 ### `openstation_wallpapers` — Stable
 
-Last-chance filter over the full wallpaper registry before it ships to the shell as `config.serverWallpapers`. Each entry is the shape stored by `openstation_register_wallpaper()` (`id`, `label`, `preview`, `type`, `value`, `script`, `description`). Use this to reorder, rename, remove, or override wallpaper entries — including the built-in presets.
+Last-chance filter over the full wallpaper registry before it ships to the shell as `config.serverWallpapers`. Each entry is the shape stored by `openstation_register_wallpaper()` (`id`, `label`, `preview`, `type`, `value`, `script`, `description`, `tone`). Use this to reorder, rename, remove, or override wallpaper entries — including the built-in presets.
 
 `description` — *Experimental.* Optional plain-text copy shown in OpenStation Preferences when the wallpaper is the active selection (a styled card under the picker grid). Sanitized with `sanitize_textarea_field()` at registration; the shell renders it as text, never HTML. When the wallpaper's JS def also sets `description`, the JS value wins — the server value is an overlay for defs that don't carry one.
+
+`tone` — *Experimental.* `'light'`, `'dark'`, or empty. Whether the desk paints its icons, their captions and its file tiles in Starlight or in Void. Anything other than the two words is stored empty, and empty reads as `'dark'`. Declare `'light'` if a user would call your surface pale. See [Wallpaper tone](desktop-themes.md#wallpaper-tone).
 
 Mirrors the client-side `os.wallpapers` JS filter but runs earlier, before any wallpaper reaches the browser.
 
@@ -2263,7 +2277,7 @@ Credentials and model routing are owned by **WordPress 7.0 Core**: configure a p
 
 > The built-in Copilot tools are [WordPress Abilities](https://developer.wordpress.org/apis/abilities-api/), listed at `GET /wp-abilities/v1/abilities`. Register a read-only ability and the assistant picks it up automatically — see "Extending the Copilot's tools" below.
 
-> **Removed.** Automatic AI analysis of posts, pages, and taxonomy terms was removed — the copilot now only analyzes comments (for the spam score), and the AI assistant finds content with WordPress's native keyword search. The following filters/actions no longer fire and have been removed: `openstation_ai_supported_post_types`, `openstation_ai_supported_taxonomies`, `openstation_ai_supported_types`, `openstation_ai_schema_content`, `openstation_ai_post_prompt`, `openstation_ai_term_prompt`, `openstation_ai_post_analyzed`, `openstation_ai_term_analyzed`.
+> **Removed.** Automatic AI analysis of posts, pages, and taxonomy terms was removed — the copilot performs no background analysis (automatic comment scoring was removed later, see [`migration-comments-ai-scoring.md`](./migration-comments-ai-scoring.md)), and the AI assistant finds content with WordPress's native keyword search. The following filters/actions no longer fire and have been removed: `openstation_ai_supported_post_types`, `openstation_ai_supported_taxonomies`, `openstation_ai_supported_types`, `openstation_ai_schema_content`, `openstation_ai_post_prompt`, `openstation_ai_term_prompt`, `openstation_ai_post_analyzed`, `openstation_ai_term_analyzed`.
 
 ### `openstation_ai_schema_comment` — Experimental
 
@@ -2337,6 +2351,8 @@ The Drafts widget offers per-draft title / excerpt / tag / category suggestions 
 | `/wp-json/desktop-mode/v1/draft-apply` | POST `{ post_id, title?, excerpt?, tags?, categories? }` | `edit_post` | Writes an accepted suggestion onto the post. Tags and categories are **appended**, never clobbered. New categories are only created for users who can `manage_categories`; unknown ones are skipped. |
 
 The capability check runs **before** the provider check, so an unauthorized caller gets the same `403` whether or not the site has AI configured. With no provider, an authorized caller gets `503 openstation_ai_unavailable` and the 💡 button never renders — the widget degrades to exactly its pre-AI behavior.
+
+When the provider itself fails, the route answers `502 openstation_ai_failed` whatever the provider's own status was: a provider `401` passed through as the REST status would read as an expired WordPress session to every client on the page. The message says what happened in plain words and the error `data` carries the detail a caller can act on: `reason` (`quota`, out of credits or rate limited; `auth`, the site's key was rejected; `unavailable`, unreachable or a 5xx; `other`), `provider_status` (the provider's HTTP status, or `null` when the request never reached it) and `detail` (the provider's message, verbatim). The widget renders `reason` and links `auth` to Settings → Connectors; the raw provider text stays in `detail`.
 
 ### `openstation_drafts_ai_instructions` — Experimental
 
@@ -2728,7 +2744,7 @@ if ( is_wp_error( $result ) ) {
 
 > **`style`.** Optional `wp_register_style()` handle. The shell resolves it to a `styleUrl` (and any `wp_add_inline_style()` blobs) and lazy-injects a `<link rel="stylesheet">` when the window's plugin is activated mid-session. Without `style`, a peer plugin activated from inside an open shell renders its window with **no CSS** until the user reloads — the parent shell already finished `wp_print_styles` before the plugin existed. If the handle isn't registered, the field is silently dropped (no error, no link); plugins active at boot continue to print through the normal `wp_print_styles` pipeline as before.
 
-> **`script` loads on first open.** The shell reads your render callback off `window.openStationNativeWindows[ <id> ]` *after* fetching the bundle, so nothing is required of you: register the handle, publish the callback, and the window works. What changes is *when* — a bundle is no longer printed on every admin page for a window the user may never open. `wp_localize_script` / `wp_add_inline_script` / `wp_set_script_translations` data is harvested off the registered handle into the payload and replayed around the injected `<script>` tag, so it arrives either way.
+> **`script` loads on first open.** The shell reads your render callback off `window.openStationNativeWindows[ <id> ]` *after* fetching the bundle, so nothing is required of you: register the handle, publish the callback, and the window works. What changes is *when* — a bundle is no longer printed on every admin page for a window the user may never open. `wp_localize_script` / `wp_add_inline_script` / `wp_set_script_translations` data is harvested off the registered handle into the payload and replayed around the injected `<script>` tag, so it arrives either way. So are the handle's **declared dependencies**: the closure WordPress would have resolved had it printed the handle is shipped with the window and loaded, in order, before the bundle — `wp-*` packages and your own handles alike, skipping anything the document already ran. A src-less alias (`wp_register_script( 'acme-config', false )` carrying your config through `wp_add_inline_script()`, declared as the bundle's dependency) has its inline data replayed in print order with nothing fetched. Declare what you use and it works on a live activation exactly as it does after a reload; see [`docs/migration-wp-package-globals.md`](./migration-wp-package-globals.md).
 >
 > **`scripts`** *(optional, `string[]`)* — companion handles loaded in order immediately **before** `script`. For a bundle that extends the window from outside it — subscribing to actions the window's own bundle fires, contributing a section — and therefore has to be listening before that bundle is parsed. Declaring it here is what keeps it off the boot critical path: it travels with the window it extends. Handles that were never registered are dropped silently, the same way `style` is.
 >
@@ -3386,7 +3402,7 @@ The `{ slug: label }` map for the active theme's registered page templates, used
 
 ## Native Plugins window
 
-A three-tab native window (Installed, Add Plugin, OpenStation plugins) that replaces the chromeless `plugins.php` (Installed list) and `plugin-install.php` (Browse the .org repo) iframes. **Opt-in Beta** — fresh installs land on the classic iframe; users turn it on via **OpenStation Preferences → Features → Beta features → Use the native Plugins window** (persisted as `OsSettingsState.nativePluginsEnabled`, default `false`). `plugin-editor.php` is intentionally NOT claimed; that surface stays on the existing iframe.
+A three-tab native window (Installed, Add Plugin, OpenStation plugins) that replaces the chromeless `plugins.php` (Installed list) and `plugin-install.php` (Browse the .org repo) iframes. **Opt-in Beta** — fresh installs land on the classic iframe; users turn it on via **OpenStation Preferences → Features → Beta features → Use the native Plugins window** (persisted as `OsSettingsState.nativePluginsEnabled`, default `false`). `plugin-editor.php` is intentionally NOT claimed; that surface stays on the existing iframe. Where Core lists the editor under Plugins (a single site, a classic theme, and `edit_plugins`, so `DISALLOW_FILE_EDIT` hides it), the window adds a **Plugin File Editor** tab that opens Core's screen as its own window; on a block theme Core lists it under Tools, and the window offers no tab.
 
 Architecture summary: an [App Framework](./app-framework.md) app (`apps/plugins/`). The installed list is the app's `data()` over Core REST (`openstation_app_rest( 'GET', 'wp/v2/plugins' )`, every REST-field decorator below included); activate / deactivate / delete / bulk are server actions running Core's controller in-process; admin-only paths (browse / info / reviews / .zip upload / featured) live on `admin-ajax.php` (`wp_ajax_openstation_plugins_*`) so we never need to `require_once ABSPATH . 'wp-admin/…'`. Install-by-slug delegates to Core's existing `wp_ajax_install_plugin` handler. Mutations perform the `$os->refresh_menu()` effect so the dock repaints live. The landing tab is the window's `tab` open-time param. The registration is filterable through [`openstation_app_manifest`](#openstation_app_manifest--experimental-filter) for `$id === 'desktop-mode-plugins'`; see [`migration-list-apps.md`](./migration-list-apps.md).
 
@@ -3591,22 +3607,6 @@ do_action( 'openstation_comments_window_after_bulk', string $action, int[] $proc
 ```
 
 Fires after a moderation batch finishes — from `/desktop-mode/v1/comments/bulk` and from the app's `moderate` action alike, since both run `openstation_comments_window_moderate()`. `$action` is one of `approve|unapprove|spam|unspam|trash|untrash`. `$processed` is the list of ids successfully acted on; `$skipped` is the list that failed a per-target cap or soft error.
-
-### `openstation_comments_ai_is_enabled` — Experimental *(filter)*
-
-```php
-apply_filters( 'openstation_comments_ai_is_enabled', bool $enabled ): bool
-```
-
-Whether AI moderation for new comments is enabled. Site-wide, not per-user — hooks here override the `desktop_mode_comments_ai_moderation` site option, which is useful for gating by environment (staging vs. production) or by feature flag.
-
-### `openstation_comments_ai_toggled` — Experimental *(action)*
-
-```php
-do_action( 'openstation_comments_ai_toggled', bool $enabled );
-```
-
-Fires after the Comments AI moderation toggle is changed via `POST /desktop-mode/v1/comments/ai-settings`. `$enabled` is the new state.
 
 ---
 

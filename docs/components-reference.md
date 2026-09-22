@@ -2,9 +2,9 @@
 
 Canonical mapping of every shipped web component: tag name → exported class → source file → one-line purpose. The runtime missing-component warner (`src/ui/components/missing-import-warner.ts`) points readers here.
 
-Components are **side-effect registered** at import time, per bundle, into the page-global custom-element registry. The shell bundle (`desktop[.min].js`) registers a core subset and pre-loads `shell-overlays[.min].js` (the toast / confirm-dialog / context-menu / menu / select / window-chrome kit) right after first paint, so those tags upgrade anywhere once the shell is up. That is 26 of the 67 tags below. Every other component registers only when a bundle that imports its module loads — emitting a `<os-foo>` tag that no loaded bundle has imported renders inert HTML, and the missing-component warner logs a `console.error` with the exact import line to add.
+Components are **side-effect registered** at import time, per bundle, into the page-global custom-element registry. The shell bundle (`desktop[.min].js`) registers a core subset and pre-loads `shell-overlays[.min].js` (the toast / confirm-dialog / context-menu / menu / select / window-chrome kit) right after first paint, so those tags upgrade anywhere once the shell is up. The remaining tags load on demand. Every other component registers only when a bundle that imports its module loads — emitting a `<os-foo>` tag that no loaded bundle has imported renders inert HTML, and the missing-component warner logs a `console.error` with the exact import line to add.
 
-**Two ways to get the other 41.**
+**Two ways to load the remaining components.**
 
 1. **Import the module** — `import 'openstation'` (the package entry re-exports the barrel, so any import registers every tag) or a single leaf module. Right for code built inside this repo, or beside it via the `file:` dependency in [`use-from-a-plugin.md`](./use-from-a-plugin.md). The class export is only needed for TypeScript types or programmatic instantiation.
 2. **Load the kit at runtime** — `await wp.os.loadComponents( [ 'os-switch' ] )`. No build-time relationship with this repo required, which is what a plugin distributed as a zip has. See [`wp.os.loadComponents()`](./javascript-reference.md#wposloadcomponents-tags---stable) for the cost, and [`examples/load-components.md`](./examples/load-components.md) for a working panel.
@@ -34,15 +34,19 @@ The search box above the list filters on the flattened descriptor, not just the 
 | Tag | Class | Source | Purpose |
 | --- | --- | --- | --- |
 | `<os-body>` | `OsBody` | `os-body/os-body.ts` | Page-body scroll container. |
-| `<os-panel>` | `OsPanel` | `os-panel/os-panel.ts` | Collapsible content section with header. |
+| `<os-panel>` | `OsPanel` | `os-panel/os-panel.ts` | Padded vertical grouping container. |
 | `<os-section>` | `OsSection` | `os-section/os-section.ts` | Titled section block within a panel. |
-| `<os-row>` | `OsRow` | `os-row/os-row.ts` | Horizontal flex row primitive. |
+| `<os-row>` | `OsRow` | `os-row/os-row.ts` | Twelve-track grid; children declare column widths with `col`. |
 | `<os-stack>` | `OsStack` | `os-stack/os-stack.ts` | Vertical flex stack with consistent gap. |
 | `<os-cluster>` | `OsCluster` | `os-cluster/os-cluster.ts` | Wrapped flex row for chips / tags / actions. |
-| `<os-grid>` | `OsGrid` | `os-grid/os-grid.ts` | Auto-fit CSS grid primitive. |
+| `<os-app-frame>` | `OsAppFrame` | `os-app-frame/os-app-frame.ts` | Stable: persistent header, toolbar and footer around a scrolling or contained body. |
+| `<os-split>` | `OsSplit` | `os-split/os-split.ts` | Stable: responsive panes with pointer/keyboard resizing and explicit narrow-pane selection. |
+| `<os-grid>` | `OsGrid` | `os-grid/os-grid.ts` | Fixed or automatically fitting columns with child column/row spans. |
 | `<os-card>` | `OsCard` | `os-card/os-card.ts` | Bordered surface for entity-card UIs. |
 | `<os-display>` | `OsDisplay` | `os-display/os-display.ts` | Hero / display-typography container. |
 | `<os-disclosure>` | `OsDisclosure` | `os-disclosure/os-disclosure.ts` | Titled section that folds away. Closed by default. Parts: `summary`, `heading` (compact typography), `body`. |
+
+See [app layout recipes](./examples/app-layouts.md) for sizing, scrolling, spans, narrow layouts and the split event contract.
 
 ## Form controls
 
@@ -67,6 +71,33 @@ The search box above the list filters on the flattened descriptor, not just the 
 | `<os-category-picker>` | `OsCategoryPicker` | `os-category-picker/os-category-picker.ts` | Category tree picker. |
 | `<os-role-picker>` | `OsRolePicker` | `os-role-picker/os-role-picker.ts` | WP role select. |
 | `<os-user-search>` | `OsUserSearch` | `os-user-search/os-user-search.ts` | Live user autocomplete (`/desktop-mode/v1/files/users/search` REST). |
+
+### Named fields in `<os-form>`
+
+Give each field a `name` and use `getValues()` / `setValues(patch)` for the whole
+record. Checkboxes and switches return booleans; tag inputs retain their array
+of `{ label, id? }` objects. Scalar fields retain their existing string values;
+convert numbers explicitly at the storage boundary. Structured values are assigned
+through the component's `value` setter and are not serialized into attributes.
+`reset()` restores the initial field values, including checked switches and tags.
+Structured-cloneable data is copied at capture and on each reset, so editing a
+tag object or array cannot overwrite those defaults. Opaque, non-cloneable custom
+field values retain their existing identity semantics.
+
+`setBusy(true)` makes the fields inert and blocks button, Enter and programmatic
+submission until cleared. Set it before the first asynchronous operation and clear
+it in `finally`. Existing per-field disabled settings are preserved.
+`os-form-input` reports named text, checkbox/switch, select, range and color changes.
+Tag add/remove events are intents: the app still updates `tags.value` explicitly;
+`setValues()` does not emit user-input events.
+
+See [editing a mixed-field record](examples/form-record-editor.md) for a complete
+load/save/reset pattern.
+
+Date fields (`date`, `datetime-local`, `month`, `week`) keep the browser's native
+picker. In browsers exposing the calendar indicator styling hook, its glyph reads
+`--os-ui-fg-muted`, matching the field's other affordances across dark and light
+themes. Forced-colors mode uses the system button text color.
 
 ### A raw `<input>` in the shell is not a styling choice
 
@@ -176,6 +207,15 @@ in the value, or on `beforeinput`, where it can still be refused.
 | `<os-button>` | `OsButton` | `os-button/os-button.ts` | Primary / secondary / ghost button. |
 | `<os-window-button>` | `OsWindowButton` | `os-window-button/os-window-button.ts` | Title-bar icon button (minimize / maximize / close / custom). |
 
+An icon-only `<os-button>` names itself through `aria-label` on the
+host. The focusable element is the `<button>` inside the shadow root
+and the host has no role, so a name left on the host alone is inert;
+the component forwards `aria-label` onto that inner button, keeps it
+in sync when you relabel the host, and drops it from the inner button
+when the host has none. `aria-labelledby` / `aria-describedby` are not
+forwarded: an IDREF on the shadow `<button>` resolves inside that
+shadow root only, so it could never reach an id in your markup.
+
 `<os-window-button disabled>` forwards disabled state to its native button, preventing activation and keyboard focus. Optional `aria-pressed="true|false|mixed"` is forwarded to that same focusable button; `active` controls its visual pressed state.
 
 `<os-window-button>` paints an `aria-hidden` glyph inside a shadow
@@ -227,7 +267,7 @@ you relabel the host, e.g. Maximize ⇄ Restore.
 
 | Tag | Class | Source | Purpose |
 | --- | --- | --- | --- |
-| `<os-table>` | `OsTable` | `os-table/os-table.ts` | Sortable, filterable data table with sub-tables. `stacked` lays every row out as a card — the first column its title, the labelled ones captioned lines, a label-less one the actions row (`column.stack` overrides the role) — for a phone or any width the columns cannot fit; `stack-on-phone.ts` makes that decision from the shell's mode stamp for every list window. |
+| `<os-table>` | `OsTable` | `os-table/os-table.ts` | Sortable, filterable data table with sub-tables. A cell value shaped `{ slot, text? }` renders a named slot a light-DOM child fills, so a server view can put a control in a row without a `render` function. `stacked` lays every row out as a card — the first column its title, the labelled ones captioned lines, a label-less one the actions row (`column.stack` overrides the role) — for a phone or any width the columns cannot fit; `stack-on-phone.ts` makes that decision from the shell's mode stamp for every list window. |
 | `<os-log>` | `OsLog` | `os-log/os-log.ts` | Virtualized streaming log container. |
 | `<os-tile>` | `OsTile` | `os-tile/os-tile.ts` | Desktop-style icon tile (used by the desktop file layer, folder windows, and WP Explorer). `selectable` switches it from `listitem` to `option` so it can carry `aria-selected` — the selection controller sets it. |
 
@@ -237,7 +277,7 @@ you relabel the host, e.g. Maximize ⇄ Restore.
 | --- | --- | --- | --- |
 | `<os-tabs>` / `<os-tab>` / `<os-tabpanel>` | `OsTabs`, `OsTab`, `OsTabPanel` | `os-tabs/os-tabs.ts` | Tab strip with associated panels, for a tab group **inside** content. A window's own top-level tabs belong in the window chrome instead — see `Window.setTabs()` in [`javascript-reference.md`](javascript-reference.md). |
 | `<os-tab-chip>` | `OsTabChip` | `os-tab-chip/os-tab-chip.ts` | Single chip tab (e.g. window tabs). |
-| `<os-steps>` / `<os-step>` | `OsSteps`, `OsStep` | `os-steps/os-steps.ts` | Numbered steps, stacked or as a horizontal trail. `current` marks where the reader is, `interactive` makes a step a way back. |
+| `<os-steps>` / `<os-step>` | `OsSteps`, `OsStep` | `os-steps/os-steps.ts` | Numbered steps, stacked or as a horizontal trail. `current` marks where the reader is, `interactive` makes a step a jump target. |
 | `<os-crumb-chain>` | `OsCrumbChain` | `os-crumb-chain/os-crumb-chain.ts` | Breadcrumb trail with chevron separators. |
 
 ## Color & theming
@@ -251,7 +291,7 @@ you relabel the host, e.g. Maximize ⇄ Restore.
 
 The kit wears the [OpenStation brand](https://nuriapenya.github.io/open-station-brand/), and the brand ships five mesh gradients with one instruction attached: *"meshes reserved for hero surfaces."* `src/ui/holo.ts` is how a control gets to be one without every component reinventing what holographic means.
 
-**It is a moment, not a skin.** Form controls (checkboxes, radios, switches, sliders, the segmented thumb) wear the flat accent when they are on; selection and state across the kit resolve through `--os-ui-accent`, which follows the accent the user picked in OpenStation Preferences; the mesh appears only where a single surface speaks for the brand, such as `<os-button variant="holo">`. A panel where every surface is iridescent has no identity moments left to spend.
+**It is a moment, not a skin.** Form controls (checkboxes, radios, switches, sliders) wear the flat accent when they are on, and so does the segmented thumb unless the palette says otherwise (the OpenStation palette makes it a mid-grey key on a Void track); selection and state across the kit resolve through `--os-ui-accent`, which follows the accent the user picked in OpenStation Preferences; the mesh appears only where a single surface speaks for the brand, such as `<os-button variant="holo">`. A panel where every surface is iridescent has no identity moments left to spend.
 
 Three treatments, in ascending loudness:
 
@@ -295,6 +335,12 @@ Declared in `assets/css/variables.css`, on `body.os-active` (never `:root` — t
 | `--os-ui-holo-track` | The unlit half — switch tracks, empty progress. |
 | `--os-ui-tab-edge` | The selected row's leading edge in a vertical `<os-tabs>`. The flat accent, so the row says "this one" in the same colour as every control beside it. |
 | `--os-ui-tab-wash` / `--os-ui-tab-bloom` | That row's surface wash, and the bloom the edge throws back across it. Both ambient, so both resolve through `--os-ui-accent-dim`. |
+| `--os-ui-tab-edge-width` / `--os-ui-tab-bloom-opacity` / `--os-ui-tab-wash-opacity` | How much of the edge, the bloom and the accent wash show. `2px`, `1` and `1` by default, the accent line with its glow and wash; `0px`, `0` and `0` leave the row to its fill. |
+| `--os-ui-segmented-selected-accent` / `--os-ui-segmented-selected-base` | How much of the accent the selected `<os-segmented>` pill and its label take, as a percentage mixed towards `-base` (the pill) and `--os-ui-fg` (the label). The OpenStation palette answers `0%` and a mid-grey that clears 3:1 against its Void `--os-ui-segmented-bg` track, so the control ignores the picker; unset is `100%`, the accent pill. `--os-ui-segmented-selected-bg` / `-fg` still override both outright. |
+| `--os-ui-segmented-edge` / `--os-ui-segmented-selected-shadow` | Box shadows for the track's edge and under the selected key. The OpenStation palette answers a 10% Starlight hairline and a small drop shadow; unset is `none` for both. |
+| `--os-ui-segmented-hover-bg` / `--os-ui-segmented-hover-sheen` | What an unselected segment shows under the pointer: a shade, and the holographic film. The OpenStation palette answers a faint Starlight lift and `none`; unset is no shade and the kit's film. |
+| `--os-ui-tab-fill` / `--os-ui-tab-radius` / `--os-ui-tab-inset` | The selected row's flat fill, corner radius and distance from the sidebar's edges. `transparent`, 0 and 0 by default, the full-bleed row; a fill with a radius and an inset makes it a pill. |
+| `--os-ui-swatch-ring-width` / `--os-ui-swatch-lift` / `--os-ui-swatch-badge-bg` | How a chosen `<os-swatch>` tile is marked: the width of its accent ring, a lift (stroke plus shadow) drawn with it, and the tick badge in its corner (`transparent` removes it). |
 | `--os-ui-accent-dim` | Pulse one step back (same hue, S and L pulled down together). **The single knob for how loud the station is** — every ambient use of the accent resolves through it. |
 | `--os-ui-focus-ring` | The **target** ring: buttons, switches, checkboxes, swatches. Built to survive landing on a bright mesh. |
 | `--os-ui-focus-ring-field` | The **field** ring: quieter, tightens the input's own border. A form of twelve inputs should not look alarmed. |

@@ -49,7 +49,7 @@ The brand ships five mesh gradients with one instruction attached — *"meshes r
 
 Three rules, all with tests:
 
-1. **Form controls wear the flat accent when they are on; the mesh is reserved for hero moments.** Checkboxes, radios, switches, the segmented thumb and the slider's elapsed track all resolve through `--os-ui-accent`, which the accent picker writes so the whole family follows the colour the user chose. The mesh appears where a single surface speaks for the brand: `<os-button variant="holo">`, and nothing else by default. A panel where every surface is iridescent has no identity moments left to spend; `primary` deliberately did *not* become the mesh either, because it is three-to-a-row in OpenStation Preferences and a mesh three-to-a-row is wallpaper.
+1. **Form controls wear the flat accent when they are on; the mesh is reserved for hero moments.** Checkboxes, radios, switches and the slider's elapsed track all resolve through `--os-ui-accent`, which the accent picker writes so the whole family follows the colour the user chose. The segmented thumb mixes from it by `--os-ui-segmented-selected-accent`, which the OpenStation palette sets to `0%`: a mid-grey key on a Void track that does not follow the picker. The mesh appears where a single surface speaks for the brand: `<os-button variant="holo">`, and nothing else by default. A panel where every surface is iridescent has no identity moments left to spend; `primary` deliberately did *not* become the mesh either, because it is three-to-a-row in OpenStation Preferences and a mesh three-to-a-row is wallpaper.
 2. **`holoTokens` is a prerequisite for every other fragment** — it declares the private `--_holo-*` aliases they read. Include it once per component. Never declare a `--os-ui-*` name on the bare `:host` (see the next rule).
 3. **Reduced motion stops the tilt, never the fill.** A control that lost its mesh under `prefers-reduced-motion` would lose its *state*, not just its animation.
 
@@ -180,7 +180,7 @@ ESLint enforces this — raw `fetch( … )` and `window.fetch( … )` calls fail
 
 - The `trackedFetch` wrapper itself (the boot-time fallback before `wp.os` exists).
 - The PWA service worker (`src/pwa/sw.ts` — different context, no `wp.os` global).
-- Genuinely silent background pollers where attribution would mis-render as user activity (`src/devtools/index.ts`, `src/desktop-files/recycle-bin-icon-state.ts`).
+- Genuinely silent background pollers where attribution would mis-render as user activity (`src/devtools/index.ts`). A raw `fetch()` also skips the REST nonce, so a cookie-authenticated REST route answers it with 401: a background REST call is `trackedFetch( …, { silent: true } )`, which keeps it silent and still carries the nonce (the recycle-bin count refresh shipped the 401 for months).
 
 ### Use `wp.os.confirm` (or `osConfirm`), never `window.confirm`/`alert`/`prompt`
 
@@ -251,6 +251,18 @@ The script is the single source of truth for the include list and runs `npm run 
 ### Don't regenerate POT/PO/JSON in feature PRs
 
 i18n re-extraction is a batched pre-translation step, not a per-PR chore. Don't run `npm run build:i18n` as part of a feature branch unless the PR is specifically a translation refresh; the noise dilutes the diff and creates churn with other in-flight branches.
+
+### Add a test only when it would catch a real bug
+
+**Not every change needs a test.** Every test runs on every PR push, and suite growth is the main reason CI keeps getting slower. Before adding one, ask: would it fail on a bug we'd otherwise ship? If not, leave it out.
+
+- **Test behavior, not source text.** Reading a stylesheet, source file or doc from disk to assert a string is there is for the deliberate guards named in this file, not for pinning a change you just made.
+- **Don't restate the implementation.** A test that mocks every collaborator and asserts the mocks were called proves nothing.
+- **One case per distinct path.** Near-identical cases with different inputs add time, not coverage.
+- **Extend an existing test file before creating a new one.** Vitest sets up jsdom and runs `tests/vitest/setup.ts` once per file, roughly half a second of worker time, so a new file with three tiny tests costs more than the tests themselves.
+- **A regression test is for a bug that could plausibly come back**, not a one-off slip.
+
+When a change breaks a test, don't just rewrite the assertion to match. Decide whether it caught a real regression or pinned an implementation detail, and delete or rewrite it in the second case.
 
 ---
 

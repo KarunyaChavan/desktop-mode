@@ -95,12 +95,14 @@ When the user drags a file from the host operating system onto a chromeless admi
 |---|---|---|---|
 | `os-file-drop` | iframe → parent | `{ files: File[], x: number, y: number }` | Native-OS file drop captured inside the iframe. Same-origin only — `postMessage` preserves `File` identity. The parent's `OsFileDropManager` resolves the source iframe's `data-window-id` via `MessageEvent.source` and routes the files through the drop pipeline. |
 
-The forwarder listens in **bubble phase** at the iframe's `document`, so any in-page drop receiver runs first and gets the chance to claim the drop. Two bail conditions, in order:
+The forwarder listens in **bubble phase** at the iframe's `document`, so any in-page drop receiver runs first and gets the chance to claim the drop. Three bail conditions, in order:
 
 1. **Curated allowlist** — `.components-drop-zone`, `[data-drop-zone]`, `.uploader-window`, `.media-frame-content` always yield, so Gutenberg's media uploader and the legacy media library keep working as before even on edge cases that skip the spec dance.
 2. **`event.defaultPrevented === true`** — any inner handler that called `preventDefault()` on `dragover` or `drop` is signalling ownership per the HTML5 drag-and-drop contract. The forwarder yields. Third-party plugin drop zones (e.g. "Administrador de archivos WP") that already work in classic admin keep working untouched inside OpenStation iframes — no opt-in required.
 
-Only drops where neither bail fires (the empty page background, or an inner handler that never called `preventDefault()`) escalate to the shell.
+3. **A native file input under the drop** — an `<input type="file">` the pointer is on, or the single file input inside the `form.wp-upload-form` box the pointer is in (Core's Upload Plugin and Upload Theme), receives the files the way a drop outside the shell would: the bridge sets `files`, fires `input` and `change` (Core's `common.js` enables Install Now on the latter) and claims the event. A non-`multiple` input takes the first file only. A disabled or unrendered input, or a box with several, does not qualify — Media › Add New keeps its no-JS `#async-upload` hidden behind plupload, and a drop there still escalates. While a file drag hovers a qualifying box the bridge stamps `data-os-file-drop-active` on it, and `assets/css/chromeless.css` draws the outline.
+
+Only drops where none of the three fires (the empty page background, or an inner handler that never called `preventDefault()`) escalate to the shell.
 
 ### Drag-hover heartbeat — `os-drag-hover`
 
@@ -322,6 +324,8 @@ The class doesn't promise a handler, though. The Media list table stamps it on T
 Links owned by core's `wp-admin/js/updates.js` are also left alone: the card-style `install-now` / `update-link` / `update-now` / `delete-plugin` / `delete-theme` / `install-theme` buttons, the plugins-list-table row Delete (`[data-plugin] a.delete`), and the network themes row Delete (`.themes-php.network-admin a.delete`). updates.js `preventDefault`s these itself and runs an in-place AJAX operation; if the bridge hijacked them, the parent-driven navigation would race the AJAX call (a `wp.updates.beforeunload` "Leave site?" prompt followed by the no-JS fallback screen for an already-deleted plugin).
 
 The Dashboard's welcome panel is the same story with no marker class at all: `dashboard.js` binds the dismiss on the anchor and `preventDefault`s it, and `?welcome=0` is a dead no-JS fallback. The interceptor yields `.welcome-panel-close` and `.welcome-panel-dismiss a` inside `#welcome-panel`, matching core's own selector. Routing them opened a second Dashboard window titled **Dismiss** on top of the one being dismissed.
+
+Jetpack's WordPress.com-built dashboards, Stats (`admin.php?page=stats`) and Blaze (`?page=advertising`), write their in-app links root-relative (`/stats/day/referrers/<site>`) and route them with a delegated handler on `#wpcom` that turns the href into a `#!` hash on the current screen. The interceptor yields any link inside `#wpcom` whose href starts with `/` plus the screen's `page` arg, which is Jetpack's own test. Claiming them resolved the href against the site root, classified it as a front-end URL, and opened the site's 404 page as an external sub-tab. Other links in those apps, such as a post permalink, are still escalated as usual.
 
 Forms submit through a separate `submit` listener that only rewrites the action URL (to keep `openstation_chromeless=1`) and never `preventDefault`s. Same-origin form posts to a different page would currently navigate the iframe in place; if that becomes a UX problem it can join this protocol as a `os-iframe-admin-form-submit` message.
 

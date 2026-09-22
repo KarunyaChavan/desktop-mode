@@ -48,6 +48,8 @@ function extra( over: Partial< PluginsExtra > = {} ): PluginsExtra {
 		autoUpdatesEnabled: true,
 		selfPluginFile: 'desktop-mode/desktop-mode',
 		adminUrl: 'http://example.test/wp-admin/',
+		deactivationFeedback: null,
+		editorUrl: '',
 		...over,
 	};
 }
@@ -232,6 +234,27 @@ describe( 'the plugins app view', () => {
 		expect( root.querySelector( '[os-bind="query"]' ) ).not.toBeNull();
 		const no = mount( {}, {}, { caps: { activate: true, install: true, delete: true, upload: false, update: true } } );
 		expect( no.root.querySelector( '[data-os-plugins-browse-host] .dashicons-upload' ) ).toBeNull();
+	} );
+
+	it( 'offers the Plugin File Editor as a tab that opens Core’s editor in its own window', () => {
+		const openUrl = vi.fn();
+		const { root, ctx } = mount( {}, {}, { editorUrl: 'http://example.test/wp-admin/plugin-editor.php' }, { openUrl } );
+		const tabs = root.querySelector< HTMLElement & { value: string } >( '[data-os-plugins-tabs]' )!;
+		const editor = root.querySelector< HTMLElement >( '[data-os-plugins-editor]' )!;
+		expect( editor.getAttribute( 'value' ) ).not.toBe( 'installed' );
+
+		editor.dispatchEvent( new CustomEvent( 'os-tab-pick', { bubbles: true, composed: true, detail: { value: editor.getAttribute( 'value' ) } } ) );
+		expect( openUrl ).toHaveBeenCalledWith( 'http://example.test/wp-admin/plugin-editor.php', 'Plugin File Editor', 'dashicons-admin-plugins' );
+
+		// Arrow keys select the tab they land on; the editor tab hands it back.
+		tabs.value = editor.getAttribute( 'value' )!;
+		tabs.dispatchEvent( new CustomEvent( 'os-tab-change', { bubbles: true, detail: { value: tabs.value } } ) );
+		expect( tabs.value ).toBe( 'installed' );
+		expect( ctx.state.tab ).toBe( 'installed' );
+
+		// No editor URL (a block theme, multisite, no `edit_plugins`): no tab.
+		const none = mount();
+		expect( none.root.querySelector( '[data-os-plugins-editor]' ) ).toBeNull();
 	} );
 
 	it( 'does not fetch a gallery until its tab is on screen', () => {

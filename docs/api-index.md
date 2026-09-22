@@ -27,6 +27,7 @@ The full surface is documented in [`javascript-reference.md`](./javascript-refer
 | `saveSession` | `() => void` | Stable |
 | [`mode`](./mobile.md) | `{ get, getPreference, getBreakpoints, isMobile, getDisplay, isStandalone, subscribe }` *(the responsive mode: `desktop \| tablet \| mobile`; the display: `standalone \| browser`)* | Experimental |
 | `registerWindowAction` / `unregisterWindowAction` / `listWindowActions` | `( def: WindowActionDef ) => void` *(rows in every window's ⋯ menu, as verbs or checkboxes; `label`/`icon`/`isVisible`/`checked` may be per-window functions)* | Experimental |
+| [`deactivationFeedback`](./javascript-reference.md#wposdeactivationfeedback--experimental) | `{ ask( config ) => Promise<void> }` *(the one-question dialog before a self-deactivate; present only once its lazy bundle loaded)* | Experimental |
 | [`electron`](./desktop-host.md) | `ElectronAdapterApi` *(set a window free into a real OS window; published by the Electron Adapter extension, absent in a browser)* | Experimental |
 
 ### HTTP & UI primitives — must-know
@@ -349,3 +350,19 @@ Typed messages between the parent shell and iframe windows. Full shapes in [`bri
 When a status changes (Experimental → Stable, or anything → removed), update **all three** of: the JSDoc, this table, and the relevant per-doc reference. The doc lint guidance in `AGENTS.md` enforces this rule of thumb: a hook change without a doc update ships a lie.
 
 - **Experimental:** [MIO response buttons](mio-window-assistant.md#assistant-response-buttons) — `MioWindowContext.responseActions`, `MioResponseAction`, `MioResponseActionContext`, `MioResponseContext`, and optional `MioChatMessage.id` / `actionIds`; lease-local read/navigation controls.
+
+## App layout components
+
+| Surface | Contract | Status |
+|---|---|---|
+| `os-app-frame` | Header/toolbar/footer slots; scrolling body or `contained` child | Stable |
+| `os-split` | Bounded start/end panes, pointer/keyboard resizing, explicit narrow mode; `os-split-change` `{ position }` | Stable |
+| `os-grid` extensions | `min-item-width`, child `col-span` / `row-span` (1–12) | Stable |
+
+See [app layout recipes](./examples/app-layouts.md) for attributes, sizing and examples.
+
+### Form component types
+
+The `openstation` package exports `OsForm`, `OsSwitch` and `OsTagInput`, including
+their DOM methods and property types. Use `import type` when only typing elements
+already loaded by the runtime. See [named form fields](components-reference.md#named-fields-in-os-form).

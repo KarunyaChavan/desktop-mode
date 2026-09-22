@@ -95,6 +95,26 @@ export const textFieldStyles = css`
 		color: var( --os-ui-fg, #1d2327 );
 	}
 
+	/* Native calendar artwork does not inherit color. Keep the native
+	 * picker target, but paint its glyph through the same token as the
+	 * other field affordances. The mask is WordPress's calendar icon:
+	 * packages/icons/src/library/calendar.svg in WordPress/gutenberg. */
+	input:is( [ type='date' ], [ type='datetime-local' ], [ type='month' ], [ type='week' ] )::-webkit-calendar-picker-indicator {
+		--_calendar-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.5'%3E%3Cpath d='M4.75 7.25L4.75 18C4.75 18.6904 5.30964 19.25 6 19.25H18C18.6904 19.25 19.25 18.6904 19.25 18V7.25V6C19.25 5.30964 18.6904 4.75 18 4.75H6C5.30964 4.75 4.75 5.30964 4.75 6V7.25ZM19.25 7.25H4.75M7.25 10.75H9.25M11 10.75H13M14.75 10.75H16.75M7.25 14.5H9.25M11 14.5H13M14.75 14.5H16.75' vector-effect='non-scaling-stroke'/%3E%3Cpath d='M18 4.75H6C5.30964 4.75 4.75 5.30964 4.75 6V7.25H19.25V6C19.25 5.30964 18.6904 4.75 18 4.75Z' fill='currentColor' vector-effect='non-scaling-stroke'/%3E%3C/svg%3E");
+		background: var( --os-ui-fg-muted, #646970 );
+		-webkit-mask: var( --_calendar-icon ) center / contain no-repeat;
+		mask: var( --_calendar-icon ) center / contain no-repeat;
+		width: 16px;
+		height: 16px;
+		cursor: pointer;
+	}
+	@media ( forced-colors: active ) {
+		input:is( [ type='date' ], [ type='datetime-local' ], [ type='month' ], [ type='week' ] )::-webkit-calendar-picker-indicator {
+			background: ButtonText;
+			forced-color-adjust: none;
+		}
+	}
+
 	/* Suffix slot for units / currency badges — rendered when the
 	 * component has a suffix attribute. Inline-end anchored so RTL
 	 * locales flip automatically via logical properties. */
@@ -117,11 +137,19 @@ export const textFieldStyles = css`
 	}
 
 	/* Clear (x) affordance — rendered on clearable fields while they
-	 * hold a value. The kit strips native input chrome (appearance:
-	 * none takes WebKit's search-cancel button with it, and Firefox
-	 * never had one), so a clearable field owns its own. Same seat and
+	 * hold a value, so a clearable field owns its own. Same seat and
 	 * chrome as the reveal toggle; when both are present the clear
-	 * shifts inward so they sit side by side. */
+	 * shifts inward so they sit side by side.
+	 *
+	 * appearance: none on the input does NOT take WebKit's own
+	 * search-cancel button with it: a type="search" field still drew
+	 * one, in system blue, beside this one. A clearable field hides
+	 * it, since it has its own. A search field that is not clearable
+	 * keeps the native one, the only clear it has. */
+	:host( [ clearable ] ) input::-webkit-search-cancel-button {
+		-webkit-appearance: none;
+		display: none;
+	}
 	.os-text-field__row--has-clear input {
 		padding-inline-end: 36px;
 	}

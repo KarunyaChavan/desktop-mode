@@ -88,6 +88,17 @@
 	transition: background-color 0.15s ease, transform 0.15s ease, color 0.15s ease;
 }
 
+/*
+ * The tile whose window is in front sits on a lit plate. Declared
+ * before the hover rule at the same specificity so the pointer still
+ * wins while it is over the tile. Falls back to nothing, which is
+ * what every placement drew before the token existed.
+ */
+.os-dock__item--focused .os-dock__item-primary {
+	background-color: var( --os-dock-item-bg-focused, transparent );
+	color: var( --os-dock-icon-color-hover, var( --os-ui-fg-on-accent, #fff ) );
+}
+
 .os-dock__item-primary:hover {
 	background-color: var(
 		--os-dock-item-bg-hover,
@@ -250,7 +261,7 @@
 	border: 2px solid var( --os-dock-bg, rgba( 0, 0, 0, 0.4 ) );
 	border-radius: 50%;
 	background: var( --wp-admin-theme-color, #2271b1 );
-	color: var( --os-ui-fg-on-accent, #fff );
+	color: var( --os-ui-accent-ink, var( --os-ui-fg-on-accent, #fff ) );
 	cursor: pointer;
 	transition: background-color 0.15s ease, transform 0.15s ease;
 	z-index: 1;
@@ -1004,15 +1015,24 @@
  * stays centred in the pill. `min-width: 0` lets the wrapper shrink below its
  * content's natural width, so the dock pill's `max-width` is what
  * decides when scroll kicks in instead of the content forcing the
- * pill wider. `justify-content: center` keeps tiles balanced inside
- * the pill when content fits; when it overflows, scroll engages and
- * items extend past the visible area.
+ * pill wider. `justify-content: safe center` keeps tiles balanced inside
+ * the pill when content fits; when it overflows, the `safe` keyword
+ * ensures alignment falls back to `start` so `scrollLeft = 0` reveals the
+ * first item and all items remain scrollable without clipping. Bare
+ * `center` put the leading tiles at a negative offset, and a scroll
+ * container clamps `scrollLeft` at 0, so Dashboard and its neighbours
+ * were clipped with no way to scroll back to them. **The plain `start`
+ * above it is the fallback, not a leftover** — a browser that cannot
+ * parse the overflow-alignment keyword drops the `safe center`
+ * declaration and keeps that one, which left-aligns the tiles rather
+ * than hiding them. Deleting it restores the bug on those browsers.
  */
 .os-dock[ data-os-dock-placement="bottom" ] .os-dock__scroll {
 	display: flex;
 	flex-direction: row;
 	align-items: center;
-	justify-content: center;
+	justify-content: start;
+	justify-content: safe center;
 	gap: 6px;
 	flex: 1 1 auto;
 	min-width: 0;

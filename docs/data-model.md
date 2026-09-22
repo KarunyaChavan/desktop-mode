@@ -252,6 +252,7 @@ profile screen). AI agents are ordinary `wp_users` rows flagged with
 | `meta_key` | Module | Content |
 |---|---|---|
 | `desktop_mode_mode` | Core | The user's opt-in: `1` turns the shell on. |
+| `openstation_enabled_at` | First run | Epoch seconds of the user's first enable; absent until then. Written by `openstation_record_user_enabled()` from the admin-bar toggle and the portal. |
 | `desktop_mode_os_settings` | Preferences | Every OpenStation Preferences value (appearance, windows, navigation, features). REST-synced through `/wp-json/desktop-mode/v1/os-settings`. |
 | `desktop_mode_session` | Session | Open windows and their geometry for restore. On multisite the key is suffixed: `_{blog_id}` on a secondary site, `_network` in the network admin. |
 | `desktop_mode_default_window` | Core | The window that opens on arrival. |
@@ -277,7 +278,7 @@ profile screen). AI agents are ordinary `wp_users` rows flagged with
 | `_desktop_mode_width`, `_desktop_mode_height` | attachments | Cached image dimensions for the Media Library; a one-time backfill is flagged by the `desktop_mode_media_dims_backfilled` option. |
 | `_openstation_stored_file_id` | attachments | The stored file this attachment was created from (→ `desktop_mode_stored_files.id`). |
 | `_openstation_stored_file_key` | attachments | Deduplication key of that stored file. |
-| `_desktop_mode_ai_analysis` | comments | Result of the AI moderation pass. |
+| `_desktop_mode_ai_analysis` | comments | Verdict written by the on-demand `desktop-mode/analyze-comment` ability. |
 
 ## Options (`wp_options`)
 
@@ -288,7 +289,6 @@ profile screen). AI agents are ordinary `wp_users` rows flagged with
 | `desktop_mode_migration_version` | Migrations | Last data migration applied (`includes/migrations.php`). |
 | `desktop_mode_extended_options` | Preferences | Site-wide extended options: Media Library enhancement, Games, AI agents, OpenStation Network, plus `window_prewarm` and `admin_asset_cache` (both default `true`; administrator opt-outs apply on shell reload). |
 | `desktop_mode_desktop_themes` | Desktop themes | Themes uploaded as ZIPs and the active selection; their files go to `uploads/desktop-mode-themes/`. |
-| `desktop_mode_comments_ai_moderation` | AI Copilot | Whether comment moderation by AI is on. |
 | `desktop_mode_agents_defaults_seeded` | Agents | Flag: default agents already created. |
 | `desktop_mode_media_dims_backfilled` | Media | Flag: dimensions backfill done. |
 | `desktop_mode_notes_rev` | Notes | Global notes revision; invalidates the per-user cache. |
@@ -297,6 +297,8 @@ profile screen). AI agents are ordinary `wp_users` rows flagged with
 | `_desktop_mode_content_changes_log` | Content changes | Recent content changes for the feed, capped at 100 entries (`autoload = no`). |
 | `_desktop_mode_recycle_bin_change_ts` | Recycle Bin | Timestamp of the last bin change, for the badge (`autoload = no`). |
 | `openstation_app_store` | App Framework | The `Store` contract with `site` scope. |
+| `openstation_installed_at` | First run | `{ at, via }`: when the plugin was activated (`autoload = no`). `via` is `activation` from the activation hook, `backfill` when reconstructed on `admin_init` for an install that predates the stamp; a backfilled age reads as unknown everywhere. |
+| `openstation_first_enabled_at` | First run | `{ at, via }`: the first time any user turned OpenStation on (`autoload = no`). Written by `openstation_record_user_enabled()`. |
 
 ## Transients
 

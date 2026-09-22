@@ -1075,6 +1075,13 @@ body.os-has-fullscreen-window .os-shell {
 	opacity: 1;
 }
 
+/*
+ * The corner close button rests at `opacity: 0` and only the card's
+ * hover reveals it, so on touch it is invisible and the widget cannot
+ * be dismissed at all. Rest it at the same 0.7 the chrome header's
+ * close button uses there, rather than a full 1, so a card that is
+ * only being read does not wear a hard × in its corner.
+ */
 @media ( hover: none ) {
 	.os-widgets__card-close {
 		opacity: 0.7;

@@ -1509,6 +1509,10 @@ export class Window {
 
 	/** Set the z-index of this window. */
 	public setZIndex( z: number ): void {
+		// Keep on top during genie flight so path to dock isn't occluded.
+		if ( this.element.classList.contains( 'os-window--minimizing' ) ) {
+			return;
+		}
 		this.element.style.zIndex = String( z );
 	}
 

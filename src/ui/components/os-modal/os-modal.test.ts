@@ -7,6 +7,9 @@ async function load() {
 	return await import( './os-modal' );
 }
 
+/** Settle async rendering — enough for `_focusFirst` retries to complete. */
+const tick = () => new Promise< void >( ( r ) => setTimeout( r, 10 ) );
+
 function mount( attrs: Record< string, string > = {}, body: string = '' ): HTMLElement {
 	const el = document.createElement( 'os-modal' );
 	for ( const [ k, v ] of Object.entries( attrs ) ) {
@@ -104,7 +107,7 @@ describe( 'os-modal', () => {
 			{ open: '', title: 'Settings' },
 			'<button id="first-btn">First</button><button id="second-btn">Second</button>',
 		);
-		await new Promise( ( r ) => setTimeout( r, 10 ) );
+		await tick();
 		const firstBtn = el.querySelector< HTMLButtonElement >( '#first-btn' );
 		expect( el.ownerDocument.activeElement ).toBe( firstBtn );
 	} );
@@ -114,16 +117,18 @@ describe( 'os-modal', () => {
 			{ open: '', title: 'Settings' },
 			'<button id="first-btn">First</button><button id="second-btn" autofocus>Second</button>',
 		);
-		await new Promise( ( r ) => setTimeout( r, 10 ) );
+		await tick();
 		const secondBtn = el.querySelector< HTMLButtonElement >( '#second-btn' );
 		expect( el.ownerDocument.activeElement ).toBe( secondBtn );
 	} );
 
 	test( 'discovers focusable elements inside slotted custom components with shadow DOM', async () => {
-		await import( '../os-range-field/os-range-field' );
-		await import( '../os-color-field/os-color-field' );
-		await import( '../os-button/os-button' );
-		await import( '../os-cluster/os-cluster' );
+		await Promise.all( [
+			import( '../os-range-field/os-range-field' ),
+			import( '../os-color-field/os-color-field' ),
+			import( '../os-button/os-button' ),
+			import( '../os-cluster/os-cluster' ),
+		] );
 
 		const el = mount(
 			{ open: '', title: 'Wallpaper Settings' },
@@ -135,7 +140,7 @@ describe( 'os-modal', () => {
 			</os-cluster>
 			`,
 		);
-		await new Promise( ( r ) => setTimeout( r, 10 ) );
+		await tick();
 
 		const rangeField = el.querySelector< HTMLElement >( 'os-range-field' );
 		const colorField = el.querySelector< HTMLElement >( 'os-color-field' );
@@ -176,7 +181,7 @@ describe( 'os-modal', () => {
 		expect( opener.ownerDocument.activeElement ).toBe( opener );
 
 		const el = mount( { open: '', title: 'Dialog' }, '<button id="modal-btn">Inside</button>' );
-		await new Promise( ( r ) => setTimeout( r, 10 ) );
+		await tick();
 
 		expect( el.ownerDocument.activeElement ).toBe( el.querySelector( '#modal-btn' ) );
 
@@ -186,7 +191,7 @@ describe( 'os-modal', () => {
 
 	test( 'focus trap works when modal has only close button', async () => {
 		const el = mount( { open: '', title: 'Empty Info' }, '<p>Just text</p>' );
-		await new Promise( ( r ) => setTimeout( r, 10 ) );
+		await tick();
 
 		const closeBtn = el.shadowRoot?.querySelector< HTMLButtonElement >( 'button.close' );
 		expect( el.shadowRoot?.activeElement ).toBe( closeBtn );

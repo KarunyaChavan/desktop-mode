@@ -97,4 +97,105 @@ describe( 'os-modal', () => {
 		const lg = mount( { open: '', size: 'lg' } );
 		expect( lg.getAttribute( 'size' ) ).toBe( 'lg' );
 	} );
+
+	test( 'focuses first interactive element in modal body on open', async () => {
+		await import( '../os-button/os-button' );
+		const el = mount(
+			{ open: '', title: 'Settings' },
+			'<button id="first-btn">First</button><button id="second-btn">Second</button>',
+		);
+		await new Promise( ( r ) => setTimeout( r, 10 ) );
+		const firstBtn = el.querySelector< HTMLButtonElement >( '#first-btn' );
+		expect( el.ownerDocument.activeElement ).toBe( firstBtn );
+	} );
+
+	test( 'focuses element with autofocus when specified', async () => {
+		const el = mount(
+			{ open: '', title: 'Settings' },
+			'<button id="first-btn">First</button><button id="second-btn" autofocus>Second</button>',
+		);
+		await new Promise( ( r ) => setTimeout( r, 10 ) );
+		const secondBtn = el.querySelector< HTMLButtonElement >( '#second-btn' );
+		expect( el.ownerDocument.activeElement ).toBe( secondBtn );
+	} );
+
+	test( 'discovers focusable elements inside slotted custom components with shadow DOM', async () => {
+		await import( '../os-range-field/os-range-field' );
+		await import( '../os-color-field/os-color-field' );
+		await import( '../os-button/os-button' );
+		await import( '../os-cluster/os-cluster' );
+
+		const el = mount(
+			{ open: '', title: 'Wallpaper Settings' },
+			`
+			<os-range-field label="Wind" value="22"></os-range-field>
+			<os-color-field label="Background" value="#0c1a36"></os-color-field>
+			<os-cluster>
+				<os-button id="reset-btn">Reset</os-button>
+			</os-cluster>
+			`,
+		);
+		await new Promise( ( r ) => setTimeout( r, 10 ) );
+
+		const rangeField = el.querySelector< HTMLElement >( 'os-range-field' );
+		const colorField = el.querySelector< HTMLElement >( 'os-color-field' );
+		const resetBtn = el.querySelector< HTMLElement >( '#reset-btn' );
+
+		const rangeInput = rangeField?.shadowRoot?.querySelector( 'input' );
+		const colorInput = colorField?.shadowRoot?.querySelector( 'input' );
+		const resetNativeBtn = resetBtn?.shadowRoot?.querySelector( 'button' );
+		const closeBtn = el.shadowRoot?.querySelector( 'button.close' );
+
+		expect( rangeInput ).not.toBeNull();
+		expect( colorInput ).not.toBeNull();
+		expect( resetNativeBtn ).not.toBeNull();
+		expect( closeBtn ).not.toBeNull();
+
+		// Initial focus lands on the first body field (range input), not stuck on close button
+		expect( rangeField?.shadowRoot?.activeElement || el.ownerDocument.activeElement ).toBe( rangeInput );
+
+		// Tabbing from the last element (reset button) wraps back to the first element (close button in header)
+		resetNativeBtn!.focus();
+		resetNativeBtn!.dispatchEvent(
+			new KeyboardEvent( 'keydown', { key: 'Tab', bubbles: true, composed: true } ),
+		);
+		expect( el.shadowRoot?.activeElement ).toBe( closeBtn );
+
+		// Shift+Tab from the first element (close button) wraps back to the last element (reset button)
+		closeBtn!.dispatchEvent(
+			new KeyboardEvent( 'keydown', { key: 'Tab', shiftKey: true, bubbles: true, composed: true } ),
+		);
+		expect( resetBtn?.shadowRoot?.activeElement || el.ownerDocument.activeElement ).toBe( resetNativeBtn );
+	} );
+
+	test( 'closing modal restores focus to previously active element', async () => {
+		const opener = document.createElement( 'button' );
+		opener.id = 'opener-btn';
+		document.body.appendChild( opener );
+		opener.focus();
+		expect( opener.ownerDocument.activeElement ).toBe( opener );
+
+		const el = mount( { open: '', title: 'Dialog' }, '<button id="modal-btn">Inside</button>' );
+		await new Promise( ( r ) => setTimeout( r, 10 ) );
+
+		expect( el.ownerDocument.activeElement ).toBe( el.querySelector( '#modal-btn' ) );
+
+		el.removeAttribute( 'open' );
+		expect( opener.ownerDocument.activeElement ).toBe( opener );
+	} );
+
+	test( 'focus trap works when modal has only close button', async () => {
+		const el = mount( { open: '', title: 'Empty Info' }, '<p>Just text</p>' );
+		await new Promise( ( r ) => setTimeout( r, 10 ) );
+
+		const closeBtn = el.shadowRoot?.querySelector< HTMLButtonElement >( 'button.close' );
+		expect( el.shadowRoot?.activeElement ).toBe( closeBtn );
+
+		// Tabbing stays on close button
+		closeBtn!.dispatchEvent(
+			new KeyboardEvent( 'keydown', { key: 'Tab', bubbles: true, composed: true } ),
+		);
+		expect( el.shadowRoot?.activeElement ).toBe( closeBtn );
+	} );
 } );
+

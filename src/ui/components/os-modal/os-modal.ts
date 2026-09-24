@@ -26,7 +26,98 @@ import { Component, defineComponent, html } from '../../core';
 import { modalStyles } from './os-modal.styles';
 
 const FOCUSABLE =
-	'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+	'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/**
+ * The genuinely focused element, walking through any shadow roots on
+ * the way down.
+ */
+function deepActiveElement( doc: Document | null ): HTMLElement | null {
+	let el = ( doc?.activeElement ?? null ) as HTMLElement | null;
+	while ( el?.shadowRoot?.activeElement ) {
+		el = el.shadowRoot.activeElement as HTMLElement;
+	}
+	return el && el !== doc?.body ? el : null;
+}
+
+/**
+ * The element a keyboard event actually started on.
+ */
+function eventSource( e: Event ): HTMLElement | null {
+	const path = e.composedPath();
+	const deepest = path.length > 0 ? path[ 0 ] : e.target;
+	return deepest instanceof HTMLElement ? deepest : null;
+}
+
+/**
+ * Check if an element is visible in the layout (not display: none or visibility: hidden).
+ */
+function isVisible( el: HTMLElement ): boolean {
+	if ( el.hidden || el.getAttribute( 'aria-hidden' ) === 'true' ) {
+		return false;
+	}
+	if ( el.offsetParent !== null || el.tagName === 'BUTTON' ) {
+		return true;
+	}
+	const style = el.ownerDocument?.defaultView?.getComputedStyle?.( el );
+	if ( style && ( style.display === 'none' || style.visibility === 'hidden' ) ) {
+		return false;
+	}
+	return true;
+}
+
+/**
+ * Recursively collect all focusable elements in DOM tree order,
+ * flattening slots and piercing child shadow roots.
+ */
+function collectFocusables( node: Node, result: HTMLElement[] ): void {
+	if ( node instanceof HTMLSlotElement ) {
+		const assigned = typeof node.assignedElements === 'function'
+			? node.assignedElements( { flatten: true } )
+			: [];
+		if ( assigned.length > 0 ) {
+			for ( const el of assigned ) {
+				collectFocusables( el, result );
+			}
+		} else {
+			for ( const child of Array.from( node.children ) ) {
+				collectFocusables( child, result );
+			}
+		}
+		return;
+	}
+
+	if ( ! ( node instanceof HTMLElement || node instanceof DocumentFragment ) ) {
+		return;
+	}
+
+	if ( node instanceof HTMLElement ) {
+		if ( ! isVisible( node ) ) {
+			return;
+		}
+
+		if ( node.shadowRoot ) {
+			const countBefore = result.length;
+			collectFocusables( node.shadowRoot, result );
+			if ( result.length === countBefore && node.matches( FOCUSABLE ) ) {
+				result.push( node );
+			}
+			return;
+		}
+
+		if ( node.matches( FOCUSABLE ) ) {
+			result.push( node );
+		}
+
+		for ( const child of Array.from( node.children ) ) {
+			collectFocusables( child, result );
+		}
+	} else if ( node instanceof DocumentFragment ) {
+		for ( const child of Array.from( node.children ) ) {
+			collectFocusables( child, result );
+		}
+	}
+}
 
 export class OsModal extends Component {
 	static props = [ 'open', 'title', 'size', 'mandatory' ] as const;
@@ -104,6 +195,7 @@ export class OsModal extends Component {
 	} as const;
 
 	private _prevFocus: HTMLElement | null = null;
+	private _focusTries = 0;
 
 	connectedCallback() {
 		super.connectedCallback();
@@ -116,14 +208,22 @@ export class OsModal extends Component {
 	disconnectedCallback() {
 		this.removeEventListener( 'keydown', this._onKey );
 		this.removeEventListener( 'click', this._onBackdrop );
+		if ( this._prevFocus ) {
+			try {
+				this._prevFocus.focus();
+			} catch ( e ) {
+				// Element may have unmounted while modal was open.
+			}
+			this._prevFocus = null;
+		}
 	}
 
 	attributeChangedCallback( name: string, oldValue: string | null, newValue: string | null ): void {
 		super.attributeChangedCallback?.( name, oldValue, newValue );
 		if ( name === 'open' ) {
 			if ( newValue !== null ) {
-				const doc = this.ownerDocument;
-				this._prevFocus = doc ? ( doc.activeElement as HTMLElement | null ) : null;
+				this._prevFocus = deepActiveElement( this.ownerDocument );
+				this._focusTries = 0;
 				queueMicrotask( () => this._focusFirst() );
 			} else if ( this._prevFocus ) {
 				try {
@@ -149,19 +249,29 @@ export class OsModal extends Component {
 		if ( ! root ) {
 			return [];
 		}
-		const slotted = Array.from( this.querySelectorAll< HTMLElement >( FOCUSABLE ) );
-		const inShadow = Array.from( root.querySelectorAll< HTMLElement >( FOCUSABLE ) );
-		return [ ...slotted, ...inShadow ].filter( ( el ) => el.offsetParent !== null || el.tagName === 'BUTTON' );
+		const result: HTMLElement[] = [];
+		collectFocusables( root, result );
+		return result;
 	}
 
 	private _focusFirst(): void {
+		if ( ! this.hasAttribute( 'open' ) ) {
+			return;
+		}
 		const f = this._focusables();
 		if ( f.length > 0 ) {
-			f[ 0 ].focus();
-		} else {
-			const inner = this.shadowRoot?.querySelector< HTMLElement >( '.dialog' );
-			inner?.focus?.();
+			const auto = f.find( ( el ) => el.hasAttribute( 'autofocus' ) );
+			const closeBtn = this.shadowRoot?.querySelector( 'button.close' );
+			const firstNonClose = f.find( ( el ) => el !== closeBtn );
+			( auto || firstNonClose || f[ 0 ] ).focus();
+			return;
 		}
+		if ( this._focusTries++ < 5 ) {
+			queueMicrotask( () => this._focusFirst() );
+			return;
+		}
+		const inner = this.shadowRoot?.querySelector< HTMLElement >( '.dialog' );
+		inner?.focus?.();
 	}
 
 	private _onKey = ( e: KeyboardEvent ): void => {
@@ -173,17 +283,18 @@ export class OsModal extends Component {
 		if ( e.key === 'Tab' ) {
 			const f = this._focusables();
 			if ( f.length === 0 ) {
+				e.preventDefault();
 				return;
 			}
 			const first = f[ 0 ];
 			const last = f[ f.length - 1 ];
-			const doc = this.ownerDocument;
-			const fallback = doc ? ( doc.activeElement as HTMLElement | null ) : null;
-			const active = ( e.composedPath()[ 0 ] as HTMLElement ) || fallback;
-			if ( e.shiftKey && active === first ) {
+			const active = eventSource( e ) || deepActiveElement( this.ownerDocument );
+			const loose = ! active || ! f.includes( active );
+
+			if ( e.shiftKey && ( loose || active === first ) ) {
 				e.preventDefault();
 				last.focus();
-			} else if ( ! e.shiftKey && active === last ) {
+			} else if ( ! e.shiftKey && ( loose || active === last ) ) {
 				e.preventDefault();
 				first.focus();
 			}

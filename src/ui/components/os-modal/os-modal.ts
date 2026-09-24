@@ -50,39 +50,23 @@ function eventSource( e: Event ): HTMLElement | null {
 }
 
 /**
- * Check if an element is visible in the layout (not display: none or visibility: hidden).
- */
-function isVisible( el: HTMLElement ): boolean {
-	if ( el.hidden || el.getAttribute( 'aria-hidden' ) === 'true' ) {
-		return false;
-	}
-	if ( el.offsetParent !== null || el.tagName === 'BUTTON' ) {
-		return true;
-	}
-	const style = el.ownerDocument?.defaultView?.getComputedStyle?.( el );
-	if ( style && ( style.display === 'none' || style.visibility === 'hidden' ) ) {
-		return false;
-	}
-	return true;
-}
-
-/**
  * Recursively collect all focusable elements in DOM tree order,
  * flattening slots and piercing child shadow roots.
+ *
+ * Subtree traversal stops only at elements explicitly hidden from the
+ * accessibility tree (`hidden` attribute or `aria-hidden="true"`).
+ * No `offsetParent` or layout check is applied — the modal guarantees
+ * its own slotted content is rendered, and the `offsetParent` trick is
+ * unreliable inside shadow roots and unavailable in jsdom.
  */
 function collectFocusables( node: Node, result: HTMLElement[] ): void {
 	if ( node instanceof HTMLSlotElement ) {
 		const assigned = typeof node.assignedElements === 'function'
 			? node.assignedElements( { flatten: true } )
 			: [];
-		if ( assigned.length > 0 ) {
-			for ( const el of assigned ) {
-				collectFocusables( el, result );
-			}
-		} else {
-			for ( const child of Array.from( node.children ) ) {
-				collectFocusables( child, result );
-			}
+		const children = assigned.length > 0 ? assigned : Array.from( node.children );
+		for ( const el of children ) {
+			collectFocusables( el, result );
 		}
 		return;
 	}
@@ -92,10 +76,14 @@ function collectFocusables( node: Node, result: HTMLElement[] ): void {
 	}
 
 	if ( node instanceof HTMLElement ) {
-		if ( ! isVisible( node ) ) {
+		// Prune entire subtrees that are hidden from the accessibility tree.
+		if ( node.hidden || node.getAttribute( 'aria-hidden' ) === 'true' ) {
 			return;
 		}
 
+		// Pierces the shadow boundary. If the shadow contributes no
+		// focusables but the host itself matches (e.g. a custom element
+		// with tabindex on the host), add the host as the entry point.
 		if ( node.shadowRoot ) {
 			const countBefore = result.length;
 			collectFocusables( node.shadowRoot, result );
@@ -108,14 +96,13 @@ function collectFocusables( node: Node, result: HTMLElement[] ): void {
 		if ( node.matches( FOCUSABLE ) ) {
 			result.push( node );
 		}
+		// Non-focusable HTMLElements fall through to child iteration below.
+	}
 
-		for ( const child of Array.from( node.children ) ) {
-			collectFocusables( child, result );
-		}
-	} else if ( node instanceof DocumentFragment ) {
-		for ( const child of Array.from( node.children ) ) {
-			collectFocusables( child, result );
-		}
+	// Both HTMLElement (light children) and DocumentFragment (shadow root)
+	// share the same child-iteration path.
+	for ( const child of Array.from( node.children ) ) {
+		collectFocusables( child, result );
 	}
 }
 
@@ -208,14 +195,6 @@ export class OsModal extends Component {
 	disconnectedCallback() {
 		this.removeEventListener( 'keydown', this._onKey );
 		this.removeEventListener( 'click', this._onBackdrop );
-		if ( this._prevFocus ) {
-			try {
-				this._prevFocus.focus();
-			} catch ( e ) {
-				// Element may have unmounted while modal was open.
-			}
-			this._prevFocus = null;
-		}
 	}
 
 	attributeChangedCallback( name: string, oldValue: string | null, newValue: string | null ): void {
@@ -305,9 +284,7 @@ export class OsModal extends Component {
 		if ( this.hasAttribute( 'mandatory' ) ) {
 			return;
 		}
-		const path = e.composedPath();
-		const original = path.length > 0 ? path[ 0 ] : e.target;
-		if ( original === this ) {
+		if ( eventSource( e ) === this ) {
 			this._cancel();
 		}
 	};

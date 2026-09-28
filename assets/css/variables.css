@@ -1903,6 +1903,8 @@ body.os-active {
 	 * the thing that gets perched on. Still under the dock (200).
 	 */
 	--os-z-desktop-name: 195;
+	/* Genie flight layer — above windows and shell captions, below the dock. */
+	--os-z-genie: 199;
 	/*
 	 * The notch — on the desk, under the windows (100 + stack index),
 	 * above the window-link wires (50) so a tie never draws across the

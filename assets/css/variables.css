@@ -1904,7 +1904,7 @@ body.os-active {
 	 */
 	--os-z-desktop-name: 195;
 	/* Genie flight layer — above windows and shell captions, below the dock. */
-	--os-z-genie: 199;
+	--os-z-genie: calc( var( --os-z-dock ) - 1 );
 	/*
 	 * The notch — on the desk, under the windows (100 + stack index),
 	 * above the window-link wires (50) so a tie never draws across the

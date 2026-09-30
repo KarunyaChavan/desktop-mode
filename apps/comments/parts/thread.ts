@@ -175,15 +175,37 @@ function messageActions( ctx: Ctx, ui: UiState, row: CommentRow ): TemplateResul
 	// first, then the authoring verbs, then the two destructive ones.
 	const items: TemplateResult[] = [];
 	if ( canModerate ) {
-		const approveAction: BulkAction = status === 'approved' ? 'unapprove' : 'approve';
-		items.push(
-			actionButton(
-				status === 'approved' ? __( 'Unapprove' ) : __( 'Approve' ),
-				'default',
-				busyOn( approveAction ),
-				() => void moderate( ctx, ui, row.id, approveAction ),
-			),
-		);
+		// Spam/trash replace Approve with their own restorative verb —
+		// wp_set_comment_status( 'approve' ) destroys _wp_trash_meta_status, bypassing moderation.
+		if ( 'spam' === status ) {
+			items.push(
+				actionButton(
+					__( 'Not Spam' ),
+					'default',
+					busyOn( 'unspam' ),
+					() => void moderate( ctx, ui, row.id, 'unspam' ),
+				),
+			);
+		} else if ( 'trash' === status ) {
+			items.push(
+				actionButton(
+					__( 'Restore' ),
+					'default',
+					busyOn( 'untrash' ),
+					() => void moderate( ctx, ui, row.id, 'untrash' ),
+				),
+			);
+		} else {
+			const approveAction: BulkAction = 'approved' === status ? 'unapprove' : 'approve';
+			items.push(
+				actionButton(
+					'approved' === status ? __( 'Unapprove' ) : __( 'Approve' ),
+					'default',
+					busyOn( approveAction ),
+					() => void moderate( ctx, ui, row.id, approveAction ),
+				),
+			);
+		}
 	}
 	// Replying posts a comment — gated on `edit_posts`, the cap the
 	// reply action and route enforce (the parent's post is re-checked

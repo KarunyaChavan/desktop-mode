@@ -199,7 +199,7 @@ function messageActions( ctx: Ctx, ui: UiState, row: CommentRow ): TemplateResul
 			const approveAction: BulkAction = 'approved' === status ? 'unapprove' : 'approve';
 			items.push(
 				actionButton(
-					'approved' === status ? __( 'Unapprove' ) : __( 'Approve' ),
+					'unapprove' === approveAction ? __( 'Unapprove' ) : __( 'Approve' ),
 					'default',
 					busyOn( approveAction ),
 					() => void moderate( ctx, ui, row.id, approveAction ),

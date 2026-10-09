@@ -146,9 +146,11 @@ export interface MenuRefreshDeps {
 	 * is only fully visible after a round-trip — the nav/shortcut
 	 * sync alone deliberately never mints synthetics for icon-backed
 	 * items. Called only when the payload's icon id-set actually
-	 * differs from the previous one. Optional, like its siblings.
+	 * differs from the previous one, with the ids that are new in
+	 * this payload so the caller can seat their freshly minted
+	 * placements on the visible desktop. Optional, like its siblings.
 	 */
-	refreshRootPlacements?: () => void;
+	refreshRootPlacements?: ( addedIconIds: string[] ) => void;
 	/**
 	 * Re-run the files-layer shortcut reconciliation
 	 * (`syncShortcutsWithVisibility`) against the freshly-applied dock
@@ -161,6 +163,13 @@ export interface MenuRefreshDeps {
 	 * keep working unchanged.
 	 */
 	syncShortcuts?: () => void;
+	/**
+	 * Re-seed open iframe windows' submenu tabs from the new dock items.
+	 * A window builds its tab strip once, at open; without this a theme
+	 * switch inside the Appearance window leaves it offering Menus and
+	 * Widgets the dock has already dropped.
+	 */
+	syncWindowSubmenus?: () => void;
 }
 
 /**
@@ -259,17 +268,25 @@ export function createApplyPayload(
 		applyDesktopIcons,
 		refreshRootPlacements,
 		syncShortcuts,
+		syncWindowSubmenus,
 		applyMultisite,
 	} = deps;
+
+	// Icons the bridge read off a window's admin menu (a computed
+	// `url( … )`), by dock item URL. The refresh probe renders no menu
+	// and sends the gear again, so a plugin activated live would lose
+	// its icon to the next probe until a full reload.
+	const harvestedIcons = new Map< string, string >();
+
+	/** An icon list's ids, in list order. */
+	const iconIds = (
+		list: ReadonlyArray< { id?: unknown } > | undefined,
+	): string[] => ( list ?? [] ).map( ( icon ) => String( icon?.id ?? '' ) );
 
 	/** Order-insensitive fingerprint of an icon list's ids. */
 	const iconIdSet = (
 		list: ReadonlyArray< { id?: unknown } > | undefined,
-	): string =>
-		( list ?? [] )
-			.map( ( icon ) => String( icon?.id ?? '' ) )
-			.sort()
-			.join( '\n' );
+	): string => iconIds( list ).sort().join( '\n' );
 
 	return function applyPayload( payload: MenuRefreshPayload ): void {
 		// Entries carry dependency handles; put the payloads back first.
@@ -314,6 +331,16 @@ export function createApplyPayload(
 		if ( ! Array.isArray( dockItems ) || dockItems.length === 0 ) {
 			return;
 		}
+		for ( const item of dockItems as Array< { url?: unknown; icon?: unknown } > ) {
+			if ( ! item || typeof item.url !== 'string' || typeof item.icon !== 'string' ) {
+				continue;
+			}
+			if ( item.icon.startsWith( 'url(' ) ) {
+				harvestedIcons.set( item.url, item.icon );
+			} else if ( item.icon === 'dashicons-admin-generic' && harvestedIcons.has( item.url ) ) {
+				item.icon = harvestedIcons.get( item.url );
+			}
+		}
 		const prevDockItems = config.dockItems;
 		applyDockItems( dockItems as DesktopConfig[ 'dockItems' ] );
 		config.dockItems = dockItems as DesktopConfig[ 'dockItems' ];
@@ -327,6 +354,7 @@ export function createApplyPayload(
 		// deactivation changes which
 		// items exist, without waiting for the next OS Settings change.
 		syncShortcuts?.();
+		syncWindowSubmenus?.();
 
 		// Native-window sync — server registry is the source of
 		// truth for plugin-owned native windows. Tiles added
@@ -546,7 +574,14 @@ export function createApplyPayload(
 				) !==
 				iconIdSet( desktopIcons as ReadonlyArray< { id?: unknown } > )
 			) {
-				refreshRootPlacements?.();
+				const prevIds = new Set(
+					iconIds( prevDesktopIcons as ReadonlyArray< { id?: unknown } > ),
+				);
+				refreshRootPlacements?.(
+					iconIds( desktopIcons as ReadonlyArray< { id?: unknown } > ).filter(
+						( id ) => id !== '' && ! prevIds.has( id ),
+					),
+				);
 			}
 			config.desktopIcons =
 				desktopIcons as DesktopConfig[ 'desktopIcons' ];

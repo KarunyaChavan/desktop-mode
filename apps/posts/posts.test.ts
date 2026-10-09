@@ -7,9 +7,10 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mockViewContext } from '../../src/app-runtime/testing';
+import { createHooksStub } from '../../tests/vitest/helpers/hooks-stub';
 import app from './posts.os';
 import { createPostsApp } from './parts/app';
-import { buildTitleCell } from './parts/cells/basic';
+import { buildAuthorCell, buildTitleCell } from './parts/cells/basic';
 import { buildCategoriesCell } from './parts/cells/categories';
 import type { CellEnv } from './parts/cells/env';
 import { buildParentCell, buildSlugCell, buildTemplateCell, refreshParentTitleRoster } from './parts/cells/pages';
@@ -592,7 +593,30 @@ describe( 'the registries', () => {
 		expect( trash ).toHaveBeenCalledWith( [ 1 ] );
 		expect( clearSelection ).toHaveBeenCalled();
 		expect( result ).toBe( false );
-		expect( resolveBulkActions( [ action ] ) ).toEqual( [ action ] );
+		expect( resolveBulkActions( [ action ], 'posts' ) ).toEqual( [ action ] );
+	} );
+
+	it( 'hands the bulk-actions and columns filters the window mode, and a one-arg callback still works (#854)', () => {
+		// The real bus shape: `applyFilters( name, value, ...args )`, every
+		// callback sees the extra args — what `wp.hooks` does.
+		const hooks = createHooksStub();
+		window.wp!.hooks = hooks;
+		const seen: unknown[] = [];
+		hooks.addFilter( 'openstation.postsWindow.bulkActions', 'test', ( actions, ctx ) => {
+			seen.push( ctx );
+			return ( ctx as { mode: string } ).mode === 'pages' ? [] : actions;
+		} );
+		hooks.addFilter( 'openstation.postsWindow.bulkActions', 'test', ( actions ) => actions );
+		hooks.addFilter( 'openstation.postsWindow.columns', 'test', ( cols, ctx ) => {
+			seen.push( ctx );
+			return cols;
+		} );
+		const [ action ] = defaultBulkActions( 'posts', vi.fn( async () => true ) );
+		expect( resolveBulkActions( [ action ], 'posts' ) ).toEqual( [ action ] );
+		expect( resolveBulkActions( [ action ], 'pages' ) ).toEqual( [] );
+		buildAllColumns( cellEnv(), new Map() );
+		buildAllColumns( cellEnv( { extra: { mode: 'pages' } } ), new Map() );
+		expect( seen ).toEqual( [ { mode: 'posts' }, { mode: 'pages' }, { mode: 'posts' }, { mode: 'pages' } ] );
 	} );
 
 	it( 'hides user-hidden columns but never the title, narrows to the phone set, and lists the togglable ones', () => {
@@ -658,6 +682,14 @@ describe( 'the cells', () => {
 		const draft = buildTitleCell( row( 6, { status: 'draft', link: 'http://x.test/d' } ), env );
 		expect( pills( draft ) ).toEqual( [ 'Posts page', 'Draft' ] );
 		expect( draft.querySelector( 'a[target="_blank"]' ) ).toBeNull();
+	} );
+
+	it( 'the author cell paints the name as text, and nothing for an author core could not embed', () => {
+		const named = buildAuthorCell( row( 1, { _embedded: { author: [ { id: 2, name: 'Q&amp;A Helper' } ] } } ) );
+		expect( named.textContent ).toBe( 'Q&A Helper' );
+		// A deleted author embeds as core's error object, which has no name.
+		const orphan = buildAuthorCell( row( 1, { _embedded: { author: [ { code: 'rest_user_invalid_id' } as never ] } } ) );
+		expect( orphan.textContent ).toBe( '' );
 	} );
 
 	it( 'the pages cells read the template map and the parent roster', () => {

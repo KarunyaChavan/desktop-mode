@@ -189,6 +189,24 @@ describe( 'os-modal', () => {
 		expect( opener.ownerDocument.activeElement ).toBe( opener );
 	} );
 
+	test( 'a control hidden only by CSS is left out, so Tab still wraps from the last visible one', async () => {
+		const el = mount(
+			{ open: '', title: 'Settings' },
+			'<button id="shown">Shown</button><button id="css-hidden">Desktop only</button>',
+		);
+		// jsdom has no layout; stand in for a breakpoint rule hiding it.
+		( el.querySelector( '#css-hidden' ) as HTMLElement & { checkVisibility: () => boolean } ).checkVisibility = () => false;
+		await tick();
+
+		const shown = el.querySelector< HTMLButtonElement >( '#shown' )!;
+		const closeBtn = el.shadowRoot?.querySelector< HTMLButtonElement >( 'button.close' );
+		shown.focus();
+		shown.dispatchEvent(
+			new KeyboardEvent( 'keydown', { key: 'Tab', bubbles: true, composed: true, cancelable: true } ),
+		);
+		expect( el.shadowRoot?.activeElement ).toBe( closeBtn );
+	} );
+
 	test( 'focus trap works when modal has only close button', async () => {
 		const el = mount( { open: '', title: 'Empty Info' }, '<p>Just text</p>' );
 		await tick();

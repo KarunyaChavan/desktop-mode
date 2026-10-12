@@ -50,14 +50,25 @@ function eventSource( e: Event ): HTMLElement | null {
 }
 
 /**
+ * Whether the element is rendered. `checkVisibility()` sees CSS hiding
+ * (a breakpoint-only button) across shadow roots, where `offsetParent`
+ * cannot. Engines without it (jsdom) count everything as rendered.
+ *
+ * Only asked of a candidate, never used to prune: a slot or a
+ * `display: contents` host reports invisible while its content shows.
+ */
+function isRendered( el: HTMLElement ): boolean {
+	return typeof el.checkVisibility !== 'function' || el.checkVisibility();
+}
+
+/**
  * Recursively collect all focusable elements in DOM tree order,
  * flattening slots and piercing child shadow roots.
  *
  * Subtree traversal stops only at elements explicitly hidden from the
  * accessibility tree (`hidden` attribute or `aria-hidden="true"`).
- * No `offsetParent` or layout check is applied — the modal guarantees
- * its own slotted content is rendered, and the `offsetParent` trick is
- * unreliable inside shadow roots and unavailable in jsdom.
+ * A candidate hidden only by CSS is left out by {@link isRendered}, so
+ * it can never be the first or last stop the Tab wrap aims at.
  */
 function collectFocusables( node: Node, result: HTMLElement[] ): void {
 	if ( node instanceof HTMLSlotElement ) {
@@ -87,13 +98,13 @@ function collectFocusables( node: Node, result: HTMLElement[] ): void {
 		if ( node.shadowRoot ) {
 			const countBefore = result.length;
 			collectFocusables( node.shadowRoot, result );
-			if ( result.length === countBefore && node.matches( FOCUSABLE ) ) {
+			if ( result.length === countBefore && node.matches( FOCUSABLE ) && isRendered( node ) ) {
 				result.push( node );
 			}
 			return;
 		}
 
-		if ( node.matches( FOCUSABLE ) ) {
+		if ( node.matches( FOCUSABLE ) && isRendered( node ) ) {
 			result.push( node );
 		}
 		// Non-focusable HTMLElements fall through to child iteration below.

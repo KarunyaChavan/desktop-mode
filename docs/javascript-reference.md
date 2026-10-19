@@ -1264,8 +1264,8 @@ interface Window {
 
     // Lifecycle
     close(): void;
-    minimize(): void;
-    restore(): void;
+    minimize( options?: { flightLayer?: boolean } ): void;
+    restore( options?: { flightLayer?: boolean } ): void;
     maximize(): void;
     detach(): void;          // pop into a new browser tab (iframe windows only)
 
@@ -1287,6 +1287,8 @@ const win = wp.os.windowManager.getById( 'edit-php' );
 // first attempt before the predicates landed).
 if ( win && ! win.isMinimized() ) win.minimize();
 ```
+
+While a minimize or restore animation runs, the window flies on the `--os-z-genie` layer, above every other window and just below the dock, so a window focused in its place cannot cover it mid-flight. A fullscreen window keeps its own layer instead. Pass `{ flightLayer: false }` when you minimize or restore several windows at once: they would all share that one layer and lose their stacking order, while without it each keeps its own `z-index` for the whole animation. The built-in batch paths (Show Desktop and its undo, focused mode, cascade and tile) already do this.
 
 #### `Window.send( channel, payload? )` — Stable
 

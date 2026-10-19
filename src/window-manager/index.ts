@@ -1534,7 +1534,7 @@ export class WindowManager {
 					other.state !== 'minimized' &&
 					( other.config.desktopId || this._activeDesktopId ) === win.config.desktopId
 				) {
-					other.minimize();
+					other.minimize( { flightLayer: false } );
 				}
 			}
 		}
@@ -2474,7 +2474,7 @@ export class WindowManager {
 				continue;
 			}
 			try {
-				win.minimize();
+				win.minimize( { flightLayer: false } );
 				minimized.push( win );
 			} catch ( err ) {
 				if ( typeof console !== 'undefined' ) {
@@ -2518,7 +2518,7 @@ export class WindowManager {
 				continue;
 			}
 			try {
-				win.restore();
+				win.restore( { flightLayer: false } );
 			} catch ( err ) {
 				if ( typeof console !== 'undefined' ) {
 					console.error(
@@ -2553,7 +2553,7 @@ export class WindowManager {
 		if ( allMinimized ) {
 			for ( const win of all ) {
 				try {
-					win.restore();
+					win.restore( { flightLayer: false } );
 				} catch {
 					// see notes in restoreFrom.
 				}

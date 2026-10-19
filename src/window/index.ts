@@ -2283,7 +2283,17 @@ export class Window {
 		);
 	}
 
-	public minimize(): void {
+	/**
+	 * Minimize the window to the dock.
+	 *
+	 * @param options             Flight options.
+	 * @param options.flightLayer When true (the default), elevates the window
+	 *                            to `--os-z-genie` during animation so it remains
+	 *                            above windows focused in response. Pass false for
+	 *                            batch flights (e.g. Show Desktop) so concurrent
+	 *                            animations preserve their existing stack order.
+	 */
+	public minimize( options?: { flightLayer?: boolean } ): void {
 		// Re-entering minimize from minimize would clobber the saved
 		// underlying state, leaking the 'minimized' value into the
 		// restore target.
@@ -2314,7 +2324,9 @@ export class Window {
 				// class on finish.
 				this.state = 'minimized';
 				this.element.classList.add( 'os-window--minimizing' );
-				this.element.classList.add( 'os-window--genie-flight' );
+				if ( options?.flightLayer ?? true ) {
+					this.element.classList.add( 'os-window--genie-flight' );
+				}
 				this.element.style.willChange = 'transform';
 
 				const { dx, dy, scale } = this._buildGenieTransform( startRect, targetRect, 0.22 );
@@ -2416,7 +2428,16 @@ export class Window {
 	 * (still on the element from before minimize) leaves the visual
 	 * out of sync with `this.state`.
 	 */
-	public restore(): void {
+	/**
+	 * Restore the window from the dock.
+	 *
+	 * @param options             Flight options.
+	 * @param options.flightLayer When true (the default), elevates the window
+	 *                            to `--os-z-genie` during animation. Pass false for
+	 *                            batch flights (e.g. restore from Show Desktop)
+	 *                            so concurrent animations preserve stack order.
+	 */
+	public restore( options?: { flightLayer?: boolean } ): void {
 		// Cancel any in-flight genie animations.
 		this._cancelGenieAnimation( 'minimize' );
 		this._cancelGenieAnimation( 'restore' );
@@ -2437,7 +2458,9 @@ export class Window {
 			// the flight; the visual is still at the dock via WAAPI.
 			this.element.classList.remove( 'os-window--minimized' );
 			this.element.classList.add( 'os-window--restoring' );
-			this.element.classList.add( 'os-window--genie-flight' );
+			if ( options?.flightLayer ?? true ) {
+				this.element.classList.add( 'os-window--genie-flight' );
+			}
 			this.element.style.willChange = 'transform';
 
 			const nextState = this._stateBeforeMinimize ?? 'normal';

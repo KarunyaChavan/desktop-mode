@@ -400,7 +400,7 @@
 }
 
 /* Keep the flying window above ordinary restacks until WAAPI finishes. */
-.os-window--genie-flight {
+.os-window--genie-flight:not( .os-window--fullscreen ) {
 	z-index: var( --os-z-genie, 199 ) !important;
 }
 

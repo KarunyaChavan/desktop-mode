@@ -4,7 +4,7 @@ Tags: admin dashboard, notes, sticky notes, dashboard notes, custom dashboard
 Requires at least: 6.0
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 1.1.15
+Stable tag: 1.1.16
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -212,6 +212,12 @@ The **Inkfall** game's word list (`assets/games/inkfall/words.txt`) is generated
 * **[LDNOOBW English list](https://github.com/LDNOOBW/List-of-Dirty-Naughty-Obscene-and-Otherwise-Bad-Words)** (CC-BY 4.0) — used as an exclusion filter.
 
 == Changelog ==
+
+= 1.1.16 =
+* Add stack-on-phone attribute to os-table
+* Readme: Refresh the description and point questions to the support forum
+* Trash: Show progress while posts move to the trash
+* Switch to list tab on embedded editor back navigation
 
 = 1.1.15 =
 * Plugin: Point the Plugin URI at openstation.me

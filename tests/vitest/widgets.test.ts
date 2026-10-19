@@ -438,6 +438,49 @@ describe( 'widgets/layer', () => {
 		layer.disposeAll();
 	} );
 
+	test( 'a resize clamps floating cards on screen only, so widening again restores them', async () => {
+		const registry = await import( '../../src/widgets/registry' );
+		const { WidgetLayer } = await import( '../../src/widgets/layer' );
+		registry.register( {
+			id: 'mov',
+			label: 'Mov',
+			description: '',
+			icon: 'dashicons-star-filled',
+			movable: true,
+			mount: () => () => undefined,
+		} );
+		window.localStorage.setItem( 'desktop-mode-widgets', '["mov"]' );
+		window.localStorage.setItem(
+			'desktop-mode-widgets-geometry',
+			JSON.stringify( { mov: { x: 100, y: 100, width: 240, height: 120 } } ),
+		);
+		window.localStorage.setItem( 'openstation-widgets-geometry-frame', JSON.stringify( { width: 1000, height: 800 } ) );
+		const size = { width: 1000, height: 800 };
+		const body = document.body;
+		const widthSpy = vi.spyOn( body, 'clientWidth', 'get' ).mockImplementation( () => size.width );
+		const heightSpy = vi.spyOn( body, 'clientHeight', 'get' ).mockImplementation( () => size.height );
+		const layer = new WidgetLayer( host, '' );
+		layer.hydrate();
+		const reflow = () => ( layer as unknown as { reflowToHost(): void } ).reflowToHost();
+		const card = body.querySelector< HTMLElement >( '.os-widgets__card' )!;
+
+		// Too narrow for the card: it is pulled in on screen…
+		size.width = 300;
+		reflow();
+		expect( parseFloat( card.style.left ) ).toBeLessThan( 100 );
+		// …but the stored arrangement keeps where the user put it.
+		expect( JSON.parse( window.localStorage.getItem( 'desktop-mode-widgets-geometry' )! ).mov.x ).toBe( 100 );
+
+		size.width = 1000;
+		reflow();
+		expect( card.style.left ).toBe( '100px' );
+
+		layer.disposeAll();
+		widthSpy.mockRestore();
+		heightSpy.mockRestore();
+		window.localStorage.removeItem( 'openstation-widgets-geometry-frame' );
+	} );
+
 	test( 'liberating a docked widget preserves its CURRENT rendered size, not the registered default', async () => {
 		// Reproduces the user-reported "Heartbeat widget loses its
 		// 88 px compact height on drag-out" bug. The previous
@@ -523,6 +566,127 @@ describe( 'widgets/layer', () => {
 			window.localStorage.getItem( 'desktop-mode-widgets-geometry' ) || '{}',
 		);
 		expect( geom[ 'compact-mov' ].height ).toBe( 88 );
+
+		layer.disposeAll();
+	} );
+
+	test( 'liberating a docked widget taller than the work area fits it inside, above the dock', async () => {
+		const registry = await import( '../../src/widgets/registry' );
+		const { WidgetLayer } = await import( '../../src/widgets/layer' );
+		registry.register( {
+			id: 'tall-mov',
+			label: 'Tall movable',
+			description: '',
+			icon: 'dashicons-star-filled',
+			movable: true,
+			mount: () => () => undefined,
+		} );
+		window.localStorage.setItem( 'desktop-mode-widgets', '["tall-mov"]' );
+		Object.defineProperty( document.body, 'clientWidth', { value: 1024, configurable: true } );
+		Object.defineProperty( document.body, 'clientHeight', { value: 768, configurable: true } );
+
+		try {
+			const layer = new WidgetLayer( host, '' );
+			layer.hydrate();
+			const card = host.querySelector< HTMLElement >( '.os-widgets__card' )!;
+			// A docked card sizes to its content: forty rows stand far
+			// taller than the 768 px desktop.
+			card.getBoundingClientRect = (): DOMRect => {
+				const height = parseFloat( card.style.height ) || 1040;
+				return {
+					x: 700, y: 120, width: 310, height,
+					top: 120, left: 700, right: 1010, bottom: 120 + height,
+					toJSON: () => ( {} ),
+				};
+			};
+			Object.defineProperty( card, 'offsetWidth', { configurable: true, get: () => 310 } );
+			Object.defineProperty( card, 'offsetHeight', { configurable: true, get: () => parseFloat( card.style.height ) || 1040 } );
+
+			const ptr = ( type: string, x: number, y: number ): Event => {
+				const e = new Event( type, { bubbles: true } );
+				Object.defineProperty( e, 'pointerId', { value: 1 } );
+				Object.defineProperty( e, 'button', { value: 0 } );
+				Object.defineProperty( e, 'clientX', { value: x } );
+				Object.defineProperty( e, 'clientY', { value: y } );
+				return e;
+			};
+			const chrome = card.querySelector< HTMLElement >( '.os-widgets__chrome' )!;
+			( chrome as unknown as { setPointerCapture: () => void } ).setPointerCapture = () => undefined;
+			( chrome as unknown as { releasePointerCapture: () => void } ).releasePointerCapture = () => undefined;
+			chrome.dispatchEvent( ptr( 'pointerdown', 720, 130 ) );
+			chrome.dispatchEvent( ptr( 'pointermove', 400, 200 ) );
+			chrome.dispatchEvent( ptr( 'pointerup', 400, 200 ) );
+
+			// The whole card, bottom edge included, sits inside the work
+			// area with the 20 px of air the drag clamp keeps.
+			const top = parseFloat( card.style.top );
+			const height = parseFloat( card.style.height );
+			expect( top ).toBeGreaterThanOrEqual( 20 );
+			expect( top + height ).toBeLessThanOrEqual( 768 - 20 );
+			const geom = JSON.parse(
+				window.localStorage.getItem( 'desktop-mode-widgets-geometry' ) || '{}',
+			);
+			expect( geom[ 'tall-mov' ].height ).toBe( height );
+
+			layer.disposeAll();
+		} finally {
+			delete ( document.body as unknown as Record< string, unknown > ).clientWidth;
+			delete ( document.body as unknown as Record< string, unknown > ).clientHeight;
+		}
+	} );
+
+	test( 'dragging a docked widget out ends the drag on release, although the re-parent drops pointer capture', async () => {
+		const registry = await import( '../../src/widgets/registry' );
+		const { WidgetLayer } = await import( '../../src/widgets/layer' );
+		registry.register( {
+			id: 'liberate-capture',
+			label: 'Liberate capture',
+			description: '',
+			icon: 'dashicons-star-filled',
+			movable: true,
+			mount: () => () => undefined,
+		} );
+		window.localStorage.setItem( 'desktop-mode-widgets', '["liberate-capture"]' );
+
+		const layer = new WidgetLayer( host, '' );
+		layer.hydrate();
+		const card = host.querySelector< HTMLElement >( '.os-widgets__card' )!;
+		const chrome = card.querySelector< HTMLElement >( '.os-widgets__chrome' )!;
+
+		// A browser releases pointer capture when the capturing element
+		// leaves the document, which is what the liberate re-parent does,
+		// and then sends the rest of the gesture to whatever holds capture,
+		// or to the element under the cursor (here: the desktop host).
+		let captured: Element | null = null;
+		( chrome as unknown as { setPointerCapture: () => void } ).setPointerCapture = () => {
+			captured = chrome;
+		};
+		( chrome as unknown as { releasePointerCapture: () => void } ).releasePointerCapture = () => {
+			captured = null;
+		};
+		const appendChild = Node.prototype.appendChild;
+		const spy = vi.spyOn( Node.prototype, 'appendChild' ).mockImplementation( function ( this: Node, node ) {
+			if ( captured && node.contains( captured ) ) {
+				captured = null;
+			}
+			return appendChild.call( this, node );
+		} as typeof Node.prototype.appendChild );
+
+		const ptr = ( type: string, x: number, y: number ): Event => {
+			const e = new Event( type, { bubbles: true } );
+			Object.defineProperty( e, 'pointerId', { value: 1 } );
+			Object.defineProperty( e, 'button', { value: 0 } );
+			Object.defineProperty( e, 'clientX', { value: x } );
+			Object.defineProperty( e, 'clientY', { value: y } );
+			return e;
+		};
+		chrome.dispatchEvent( ptr( 'pointerdown', 110, 210 ) );
+		chrome.dispatchEvent( ptr( 'pointermove', 200, 300 ) );
+		spy.mockRestore();
+		( captured ?? host ).dispatchEvent( ptr( 'pointerup', 200, 300 ) );
+
+		expect( card.classList.contains( 'os-widgets__card--floating' ) ).toBe( true );
+		expect( card.classList.contains( 'os-widgets__card--dragging' ) ).toBe( false );
 
 		layer.disposeAll();
 	} );
@@ -1371,6 +1535,297 @@ describe( 'widgets/layer', () => {
 		expect( card.style.top ).toBe( '620px' );
 
 		layer.disposeAll();
+	} );
+
+	/*
+	 * `fitContent`: the card grows to its content, never persists the
+	 * grown height. jsdom lays nothing out, so the stubs below play the
+	 * browser: the body is the card minus a 40 px chrome band and
+	 * scrolls whatever content does not fit in it.
+	 */
+	const mountFitCards = async (
+		defs: Array< { id: string; fitContent?: boolean; maxHeight?: number } >,
+	) => {
+		const roCallbacks: Array< () => void > = [];
+		class FakeResizeObserver {
+			constructor( cb: () => void ) {
+				roCallbacks.push( cb );
+			}
+			observe(): void {}
+			unobserve(): void {}
+			disconnect(): void {}
+		}
+		vi.stubGlobal( 'ResizeObserver', FakeResizeObserver );
+		// Runs the frame at once; returning 0 tells the caller no
+		// frame is still pending.
+		vi.stubGlobal( 'requestAnimationFrame', ( cb: FrameRequestCallback ) => {
+			cb( 0 );
+			return 0;
+		} );
+		const registry = await import( '../../src/widgets/registry' );
+		const { WidgetLayer } = await import( '../../src/widgets/layer' );
+		const geometry: Record< string, unknown > = {};
+		for ( const def of defs ) {
+			registry.register( {
+				label: def.id,
+				description: '',
+				icon: 'dashicons-star-filled',
+				movable: true,
+				resizable: true,
+				mount: () => () => undefined,
+				...def,
+			} );
+			geometry[ def.id ] = { x: 100, y: 100, width: 240, height: 120 };
+		}
+		window.localStorage.setItem(
+			'desktop-mode-widgets',
+			JSON.stringify( defs.map( ( d ) => d.id ) ),
+		);
+		window.localStorage.setItem(
+			'desktop-mode-widgets-geometry',
+			JSON.stringify( geometry ),
+		);
+		document.body.getBoundingClientRect = (): DOMRect => ( {
+			x: 0, y: 0, width: 1024, height: 768,
+			top: 0, left: 0, right: 1024, bottom: 768,
+			toJSON: () => ( {} ),
+		} );
+		const layer = new WidgetLayer( host, '' );
+		layer.hydrate();
+
+		const content: Record< string, number > = {};
+		const cards: Record< string, HTMLElement > = {};
+		for ( const { id } of defs ) {
+			const card = document.body.querySelector< HTMLElement >(
+				`[data-widget-id="${ id }"]`,
+			)!;
+			const body = card.querySelector< HTMLElement >(
+				'.os-widgets__card-body',
+			)!;
+			const h = (): number => parseFloat( card.style.height ) || 0;
+			content[ id ] = 0;
+			cards[ id ] = card;
+			Object.defineProperty( card, 'offsetWidth', {
+				configurable: true,
+				get: () => 240,
+			} );
+			Object.defineProperty( card, 'offsetHeight', {
+				configurable: true,
+				get: h,
+			} );
+			card.getBoundingClientRect = (): DOMRect => {
+				const top = parseFloat( card.style.top ) || 0;
+				const left = parseFloat( card.style.left ) || 0;
+				return {
+					x: left, y: top, width: 240, height: h(),
+					top, left, right: left + 240, bottom: top + h(),
+					toJSON: () => ( {} ),
+				};
+			};
+			Object.defineProperty( body, 'clientHeight', {
+				configurable: true,
+				get: () => h() - 40,
+			} );
+			Object.defineProperty( body, 'scrollHeight', {
+				configurable: true,
+				get: () => Math.max( content[ id ], h() - 40 ),
+			} );
+		}
+		// Content changed: fire every observer, the way a real layout
+		// would after the body's children resized.
+		const settle = async (): Promise< void > => {
+			roCallbacks.forEach( ( cb ) => cb() );
+			await new Promise( ( r ) => setTimeout( r, 0 ) );
+		};
+		const savedHeight = ( id: string ): number =>
+			JSON.parse(
+				window.localStorage.getItem( 'desktop-mode-widgets-geometry' ) ||
+					'{}',
+			)[ id ]?.height;
+		return { layer, cards, content, settle, savedHeight };
+	};
+
+	const ptr = ( type: string, x: number, y: number ): Event => {
+		const e = new Event( type, { bubbles: true } );
+		Object.defineProperty( e, 'pointerId', { value: 1 } );
+		Object.defineProperty( e, 'button', { value: 0 } );
+		Object.defineProperty( e, 'clientX', { value: x } );
+		Object.defineProperty( e, 'clientY', { value: y } );
+		return e;
+	};
+	const capture = ( el: HTMLElement ): void => {
+		( el as unknown as { setPointerCapture: () => void } ).setPointerCapture = () => undefined;
+		( el as unknown as { releasePointerCapture: () => void } ).releasePointerCapture = () => undefined;
+	};
+
+	test( 'a fitContent card grows to its content, within its caps, and shrinks back to the user height', async () => {
+		const mounted = mountFitCards( [
+			{ id: 'fit', fitContent: true, maxHeight: 600 },
+			{ id: 'plain' },
+		] );
+		try {
+			const { cards, content, settle, savedHeight } = await mounted;
+			const fit = cards.fit;
+
+			// 200 px of content in an 80 px body: grows by the 120 px
+			// that scrolled, and the saved size stays the user's.
+			content.fit = 200;
+			content.plain = 200;
+			await settle();
+			expect( fit.style.height ).toBe( '240px' );
+			expect( savedHeight( 'fit' ) ).toBe( 120 );
+			// Without the opt-in, the content keeps scrolling.
+			expect( cards.plain.style.height ).toBe( '120px' );
+
+			// Capped at maxHeight...
+			content.fit = 2000;
+			await settle();
+			expect( fit.style.height ).toBe( '600px' );
+
+			// ...and at the work-area bottom once that is nearer: the
+			// layer re-placing the card (as reclamp does) refits it.
+			// 768 - 500 - 20 px of margin. No observer fires here: the
+			// style write alone is the trigger.
+			fit.style.top = '500px';
+			await new Promise( ( r ) => setTimeout( r, 0 ) );
+			expect( fit.style.height ).toBe( '248px' );
+
+			// Content shrinks: back down, but never below the floor.
+			content.fit = 10;
+			await settle();
+			expect( fit.style.height ).toBe( '120px' );
+
+		} finally {
+			( await mounted ).layer.disposeAll();
+			vi.unstubAllGlobals();
+			delete ( document.body as { getBoundingClientRect?: unknown } ).getBoundingClientRect;
+		}
+	} );
+
+	test( 'a fitContent card persists the user height, not the grown one, and a resize sets a new floor', async () => {
+		const mounted = mountFitCards( [ { id: 'fit', fitContent: true } ] );
+		try {
+			const { cards, content, settle, savedHeight } = await mounted;
+			const fit = cards.fit;
+			content.fit = 200;
+			await settle();
+			expect( fit.style.height ).toBe( '240px' );
+
+			// A drag after growth saves the floor, not the drawn 240.
+			const chrome = fit.querySelector< HTMLElement >(
+				'.os-widgets__chrome',
+			)!;
+			capture( chrome );
+			chrome.dispatchEvent( ptr( 'pointerdown', 0, 0 ) );
+			chrome.dispatchEvent( ptr( 'pointermove', 37, -23 ) );
+			chrome.dispatchEvent( ptr( 'pointerup', 37, -23 ) );
+			await settle();
+			expect( fit.style.top ).toBe( '80px' );
+			expect( savedHeight( 'fit' ) ).toBe( 120 );
+			expect( fit.style.height ).toBe( '240px' );
+
+			// Widening a grown card leaves its height alone: the floor
+			// stays 120, saved and drawn once the content shrinks.
+			const east = fit.querySelector< HTMLElement >(
+				'.os-widgets__resize--e',
+			)!;
+			capture( east );
+			east.dispatchEvent( ptr( 'pointerdown', 337, 200 ) );
+			east.dispatchEvent( ptr( 'pointermove', 377, 200 ) );
+			east.dispatchEvent( ptr( 'pointerup', 377, 200 ) );
+			await settle();
+			expect( savedHeight( 'fit' ) ).toBe( 120 );
+			content.fit = 10;
+			await settle();
+			expect( fit.style.height ).toBe( '120px' );
+			content.fit = 200;
+			await settle();
+			expect( fit.style.height ).toBe( '240px' );
+
+			// A resize from the grown size: what the user drew is the
+			// new floor, saved as is, and the card stays at it when
+			// the content no longer needs the room.
+			const handle = fit.querySelector< HTMLElement >(
+				'.os-widgets__resize--s',
+			)!;
+			capture( handle );
+			handle.dispatchEvent( ptr( 'pointerdown', 200, 320 ) );
+			handle.dispatchEvent( ptr( 'pointermove', 200, 357 ) );
+			handle.dispatchEvent( ptr( 'pointerup', 200, 357 ) );
+			await settle();
+			expect( fit.style.height ).toBe( '280px' );
+			expect( savedHeight( 'fit' ) ).toBe( 280 );
+			content.fit = 10;
+			await settle();
+			expect( fit.style.height ).toBe( '280px' );
+
+		} finally {
+			( await mounted ).layer.disposeAll();
+			vi.unstubAllGlobals();
+			delete ( document.body as { getBoundingClientRect?: unknown } ).getBoundingClientRect;
+		}
+	} );
+
+	test( 'a drag or a resize saves the size it was given, not the size plus the card border', async () => {
+		// The card is content-box with a 1 px border, so the browser
+		// measures it 2 px larger than its inline width and height.
+		const css = document.createElement( 'style' );
+		css.textContent =
+			'.os-widgets__card { box-sizing: content-box; border: 1px solid; }';
+		document.head.appendChild( css );
+		const mounted = mountFitCards( [ { id: 'plain' } ] );
+		try {
+			const { cards, settle } = await mounted;
+			const card = cards.plain;
+			const w = (): number => ( parseFloat( card.style.width ) || 0 ) + 2;
+			const h = (): number => ( parseFloat( card.style.height ) || 0 ) + 2;
+			Object.defineProperty( card, 'offsetWidth', { configurable: true, get: w } );
+			Object.defineProperty( card, 'offsetHeight', { configurable: true, get: h } );
+			card.getBoundingClientRect = (): DOMRect => {
+				const top = parseFloat( card.style.top ) || 0;
+				const left = parseFloat( card.style.left ) || 0;
+				return {
+					x: left, y: top, width: w(), height: h(),
+					top, left, right: left + w(), bottom: top + h(),
+					toJSON: () => ( {} ),
+				};
+			};
+			const saved = (): { width: number; height: number } => {
+				const g = JSON.parse(
+					window.localStorage.getItem( 'desktop-mode-widgets-geometry' ) ||
+						'{}',
+				).plain;
+				return { width: g.width, height: g.height };
+			};
+
+			// Save, apply, save: two drags in a row keep the stored size.
+			const chrome = card.querySelector< HTMLElement >( '.os-widgets__chrome' )!;
+			capture( chrome );
+			for ( const dx of [ 40, 80 ] ) {
+				chrome.dispatchEvent( ptr( 'pointerdown', 0, 0 ) );
+				chrome.dispatchEvent( ptr( 'pointermove', dx, 0 ) );
+				chrome.dispatchEvent( ptr( 'pointerup', dx, 0 ) );
+				await settle();
+				expect( saved() ).toEqual( { width: 240, height: 120 } );
+				expect( card.style.width ).toBe( '240px' );
+			}
+
+			// A resize that ends where it started changes nothing.
+			const corner = card.querySelector< HTMLElement >( '.os-widgets__resize--se' )!;
+			capture( corner );
+			corner.dispatchEvent( ptr( 'pointerdown', 300, 300 ) );
+			corner.dispatchEvent( ptr( 'pointermove', 300, 300 ) );
+			corner.dispatchEvent( ptr( 'pointerup', 300, 300 ) );
+			await settle();
+			expect( saved() ).toEqual( { width: 240, height: 120 } );
+			expect( card.style.width ).toBe( '240px' );
+			expect( card.style.height ).toBe( '120px' );
+		} finally {
+			css.remove();
+			( await mounted ).layer.disposeAll();
+			vi.unstubAllGlobals();
+			delete ( document.body as { getBoundingClientRect?: unknown } ).getBoundingClientRect;
+		}
 	} );
 
 	/*

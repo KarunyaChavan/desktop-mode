@@ -351,6 +351,15 @@ const TARGETS = {
 		fileBase: 'apps/user-profile',
 		iifeName: 'openStationUserProfile',
 	},
+	// `<os-tribute-heart>` — the heart in Station Home's "Thank you,
+	// Eric" that opens into a heart around the name on hover. A
+	// companion script of the Station Home window
+	// (`apps/station-home/parts/tribute-script.php`).
+	'station-home-tribute': {
+		entry:    'apps/station-home/tribute/index.ts',
+		fileBase: 'apps/station-home-tribute',
+		iifeName: 'openStationStationHomeTribute',
+	},
 	// Games hub — launcher grid + scoreboard + challenges client.
 	// Registers a render callback on
 	// `window.openStationNativeWindows['desktop-mode-games']`; the
@@ -435,6 +444,18 @@ const TARGETS = {
 		fileBase: 'snow-wallpaper',
 		iifeName: 'openStationSnowWallpaper',
 	},
+	// Pulse Monitor — a PixiJS ECG trace that beats for every request
+	// and shell signal, with the rhythm doubling as a site-health
+	// diagnosis. ONE bundle for both faces: it publishes the canvas
+	// wallpaper (`window.openStationWallpapers['wp-pulse']`) and the
+	// widget (`window.openStationWidgets['desktop-mode/pulse']`), so
+	// the engine, the signal taps and the Heartbeat feed load once
+	// whichever face (or both) is on the desk.
+	'pulse-monitor': {
+		entry:    'src/plugins/pulse-monitor/index.ts',
+		fileBase: 'pulse-monitor',
+		iifeName: 'openStationPulseMonitor',
+	},
 	// Mio — the desk companion: a PixiJS soft-body blob with a
 	// chroma neon outline that floats over the wallpaper, falls onto
 	// nearby windows, watches the pointer, and can be dragged around.
@@ -508,7 +529,7 @@ const TARGETS = {
 		fileBase: 'usage-feedback',
 		iifeName: 'openStationUsageFeedbackBundle',
 	},
-	// Shell overlays — toast, confirm dialog, context menus (Stage 9).
+	// Shell overlays — toast, confirm dialog, context menus.
 	// Components for action-triggered overlays that aren't constructed
 	// at first paint. Preloaded by main after first paint via
 	// `preloadShellOverlays( … )` so the first toast / osConfirm /
@@ -575,7 +596,7 @@ const TARGETS = {
 		fileBase: 'os-components',
 		iifeName: 'openStationComponentKit',
 	},
-	// Window system (Stage 11) — the `Window` class + DOM / pointer
+	// Window system — the `Window` class + DOM / pointer
 	// / tab / chrome helpers. Largest single module in the pre-0.8.4
 	// main bundle (~68 kB pre-min just for `window/index.ts`).
 	// Loaded on demand by the first call to

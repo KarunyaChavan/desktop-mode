@@ -1,6 +1,6 @@
 /**
  * Posts app — the cells both modes render: the title (with its lock,
- * status and reading-page badges and the Pages "View" link), the
+ * status and reading-page badges and the "View" link), the
  * author, the date, and the expanded sub-row.
  *
  * @public
@@ -105,9 +105,9 @@ export function buildTitleCell( row: PostListItem, env: CellEnv ): HTMLElement {
 		titleRow.appendChild( pill( STATUS_LABELS[ row.status ] ?? row.status, statusBadgeColor( row.status ), { uppercase: true } ) );
 	}
 
-	// Pages: a "View" link to the public URL, in a new tab so the user
+	// A "View" link to the public URL, in a new tab so the user
 	// keeps the table state.
-	if ( isPages && typeof row.link === 'string' && row.link && row.status === 'publish' ) {
+	if ( typeof row.link === 'string' && row.link && row.status === 'publish' ) {
 		const view = document.createElement( 'a' );
 		view.href = row.link;
 		view.target = '_blank';

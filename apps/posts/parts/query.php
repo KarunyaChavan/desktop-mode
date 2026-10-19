@@ -44,7 +44,7 @@ function openstation_posts_window_default_query_args() {
 		// another user is currently editing the row, so the title cell
 		// can paint a small lock icon without an extra fetch.
 		'_fields' =>
-			'id,title,status,date,date_gmt,modified,modified_gmt,author,categories,tags,comment_status,excerpt,openstation_lock,_links,_embedded',
+			'id,title,status,date,date_gmt,modified,modified_gmt,author,categories,tags,comment_status,excerpt,openstation_lock,link,_links,_embedded',
 	);
 
 	/**
@@ -336,6 +336,49 @@ function openstation_posts_app_trash( Os $os, array $args, $type ) {
 			sprintf(
 				/* translators: %d: number of rows that could not be trashed. */
 				_n( '%d item could not be moved to the trash.', '%d items could not be moved to the trash.', $failed, 'desktop-mode' ),
+				$failed
+			)
+		);
+	}
+}
+
+/**
+ * `restore` — restore the selected rows from the trash. Rows not in the
+ * trash are skipped, every id is checked against `delete_post`, the
+ * survivors are untrashed, their trash metadata cleared, and announced
+ * as one content change (what the Recycle Bin and list windows repaint
+ * on), and failures become a toast.
+ *
+ * @param Os                  $os   Host handle.
+ * @param array<string,mixed> $args `ids`.
+ * @param string              $type Content type announced (`post` | `page`).
+ * @return void
+ */
+function openstation_posts_app_restore( Os $os, array $args, $type ) {
+	$ids    = openstation_posts_app_ids( isset( $args['ids'] ) ? $args['ids'] : array() );
+	$ok     = array();
+	$failed = 0;
+	foreach ( $ids as $id ) {
+		$post = get_post( $id );
+		if ( ! $post || 'trash' !== $post->post_status ) {
+			continue;
+		}
+		if ( ! $os->can( 'delete_post', $id ) || ! wp_untrash_post( $id ) ) {
+			++$failed;
+			continue;
+		}
+		delete_post_meta( $id, '_desktop_mode_trash_user_id' );
+		delete_post_meta( $id, '_desktop_mode_trash_time_gmt' );
+		$ok[] = $id;
+	}
+	if ( array() !== $ok ) {
+		$os->announce( $type, 'untrashed', $ok );
+	}
+	if ( $failed > 0 ) {
+		$os->toast(
+			sprintf(
+				/* translators: %d: number of rows that could not be restored. */
+				_n( '%d item could not be restored.', '%d items could not be restored.', $failed, 'desktop-mode' ),
 				$failed
 			)
 		);

@@ -196,4 +196,53 @@ class Tests_OpenStation_AiAbilities extends WP_UnitTestCase {
 		$private = wp_get_ability( 'desktop-mode/get-php-error-log' )->get_meta();
 		$this->assertArrayNotHasKey( 'mcp', $private );
 	}
+
+	/**
+	 * An image counts as used wherever the site points at it, in any status
+	 * and through any copy WordPress makes of it.
+	 *
+	 * @covers ::openstation_ai_find_unused_media
+	 */
+	public function test_find_unused_media_skips_every_kind_of_reference() {
+		$featured = $this->make_image( 'featured.jpg' );
+		$in_post  = $this->make_image( 'in-post.jpg' );
+		$sized    = $this->make_image( 'sized-scaled.jpg' );
+		$logo     = $this->make_image( 'logo.jpg' );
+		$unused   = $this->make_image( 'unused.jpg' );
+		update_post_meta( self::factory()->post->create(), '_thumbnail_id', $featured );
+		self::factory()->post->create( array( 'post_content' => '<img class="wp-image-' . $in_post . '"/>' ) );
+		self::factory()->post->create( array( 'post_type' => 'wp_template_part', 'post_status' => 'draft', 'post_content' => '<img src="/wp-content/uploads/sized-1024x768.jpg"/>' ) );
+		update_option( 'site_logo', $logo );
+
+		wp_set_current_user( self::factory()->user->create( array( 'role' => 'author' ) ) );
+		$this->assertWPError( wp_get_ability( 'desktop-mode/find-unused-media' )->execute( array( 'offset' => 0 ) ) );
+
+		wp_set_current_user( self::factory()->user->create( array( 'role' => 'editor' ) ) );
+		$result = wp_get_ability( 'desktop-mode/find-unused-media' )->execute( array( 'offset' => 0 ) );
+		$this->assertSame( array( $unused ), wp_list_pluck( $result['items'], 'id' ) );
+	}
+
+	/**
+	 * An Author never gets an item attached to a post they cannot read, and an
+	 * item's places leave out the posts they cannot read.
+	 *
+	 * @covers ::openstation_ai_search_media
+	 */
+	public function test_search_media_leaves_out_what_the_caller_cannot_read() {
+		$editor = self::factory()->user->create( array( 'role' => 'editor' ) );
+		$image  = $this->make_image( 'paella.jpg' );
+		$hidden = $this->make_image( 'paella-secret.jpg', self::factory()->post->create( array( 'post_author' => $editor, 'post_status' => 'private' ) ) );
+		update_post_meta( self::factory()->post->create(), '_thumbnail_id', $image );
+		update_post_meta( self::factory()->post->create( array( 'post_author' => $editor, 'post_status' => 'draft' ) ), '_thumbnail_id', $image );
+
+		wp_set_current_user( self::factory()->user->create( array( 'role' => 'author' ) ) );
+		$result = wp_get_ability( 'desktop-mode/search-media' )->execute( array( 'query' => 'paella', 'offset' => 0 ) );
+		$items  = array_column( $result['items'], null, 'id' );
+		$this->assertArrayNotHasKey( $hidden, $items );
+		$this->assertSame( 1, $items[ $image ]['used_in_count'] );
+	}
+
+	private function make_image( $file, $parent = 0 ) {
+		return self::factory()->attachment->create_object( $file, $parent, array( 'post_mime_type' => 'image/jpeg', 'post_title' => $file ) );
+	}
 }

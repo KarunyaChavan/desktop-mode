@@ -15,11 +15,11 @@
  * other bundle: fetched once, then served from the browser (and the
  * shared service-worker cache) on every later window.
  *
- * The four values the server has to vary per request — the menu
- * payload, its signature, the content identity, and the soft-reload
- * rules — arrive on `window.__osChromelessData`, emitted as a small
- * inline `before` script by the same PHP file. Keep that contract in
- * step: a key added here needs a key added there.
+ * The five values the server has to vary per request — the menu
+ * payload, its signature, the content identity, the soft-reload
+ * rules, and the menu owner — arrive on `window.__osChromelessData`,
+ * emitted as a small inline `before` script by the same PHP file. Keep
+ * that contract in step: a key added here needs a key added there.
  *
  * **Still to do: convert this to TypeScript.** It is the only
  * first-class bundle in the repo whose source is plain JS, so ESLint
@@ -101,6 +101,22 @@
 			{
 				type: 'os-content-identity',
 				identity: ( '_identity' in __OS_DATA ) ? __OS_DATA._identity : null
+			},
+			window.location.origin
+		);
+	} catch ( _err ) { /* parent gone or cross-origin */ }
+
+	/*
+	 * The dock tile whose menu WordPress files this screen under, so the
+	 * dock can light it for a window it did not open (a post editor, a
+	 * post's comments). Posted on every load, empty included, so a
+	 * navigation to a screen with no menu clears it.
+	 */
+	try {
+		window.parent.postMessage(
+			{
+				type: 'os-menu-owner',
+				menu: typeof __OS_DATA._menuOwner === 'string' ? __OS_DATA._menuOwner : ''
 			},
 			window.location.origin
 		);
@@ -255,7 +271,9 @@
 	 *   - `fetch` + `XMLHttpRequest` are wrapped so every completed
 	 *     request (including failures) posts
 	 *     `os-iframe-network` with `{ method, url, status,
-	 *     duration, failed }`. Parent dispatches `HOOKS.
+	 *     duration, failed }`, plus `aborted: true` when the page
+	 *     cancelled the request itself (an `AbortController`, an
+	 *     `xhr.abort()`). Parent dispatches `HOOKS.
 	 *     IFRAME_NETWORK_COMPLETED`.
 	 *
 	 * Privacy: request / response bodies are NEVER captured — only
@@ -367,6 +385,11 @@
 					duration: typeof duration === 'number' ? duration : 0,
 					failed: !! failed
 				};
+				// Cancelled by the page, not failed by the network: a
+				// search-as-you-type field aborting its last query.
+				if ( extra && extra.aborted ) {
+					msg.aborted = true;
+				}
 				if ( extra && window.__wpdInstrument && window.__wpdInstrument.observe ) {
 					if ( extra.requestHeaders ) {
 						msg.requestHeaders = extra.requestHeaders;
@@ -682,7 +705,12 @@
 						var dur = ( ( typeof performance !== 'undefined' && performance.now )
 							? performance.now()
 							: Date.now() ) - start;
-						osReportNetwork( method, url, 0, Math.round( dur ), true, requestHeaders ? { requestHeaders: requestHeaders } : null );
+						var failExtra = requestHeaders ? { requestHeaders: requestHeaders } : null;
+						if ( err && err.name === 'AbortError' ) {
+							failExtra = failExtra || {};
+							failExtra.aborted = true;
+						}
+						osReportNetwork( method, url, 0, Math.round( dur ), true, failExtra );
 						osActivityEnd( tracked, true, 0 );
 						throw err;
 					}
@@ -748,10 +776,16 @@
 					}
 				}
 
+				// `loadend` follows `abort` too; remember which one it was.
+				var aborted = false;
+				var onAbort = function () {
+					aborted = true;
+				};
 				var fire = function () {
 					// An uploader may open/send the same XHR again. Keep
 					// this request's closure out of later completions.
 					xhr.removeEventListener( 'loadend', fire );
+					xhr.removeEventListener( 'abort', onAbort );
 					var dur = ( ( typeof performance !== 'undefined' && performance.now )
 						? performance.now()
 						: Date.now() ) - start;
@@ -776,6 +810,10 @@
 						} catch ( _rErr ) { /* swallow */ }
 					}
 					var failed = xhr.status === 0 || xhr.status >= 400;
+					if ( aborted ) {
+						extra = extra || {};
+						extra.aborted = true;
+					}
 					osReportNetwork(
 						xhr.__wpdMethod,
 						xhr.__wpdUrl,
@@ -788,6 +826,7 @@
 					osMaybeForceAuthCheck( xhr.status, xhr.__wpdUrl, background );
 				};
 				try {
+					xhr.addEventListener( 'abort', onAbort );
 					xhr.addEventListener( 'loadend', fire );
 				} catch ( _err ) { /* swallow */ }
 				try {
@@ -796,6 +835,7 @@
 					// A synchronous send failure has no loadend to remove
 					// the listener or balance the activity-start message.
 					xhr.removeEventListener( 'loadend', fire );
+					xhr.removeEventListener( 'abort', onAbort );
 					osReportNetwork( xhr.__wpdMethod, xhr.__wpdUrl, 0, 0, true, null );
 					osActivityEnd( tracked, true, 0 );
 					throw sync;
@@ -1275,6 +1315,34 @@
 		return ( clone.textContent || '' ).replace( /\s+/g, ' ' ).trim();
 	}
 
+	var PENDING_LIST_ACTIONS = [ 'trash', 'untrash', 'delete' ];
+
+	/*
+	 * Whether a row action link is pending.
+	 */
+	function isPendingListAction( url ) {
+		try {
+			var parsed = new URL( url, window.location.href );
+			return PENDING_LIST_ACTIONS.indexOf( parsed.searchParams.get( 'action' ) ) !== -1 &&
+				parsed.searchParams.has( '_wpnonce' );
+		} catch ( err ) {
+			return false;
+		}
+	}
+
+	/*
+	 * Dim the rows the action works on and stop the list taking clicks
+	 * until the next page replaces it.
+	 */
+	function markListActionPending( rows, list ) {
+		for ( var i = 0; i < rows.length; i++ ) {
+			rows[ i ].classList.add( 'os-list-row-pending' );
+		}
+		if ( list ) {
+			list.classList.add( 'os-list-pending' );
+		}
+	}
+
 	document.addEventListener( 'click', function ( e ) {
 		if ( e.defaultPrevented ) {
 			return;
@@ -1559,6 +1627,14 @@
 					},
 					window.location.origin
 				);
+				var pendingRow = link.closest( '.row-actions' ) ? link.closest( 'tr' ) : null;
+				if ( pendingRow && ! newContext && isPendingListAction( absolute ) ) {
+					markListActionPending( [ pendingRow ], pendingRow.closest( 'form' ) );
+					window.parent.postMessage(
+						{ type: 'os-iframe-activity', phase: 'start', navigation: true },
+						window.location.origin
+					);
+				}
 			} catch ( bridgeErr ) {
 				/* Same-origin postMessage to the same window can only fail in
 				 * a sandbox we don't support — swallow rather than block the
@@ -1680,15 +1756,25 @@
 			if ( e.submitter && 'filter_action' === e.submitter.name ) {
 				return;
 			}
-			var picked = false;
+			var picked = '';
 			var actions = form.querySelectorAll( 'select[name="action"],select[name="action2"]' );
 			for ( var i = 0; i < actions.length; i++ ) {
-				if ( actions[ i ].value && '-1' !== actions[ i ].value ) {
-					picked = true;
+				if ( ! picked && actions[ i ].value && '-1' !== actions[ i ].value ) {
+					picked = actions[ i ].value;
 				}
 			}
 			if ( ! picked ) {
 				return;
+			}
+			if ( PENDING_LIST_ACTIONS.indexOf( picked ) !== -1 ) {
+				var checked = form.querySelectorAll( 'tbody .check-column input[type="checkbox"]:checked' );
+				var checkedRows = [];
+				for ( var j = 0; j < checked.length; j++ ) {
+					if ( checked[ j ].closest( 'tr' ) ) {
+						checkedRows.push( checked[ j ].closest( 'tr' ) );
+					}
+				}
+				markListActionPending( checkedRows, form );
 			}
 		}
 		try {
@@ -2186,11 +2272,20 @@
 	 * against Gutenberg / TinyMCE / plugin handlers bound to the same
 	 * shortcut. Shift/Alt modifiers pass through so user shortcuts using
 	 * those combos keep working.
+	 *
+	 * A keydown that arrives already `defaultPrevented` was claimed by
+	 * the editor before it reached this document: Gutenberg's block
+	 * canvas is a nested iframe, its rich-text Add Link shortcut handles
+	 * Cmd+K in there, and the canvas re-dispatches the cloned keydown up
+	 * to this document with the flag set. Core's own palette bails on
+	 * that flag, so we do too — otherwise Cmd+K in a block opens the
+	 * palette instead of the link popover.
 	 */
 	document.addEventListener( 'keydown', function ( e ) {
 		if ( ! ( e.metaKey || e.ctrlKey ) ) return;
 		if ( e.key !== 'k' && e.key !== 'K' ) return;
 		if ( e.shiftKey || e.altKey ) return;
+		if ( e.defaultPrevented ) return;
 
 		e.preventDefault();
 		e.stopImmediatePropagation();

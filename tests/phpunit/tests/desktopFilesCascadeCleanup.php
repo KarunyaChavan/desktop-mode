@@ -1,7 +1,7 @@
 <?php
 /**
  * Tests for the cascade cleanup of placements when a source
- * entity (post, attachment, user) is trashed or deleted via any
+ * entity (post, attachment, user, comment) is trashed or deleted via any
  * WordPress route.
  *
  * @package WordPress
@@ -188,6 +188,38 @@ class Tests_OpenStation_FilesCascadeCleanup extends WP_UnitTestCase {
 		wp_delete_user( $victim_id, self::$admin_id );
 
 		$this->assertNotNull( $this->read_trash_columns( $p_id )['trashed_at_ms'] );
+	}
+
+	/**
+	 * @covers ::openstation_files_cascade_on_comment_trash
+	 */
+	public function test_wp_trash_comment_triggers_cascade() {
+		$post_id    = self::factory()->post->create( array( 'post_status' => 'publish' ) );
+		$comment_id = self::factory()->comment->create( array( 'comment_post_ID' => $post_id ) );
+		$p_id       = openstation_files_place( self::$admin_id, 0, 'comment', (string) $comment_id, array( 'x' => 0, 'y' => 0 ) );
+
+		wp_trash_comment( $comment_id );
+
+		$this->assertNotNull(
+			$this->read_trash_columns( $p_id )['trashed_at_ms'],
+			'wp_trash_comment() must cascade-soft-trash the matching placement.'
+		);
+	}
+
+	/**
+	 * @covers ::openstation_files_cascade_on_comment_trash
+	 */
+	public function test_delete_comment_triggers_cascade() {
+		$post_id    = self::factory()->post->create( array( 'post_status' => 'publish' ) );
+		$comment_id = self::factory()->comment->create( array( 'comment_post_ID' => $post_id ) );
+		$p_id       = openstation_files_place( self::$admin_id, 0, 'comment', (string) $comment_id, array( 'x' => 0, 'y' => 0 ) );
+
+		wp_delete_comment( $comment_id, true );
+
+		$this->assertNotNull(
+			$this->read_trash_columns( $p_id )['trashed_at_ms'],
+			'wp_delete_comment() must cascade-soft-trash the matching placement.'
+		);
 	}
 
 	/**

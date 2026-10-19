@@ -40,10 +40,13 @@ const unsub = wp.os.registerNativeUrlRemap( {
         parsed.pathname.endsWith( '/edit.php' ) &&
         parsed.searchParams.get( 'post_type' ) === 'page',
     enabled: ( settings ) => settings.nativePagesEnabled === true,
+    params: ( _url, parsed ) => ( {
+        tab: 'posts',
+    } ),
 } );
 ```
 
-Returning `false` from `enabled` (or returning `false` from `matches`) lets the click fall through to the iframe path. Returning a `nativeWindowId` that isn't registered for the current user (cap-gated, opt-in-gated) also falls through — `openById()` reports `false` and the registry walks on.
+Returning `false` from `enabled` (or returning `false` from `matches`) lets the click fall through to the iframe path. The `params` hook passes open-time params to the target window — a multi-tab native window uses `{ tab: 'posts' }` so in-window links, dock rows and embedded-editor back buttons land on the right tab. Returning a `nativeWindowId` that isn't registered for the current user (cap-gated, opt-in-gated) also falls through — `openById()` reports `false` and the registry walks on.
 
 > The bundled Posts window consumes this same primitive internally (`src/native-url-remap.ts`); `wp.os.registerNativeUrlRemap` hands the same registry out to plugins.
 
@@ -137,7 +140,7 @@ That's it. The column appears in every Posts window load and never makes a secon
 
 ## Add a bulk action
 
-The default bulk action is "Move to trash". Plugins extend the registry via the `openstation.postsWindow.bulkActions` filter — every entry shows up in the bulk bar when one or more rows are selected. The filter's second argument is `{ mode }`, `'posts'` or `'pages'`: the Posts and Pages windows share the filter, so an action that only makes sense for posts returns `actions` unchanged in pages mode. The `run()` callback receives the selected row ids and a `PostsWindowContext` (`{ body, table, refresh, getSelectedIds, getSelectedRows, getCurrentParams }`):
+The shipped bulk actions are "Move to trash" (`id: 'trash'`, destructive, requires confirmation) and "Restore" (`id: 'restore'`, neutral, instant execution). The bulk bar dynamically displays "Restore" when viewing the Trash status and "Move to trash" in all other views. Plugins extend the registry via the `openstation.postsWindow.bulkActions` filter — every entry shows up in the bulk bar when one or more rows are selected. The filter's second argument is `{ mode }`, `'posts'` or `'pages'`: the Posts and Pages windows share the filter, so an action that only makes sense for posts returns `actions` unchanged in pages mode. The `run()` callback receives the selected row ids and a `PostsWindowContext` (`{ body, table, refresh, getSelectedIds, getSelectedRows, getCurrentParams }`):
 
 ```js
 wp.hooks.addFilter(
@@ -181,13 +184,13 @@ wp.hooks.addFilter(
 
 Returning `false` from `run()` opts out of the auto-refresh — useful when the action navigates away or shows its own modal.
 
-To remove the default trash action (read-only views, audit-style mirrors), filter it out by id:
+To remove default actions (e.g. for read-only views or custom workflows), filter them out by id:
 
 ```js
 wp.hooks.addFilter(
     'openstation.postsWindow.bulkActions',
     'myplugin/no-trash',
-    ( actions ) => actions.filter( ( a ) => a.id !== 'trash' ),
+    ( actions ) => actions.filter( ( a ) => a.id !== 'trash' && a.id !== 'restore' ),
 );
 ```
 

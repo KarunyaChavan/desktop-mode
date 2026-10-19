@@ -48,6 +48,16 @@ import { Component, defineComponent, html } from '../../core';
 import { styles } from './os-repeater.styles';
 import '../os-button/os-button';
 import '../os-icon/os-icon';
+import { __, sprintf } from '../../../i18n';
+
+/**
+ * Light-DOM changes that can change a row's accessible name: a row
+ * added or removed, a `data-label` / `aria-label` written from code,
+ * a labelling field renamed, or its text edited. A value typed into a
+ * field arrives as an `input` event instead, which a property write
+ * from code does not fire.
+ */
+const LABEL_ATTRIBUTES = [ 'slot', 'data-label', 'aria-label', 'name', 'data-field', 'id', 'value' ];
 
 export class OsRepeater extends Component {
 	static props = [
@@ -58,6 +68,7 @@ export class OsRepeater extends Component {
 		'min',
 		'max',
 		'row-label',
+		'row-label-from',
 	] as const;
 	static styles = [ styles ];
 
@@ -89,7 +100,13 @@ export class OsRepeater extends Component {
 				type: 'string',
 				default: 'Row',
 				description:
-					'Singular noun used to build the accessible names of the per-row buttons ("Remove choice", "Move choice up").',
+					'Singular noun used to build the accessible names of the per-row buttons ("Remove choice 1 of 3", "Move choice 1 up").',
+			},
+			{
+				name: 'row-label-from',
+				type: 'string',
+				description:
+					'Name, id, or data-field of a child input in each row whose value labels the row buttons ("Remove Drafting (1 of 3)"). Typing updates the names; a value set from code should dispatch an `input` event to do the same.',
 			},
 			{
 				name: 'reorderable',
@@ -118,7 +135,8 @@ export class OsRepeater extends Component {
 		slots: [
 			{
 				name: 'row-<key>',
-				description: 'One per entry in `keys` — the row content.',
+				description:
+					'One per entry in `keys` — the row content. May carry `data-label="..."` or `aria-label="..."` to label the row controls.',
 			},
 			{
 				name: 'empty',
@@ -249,6 +267,133 @@ export class OsRepeater extends Component {
 		this.onMove( key, delta as -1 | 1 );
 	};
 
+	private labelObserver: MutationObserver | null = null;
+
+	override connectedCallback(): void {
+		super.connectedCallback();
+		this.addEventListener( 'input', this.onRowInput );
+		this.addEventListener( 'change', this.onRowInput );
+		// Names are read off the rows at render time, so a row label
+		// changed from code would otherwise keep its old name until
+		// something else re-rendered the repeater.
+		if ( typeof MutationObserver === 'function' ) {
+			this.labelObserver ??= new MutationObserver( () => this.requestUpdate() );
+			this.labelObserver.observe( this, {
+				childList: true,
+				subtree: true,
+				characterData: true,
+				attributes: true,
+				attributeFilter: LABEL_ATTRIBUTES,
+			} );
+		}
+	}
+
+	disconnectedCallback(): void {
+		this.removeEventListener( 'input', this.onRowInput );
+		this.removeEventListener( 'change', this.onRowInput );
+		this.labelObserver?.disconnect();
+	}
+
+	private onRowInput = (): void => {
+		if ( this.hasAttribute( 'row-label-from' ) ) {
+			this.requestUpdate();
+		}
+	};
+
+	private getRowLabels(
+		key: string,
+		pos: number,
+		total: number,
+		rowLabel: string,
+		rowLabelFrom: string,
+	): { remove: string; moveUp: string; moveDown: string } {
+		let label = '';
+		// Matched by attribute value, not a selector: keys and field
+		// names are arbitrary strings (`items[0][title]`, `1st`), and
+		// only direct children are this repeater's rows.
+		const rowSlot = Array.from( this.children ).find(
+			( child ) => child.getAttribute( 'slot' ) === `row-${ key }`,
+		);
+		if ( rowSlot ) {
+			const explicit =
+				rowSlot.getAttribute( 'data-label' ) ||
+				rowSlot.getAttribute( 'aria-label' );
+			if ( explicit && explicit.trim() ) {
+				label = explicit.replace( /\s+/g, ' ' ).trim();
+			} else if ( rowLabelFrom ) {
+				const field = Array.from(
+					rowSlot.querySelectorAll( '[name], [data-field], [id]' ),
+				).find(
+					( el ) =>
+						el.getAttribute( 'name' ) === rowLabelFrom ||
+						el.getAttribute( 'data-field' ) === rowLabelFrom ||
+						el.id === rowLabelFrom,
+				);
+				if ( field ) {
+					const val =
+						'value' in field &&
+						typeof ( field as HTMLInputElement ).value === 'string'
+							? ( field as HTMLInputElement ).value
+							: field.textContent;
+					if ( val && val.trim() ) {
+						label = val.replace( /\s+/g, ' ' ).trim();
+					}
+				}
+			}
+		}
+
+		if ( label ) {
+			if ( label.length > 50 ) {
+				label = label.slice( 0, 47 ) + '…';
+			}
+			return {
+				remove: sprintf(
+					/* translators: 1: row label, 2: row position, 3: total rows. */
+					__( 'Remove %1$s (%2$d of %3$d)' ),
+					label,
+					pos,
+					total,
+				),
+				moveUp: sprintf(
+					/* translators: 1: row label, 2: row position, 3: total rows. */
+					__( 'Move %1$s (%2$d of %3$d) up' ),
+					label,
+					pos,
+					total,
+				),
+				moveDown: sprintf(
+					/* translators: 1: row label, 2: row position, 3: total rows. */
+					__( 'Move %1$s (%2$d of %3$d) down' ),
+					label,
+					pos,
+					total,
+				),
+			};
+		}
+
+		return {
+			remove: sprintf(
+				/* translators: 1: row label, 2: row position, 3: total rows. */
+				__( 'Remove %1$s %2$d of %3$d' ),
+				rowLabel,
+				pos,
+				total,
+			),
+			moveUp: sprintf(
+				/* translators: 1: row label, 2: row position. */
+				__( 'Move %1$s %2$d up' ),
+				rowLabel,
+				pos,
+			),
+			moveDown: sprintf(
+				/* translators: 1: row label, 2: row position. */
+				__( 'Move %1$s %2$d down' ),
+				rowLabel,
+				pos,
+			),
+		};
+	}
+
 	protected render() {
 		const keys = this._keys;
 		const disabled = this.isDisabled;
@@ -259,6 +404,7 @@ export class OsRepeater extends Component {
 		// be undefined and silently fall back to the default.
 		const attrs = this as unknown as Record< string, string | null >;
 		const rowLabel = attrs[ 'row-label' ] || 'row';
+		const rowLabelFrom = attrs[ 'row-label-from' ] || '';
 		const addLabel = attrs[ 'add-label' ] || 'Add row';
 		const emptyText = attrs[ 'empty-text' ] || '';
 		const min = this.numeric( 'min' );
@@ -273,45 +419,55 @@ export class OsRepeater extends Component {
 							<slot name="empty">${ emptyText }</slot>
 					  </div>`
 		: keys.map(
-			( key, index ) => html`
-								<div class="os-repeater__row" data-key=${ key }>
-									${ reorderable
-				? html`<div class="os-repeater__handles">
-													<button
-														type="button"
-														class="os-repeater__handle"
-														?disabled=${ disabled || index === 0 }
-														aria-label="Move ${ rowLabel } up"
-														@click=${ () => this.onMove( key, -1 ) }
-													>
-														<os-icon name="arrow-up-alt2" size="14"></os-icon>
-													</button>
-													<button
-														type="button"
-														class="os-repeater__handle"
-														?disabled=${ disabled ||
-													index === keys.length - 1 }
-														aria-label="Move ${ rowLabel } down"
-														@click=${ () => this.onMove( key, 1 ) }
-													>
-														<os-icon name="arrow-down-alt2" size="14"></os-icon>
-													</button>
-											  </div>`
-				: null }
-									<div class="os-repeater__content">
-										<slot name="row-${ key }"></slot>
-									</div>
-									<button
-										type="button"
-										class="os-repeater__remove"
-										?disabled=${ disabled || ! canRemove }
-										aria-label="Remove ${ rowLabel }"
-										@click=${ () => this.onRemove( key ) }
-									>
-										<os-icon name="trash" size="14"></os-icon>
-									</button>
-								</div>
-							`,
+			( key, index ) => {
+				const pos = index + 1;
+				const rowLabels = this.getRowLabels(
+					key,
+					pos,
+					keys.length,
+					rowLabel,
+					rowLabelFrom,
+				);
+				return html`
+					<div class="os-repeater__row" data-key=${ key }>
+						${ reorderable
+							? html`<div class="os-repeater__handles">
+								<button
+									type="button"
+									class="os-repeater__handle"
+									?disabled=${ disabled || index === 0 }
+									aria-label=${ rowLabels.moveUp }
+									@click=${ () => this.onMove( key, -1 ) }
+								>
+									<os-icon name="arrow-up-alt2" size="14"></os-icon>
+								</button>
+								<button
+									type="button"
+									class="os-repeater__handle"
+									?disabled=${ disabled ||
+								index === keys.length - 1 }
+									aria-label=${ rowLabels.moveDown }
+									@click=${ () => this.onMove( key, 1 ) }
+								>
+									<os-icon name="arrow-down-alt2" size="14"></os-icon>
+								</button>
+							  </div>`
+							: null }
+						<div class="os-repeater__content">
+							<slot name="row-${ key }"></slot>
+						</div>
+						<button
+							type="button"
+							class="os-repeater__remove"
+							?disabled=${ disabled || ! canRemove }
+							aria-label=${ rowLabels.remove }
+							@click=${ () => this.onRemove( key ) }
+						>
+							<os-icon name="trash" size="14"></os-icon>
+						</button>
+					</div>
+				`;
+			},
 		) }
 			</div>
 			<div class="os-repeater__footer">

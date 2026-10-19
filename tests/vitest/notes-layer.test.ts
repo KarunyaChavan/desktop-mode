@@ -9,6 +9,7 @@ import { __resetNotesHeartbeatForTests } from '../../src/notes/heartbeat';
 import { __resetNotesRestForTests, installNotesRestDeps } from '../../src/notes/rest';
 import type { Note } from '../../src/notes/types';
 import { clearHooksStub, installHooksStub } from './helpers/hooks-stub';
+import { _resetWorkAreaForTests, installWorkArea, reserveWorkArea } from '../../src/work-area';
 
 function makeNote( overrides: Partial< Note > = {} ): Note {
 	return {
@@ -128,6 +129,32 @@ describe( 'NotesLayer', () => {
 		const layer = makeLayer();
 		const controller = layer.upsertNote( makeNote( { color: 'seafoam' } ) );
 		expect( controller.element.dataset.noteColor ).toBe( 'seafoam' );
+	} );
+
+	test( 'a reserved band moves notes out of it, display only, and back', () => {
+		_resetWorkAreaForTests();
+		const layer = makeLayer();
+		// The layer's host as the measured desktop area.
+		const shell = document.createElement( 'div' );
+		const body = document.createElement( 'div' );
+		shell.append( body );
+		body.append( layer.host );
+		document.body.append( shell );
+		const ctl = installWorkArea( { shell, shellBody: body, area: layer.host } );
+		const controller = layer.upsertNote( makeNote( { id: 1, x: 0.1, y: 0.02 } ) );
+		expect( parseFloat( controller.element.style.top ) ).toBe( 2 );
+
+		const release = reserveWorkArea( 'test/band', { edge: 'top', size: 100 } );
+		controller.applyPosition();
+		// 100px of a 500px host: the note is drawn at 20 %, not 2 %.
+		expect( parseFloat( controller.element.style.top ) ).toBe( 20 );
+		expect( controller.note.y ).toBe( 0.02 );
+
+		release();
+		controller.applyPosition();
+		expect( parseFloat( controller.element.style.top ) ).toBe( 2 );
+		ctl.destroy();
+		_resetWorkAreaForTests();
 	} );
 
 	test( 'remote z changes apply to the element on replace', () => {
@@ -252,6 +279,69 @@ describe( 'NotesLayer', () => {
 		expect( body.x ).toBeCloseTo( 0.4 );
 		// The temp id gave way to the server's.
 		expect( layer.has( 77 ) ).toBe( true );
+	} );
+
+	test( 'a copy listed before the create answers is not left on the wall', async () => {
+		let answer: () => void = () => undefined;
+		const answered = new Promise< void >( ( resolve ) => {
+			answer = resolve;
+		} );
+		vi.stubGlobal(
+			'fetch',
+			vi.fn( async () => {
+				await answered;
+				return new Response( JSON.stringify( makeNote( { id: 77 } ) ), { status: 200 } );
+			} ),
+		);
+
+		const layer = makeLayer();
+		layer.createNoteAt( { x: 0.1, y: 0.2 } );
+		// The boot list (or a Heartbeat delta) sees the note first.
+		layer.upsertNote( makeNote( { id: 77 } ) );
+		answer();
+		await new Promise( ( r ) => setTimeout( r, 10 ) );
+
+		expect( document.querySelectorAll( '.os-pinned-note' ) ).toHaveLength( 1 );
+		// Convert and trash evict by id; nothing may stay behind.
+		layer.removeNote( 77 );
+		expect( document.querySelectorAll( '.os-pinned-note' ) ).toHaveLength( 0 );
+	} );
+
+	test( 'convert saves the last typed text before the server builds the draft', async () => {
+		const calls: string[] = [];
+		vi.stubGlobal(
+			'fetch',
+			vi.fn( async ( url: string, init?: RequestInit ) => {
+				const method = new Headers( init?.headers ).get( 'X-HTTP-Method-Override' ) ?? init?.method ?? 'GET';
+				calls.push( `${ method } ${ url }` );
+				const body = url.endsWith( '/convert' )
+					? { noteId: 5, postId: 9, editUrl: 'https://example.test/wp-admin/post.php?post=9&action=edit' }
+					: makeNote( { id: 5, text: 'Cinco cafés', updatedAtMs: 2000 } );
+				return new Response( JSON.stringify( body ), { status: 200 } );
+			} ),
+		);
+		const w = window as unknown as { wp?: Record< string, unknown > };
+		w.wp = {
+			...( w.wp ?? {} ),
+			os: { showToast: vi.fn(), deriveWindowId: ( url: string ) => url, windowManager: { open: vi.fn() } },
+		};
+
+		const layer = makeLayer( true );
+		const controller = layer.upsertNote( makeNote( { id: 5, text: '' } ) );
+		controller.element
+			.querySelector( '.os-pinned-note__editor' )!
+			.dispatchEvent( new CustomEvent( 'os-input-change', { detail: { value: 'Cinco cafés' } } ) );
+		// Inside the save debounce, and twice, like a double click.
+		layer.convertNote( controller.note );
+		layer.convertNote( controller.note );
+		await new Promise( ( r ) => setTimeout( r, 20 ) );
+		delete ( w.wp as Record< string, unknown > ).os;
+
+		const patch = calls.findIndex( ( call ) => call.startsWith( 'PATCH' ) );
+		const converts = calls.filter( ( call ) => call.endsWith( '/convert' ) );
+		expect( patch ).toBeGreaterThanOrEqual( 0 );
+		expect( converts ).toHaveLength( 1 );
+		expect( calls.indexOf( converts[ 0 ] ) ).toBeGreaterThan( patch );
 	} );
 
 	test( 'empty notes still get distinct tilts', () => {

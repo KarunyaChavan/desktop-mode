@@ -29,6 +29,7 @@ import {
 import {
 	bindNativeUrlRemap,
 	isPersonViewClaimed,
+	OS_TAB_PARAM,
 	registerNativeUrlRemap,
 	tryNativeUrlRemap,
 } from './native-url-remap';
@@ -782,7 +783,10 @@ export interface OpenStationPublicApi {
 	embedAdminPage: (
 		host: HTMLElement,
 		url: string,
-		opts?: { windowId?: string },
+		opts?: {
+			windowId?: string;
+			onAdminLink?: ( linkUrl: string, tab: string ) => boolean;
+		},
 	) => () => void;
 	/**
 	 * Load a registered native window's bundle without opening the
@@ -3117,6 +3121,10 @@ function init(): void {
 			return ! postType || postType === 'post';
 		},
 		enabled: ( snapshot ) => snapshot.nativePostsEnabled === true,
+		params: ( _url, parsed ) => {
+			const tagged = parsed.searchParams.get( OS_TAB_PARAM );
+			return tagged ? { tab: tagged } : { tab: 'posts' };
+		},
 	} );
 
 	// Native Pages window — same shape as the Posts remap, scoped to
@@ -3133,6 +3141,10 @@ function init(): void {
 			return parsed.searchParams.get( 'post_type' ) === 'page';
 		},
 		enabled: ( snapshot ) => snapshot.nativePagesEnabled === true,
+		params: ( _url, parsed ) => {
+			const tagged = parsed.searchParams.get( OS_TAB_PARAM );
+			return tagged ? { tab: tagged } : { tab: 'posts' };
+		},
 	} );
 
 	// Native Users window — opens on `users.php` only (the list

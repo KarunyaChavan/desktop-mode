@@ -487,7 +487,19 @@ export function createPostsApp( id: string, options: PostsAppOptions = {} ) {
 		);
 		const url = ( ctx.extra as ListExtra ).newPostUrl ?? '';
 		if ( host && url ) {
-			ui.editor = window.wp?.os?.embedAdminPage?.( host, url ) ?? null;
+			ui.editor =
+				window.wp?.os?.embedAdminPage?.( host, url, {
+					onAdminLink: ( _url, tab ) => {
+						const strip = ctx.root.querySelector<
+							HTMLElement & { value: string }
+						>( 'os-tabs' );
+						if ( strip ) {
+							strip.value = tab;
+						}
+						activateTab( ctx, ui, tab );
+						return true;
+					},
+				} ) ?? null;
 		}
 	};
 

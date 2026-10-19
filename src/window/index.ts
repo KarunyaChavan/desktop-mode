@@ -252,6 +252,15 @@ export class Window {
 	 */
 	public _reportedLocation: { url: string; src: string } | null = null;
 
+	/**
+	 * Id of the dock tile whose menu WordPress files the framed page
+	 * under, as the page reported it (`os-menu-owner`). Empty when it
+	 * reported none.
+	 *
+	 * @internal
+	 */
+	public _menuOwner = '';
+
 	/** @internal */
 	public _titleBar: HTMLElement;
 	/** @internal */
@@ -3019,10 +3028,13 @@ export class Window {
 				try {
 					iframe.contentWindow?.location.reload();
 				} catch {
-					// Cross-origin or detached frame — re-assign src
-					// as a fallback. The current src is what's already
-					// loaded, so re-setting it triggers a fresh load.
-					iframe.src = iframe.src;
+					// An isolated page (the block editor sends
+					// `Document-Isolation-Policy`) or a detached frame.
+					// Load the URL the page last reported, not `src`:
+					// the editor rewrites its own URL on a first save,
+					// and `src` would reload post-new.php, an empty new
+					// draft instead of the post that was just saved.
+					iframe.src = withChromelessParam( reloadedUrl ) ?? iframe.src;
 				}
 			};
 		} else {

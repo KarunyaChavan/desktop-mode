@@ -45,7 +45,7 @@ import {
 import { startNotesHeartbeat } from './heartbeat';
 import { trashNoteWithUndo } from './trash';
 import { convertNoteToPost } from './convert';
-import { workAreaRectOf } from '../work-area';
+import { getReservedInsets, subscribeWorkArea, workAreaRectOf } from '../work-area';
 import {
 	NOTE_PAYLOAD_TYPE,
 	type Note,
@@ -146,6 +146,13 @@ export class NotesLayer {
 				this.upsertNote( note, { animate: 'none' } );
 			} );
 			startNotesHeartbeat( this );
+			// A band reserved (or released) after the notes were placed
+			// moves them out of it, and back.
+			subscribeWorkArea( () => {
+				for ( const controller of this.controllers.values() ) {
+					controller.applyPosition();
+				}
+			} );
 		} catch ( error ) {
 			// A fresh site with zero notes still resolves fine — an
 			// error here means the routes are unreachable. Stay quiet
@@ -190,9 +197,21 @@ export class NotesLayer {
 		controller.element.remove();
 	}
 
-	/** Rebind a controller after a temp (optimistic) id resolves. */
+	/**
+	 * Rebind a controller after a temp (optimistic) id resolves.
+	 *
+	 * The boot list or a Heartbeat delta can deliver the new note while
+	 * its create POST is still in flight, and pin a second paper for the
+	 * server id. Drop that copy: once out of the map nothing can remove
+	 * it, so it outlives a trash or a convert.
+	 */
 	rekeyNote( oldId: number, controller: NoteController ): void {
 		this.controllers.delete( oldId );
+		const copy = this.controllers.get( controller.note.id );
+		if ( copy && copy !== controller ) {
+			copy.dispose();
+			copy.element.remove();
+		}
 		this.controllers.set( controller.note.id, controller );
 	}
 
@@ -358,12 +377,21 @@ export class NotesLayer {
 		if ( ! this.canCreatePosts || ! note.canEdit ) {
 			return;
 		}
-		void convertNoteToPost( note, {
-			onEvict: ( noteId ) => this.removeNote( noteId ),
-			onRestore: ( restored ) => {
-				this.bumpHighWater( restored.updatedAtMs );
-				this.upsertNote( restored, { animate: 'move' } );
-			},
+		// The server builds the draft from the text it has saved, and the
+		// last edit can still be on its debounce or in flight. Let it land
+		// first; a second activation meanwhile finds the note gone and stops.
+		const controller = this.controllers.get( note.id );
+		void ( controller?.settleEdits() ?? Promise.resolve() ).then( () => {
+			if ( controller && this.controllers.get( note.id ) !== controller ) {
+				return;
+			}
+			void convertNoteToPost( controller?.note ?? note, {
+				onEvict: ( noteId ) => this.removeNote( noteId ),
+				onRestore: ( restored ) => {
+					this.bumpHighWater( restored.updatedAtMs );
+					this.upsertNote( restored, { animate: 'move' } );
+				},
+			} );
 		} );
 	}
 
@@ -819,9 +847,20 @@ export class NoteController {
 		}, Z_SAVE_DEBOUNCE_MS );
 	}
 
+	/**
+	 * Paint the stored position. While a band is reserved
+	 * (`reserveWorkArea()`), a note that would sit in it is drawn just
+	 * outside instead — display only: the stored position is the
+	 * user's, and releasing the band puts the note back where it was.
+	 */
 	applyPosition(): void {
-		this.element.style.left = `${ ( this.note.x * 100 ).toFixed( 3 ) }%`;
-		this.element.style.top = `${ ( this.note.y * 100 ).toFixed( 3 ) }%`;
+		let { x, y } = this.note;
+		const reserved = getReservedInsets();
+		if ( reserved.top > 0 || reserved.left > 0 ) {
+			( { x, y } = this.layer.clampPosition( x, y ) );
+		}
+		this.element.style.left = `${ ( x * 100 ).toFixed( 3 ) }%`;
+		this.element.style.top = `${ ( y * 100 ).toFixed( 3 ) }%`;
 	}
 
 	/** Optimistically move + persist. Used by drop handler and keyboard. */
@@ -891,6 +930,12 @@ export class NoteController {
 	 */
 	flushPendingEdits(): void {
 		this.flushSave();
+	}
+
+	/** Save typed text now; resolves once every queued save has answered. */
+	settleEdits(): Promise< void > {
+		this.flushSave();
+		return this.patchChain;
 	}
 
 	private flushSave(): void {

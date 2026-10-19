@@ -23,7 +23,8 @@
  *      the parent can no longer add on our behalf.
  *
  * The page is a list screen (Media), so the same harness also checks
- * that a content-change broadcast refreshes it.
+ * that a content-change broadcast refreshes it, and that Cmd+K
+ * yields to a block editor that has already claimed it.
  *
  * @vitest-environment-options { "url": "http://localhost/wp-admin/upload.php?openstation_chromeless=1" }
  */
@@ -547,6 +548,52 @@ describe( 'chromeless bridge: which submits light the status ring', () => {
 	} );
 } );
 
+describe( 'chromeless bridge: a trash on its way to the server', () => {
+	const listRow = ( link: string ): string =>
+		'<form id="posts-filter" method="get"><table><tbody><tr id="post-1"><td>' +
+		`<div class="row-actions">${ link }</div>` +
+		'</td></tr></tbody></table></form>';
+
+	test( 'a Trash row action dims its row, locks the list and lights the ring', () => {
+		clickLink( listRow( '<a href="/wp-admin/post.php?post=1&action=trash&_wpnonce=abc">Trash</a>' ) );
+
+		expect( document.querySelector( '#post-1' )?.classList.contains( 'os-list-row-pending' ) ).toBe( true );
+		expect( document.querySelector( 'form' )?.classList.contains( 'os-list-pending' ) ).toBe( true );
+		expect( activityMessages() ).toEqual( [
+			{ type: 'os-iframe-activity', phase: 'start', navigation: true },
+		] );
+	} );
+
+	test( 'a row action that opens a screen leaves the list alone', () => {
+		clickLink( listRow( '<a href="/wp-admin/post.php?post=1&action=edit">Edit</a>' ) );
+
+		expect( document.querySelector( '.os-list-row-pending, .os-list-pending' ) ).toBeNull();
+		expect( activityMessages() ).toHaveLength( 0 );
+	} );
+
+	const bulkForm = ( action: string ): string =>
+		'<form id="posts-filter" method="get">' +
+		`<select name="action"><option value="${ action }" selected>${ action }</option></select>` +
+		'<table><tbody>' +
+		'<tr id="post-1"><th class="check-column"><input type="checkbox" name="post[]" value="1" checked></th></tr>' +
+		'<tr id="post-2"><th class="check-column"><input type="checkbox" name="post[]" value="2"></th></tr>' +
+		'</tbody></table></form>';
+
+	test( 'a bulk Move to Trash dims the checked rows only', () => {
+		submitForm( bulkForm( 'trash' ) );
+
+		expect( document.querySelector( '#post-1' )?.classList.contains( 'os-list-row-pending' ) ).toBe( true );
+		expect( document.querySelector( '#post-2' )?.classList.contains( 'os-list-row-pending' ) ).toBe( false );
+		expect( document.querySelector( 'form' )?.classList.contains( 'os-list-pending' ) ).toBe( true );
+	} );
+
+	test( 'a plugin bulk action is not locked: it may answer with a download, not a page', () => {
+		submitForm( bulkForm( 'export_csv' ) );
+
+		expect( document.querySelector( '.os-list-row-pending, .os-list-pending' ) ).toBeNull();
+	} );
+} );
+
 describe( 'chromeless bridge: a content-change broadcast', () => {
 	test( 'refreshes the list it matches in place', async () => {
 		const fetchMock = vi.fn(
@@ -572,5 +619,38 @@ describe( 'chromeless bridge: a content-change broadcast', () => {
 		} finally {
 			vi.unstubAllGlobals();
 		}
+	} );
+} );
+
+describe( 'chromeless bridge: the Cmd+K forwarder', () => {
+	/** Presses Cmd+K on the iframe Gutenberg re-dispatches keydowns from. */
+	function pressCmdK( handledInCanvas: boolean ): void {
+		document.body.innerHTML = '<iframe name="editor-canvas"></iframe>';
+		const event = new KeyboardEvent( 'keydown', {
+			key: 'k',
+			metaKey: true,
+			bubbles: true,
+			cancelable: true,
+		} );
+		// The canvas clones a keydown its own handlers already claimed
+		// with the flag set — the rich-text Add Link shortcut does.
+		if ( handledInCanvas ) {
+			event.preventDefault();
+		}
+		document.querySelector( 'iframe' )?.dispatchEvent( event );
+	}
+
+	function paletteMessages(): Array< Record< string, unknown > > {
+		return posted.filter( ( m ) => m.type === 'os-palette-cycle' );
+	}
+
+	test( 'opens the shell palette when nothing in the page claimed it', () => {
+		pressCmdK( false );
+		expect( paletteMessages() ).toHaveLength( 1 );
+	} );
+
+	test( 'yields to the editor that already claimed it for Add Link', () => {
+		pressCmdK( true );
+		expect( paletteMessages() ).toHaveLength( 0 );
 	} );
 } );

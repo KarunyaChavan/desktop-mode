@@ -18,6 +18,7 @@ import { tryNativeUrlRemap } from '../native-url-remap';
 import { createSharedStore } from '../shared-store';
 import { matchDestructiveAdminAction } from '../destructive-admin-actions';
 import { setWindowContent } from '../window-links/engine';
+import { relayIframeReport } from './iframe-reports';
 import { openUserFootprintWindow } from '../open-targets/footprint-target';
 
 /**
@@ -173,6 +174,16 @@ export function handleWindowMessage( win: Window, event: MessageEvent ): void {
 		setWindowContent( win.id, data.identity ?? null, {
 			source: 'bridge',
 		} );
+	}
+
+	// The dock tile WordPress files this page under. It lands after the
+	// window opened and took focus, so the dock has to repaint for it.
+	if ( data.type === 'os-menu-owner' ) {
+		const menu = typeof data.menu === 'string' ? data.menu : '';
+		if ( menu !== win._menuOwner ) {
+			win._menuOwner = menu;
+			doAction( HOOKS.DOCK_REFRESH_ACTIVE );
+		}
 	}
 
 	// Unified window-channel publish. Iframe content called
@@ -389,6 +400,16 @@ export function handleWindowMessage( win: Window, event: MessageEvent ): void {
 		adminLinkDepsStore.state.deps?.openOtherAdmin?.( data.url );
 	}
 
+	// The page asked the server for something that redirected off-site
+	// (a connect flow's sign-in), and the server answered with a hand-off
+	// page instead. See openstation_chromeless_hand_off_offsite_redirect().
+	if (
+		data.type === 'os-iframe-offsite-redirect' &&
+		typeof data.url === 'string'
+	) {
+		leaveForOffsiteRedirect( win, data.url );
+	}
+
 	if (
 		data.type === 'os-iframe-admin-link' &&
 		typeof data.url === 'string' &&
@@ -483,24 +504,9 @@ export function handleWindowMessage( win: Window, event: MessageEvent ): void {
 		addExternalTab( win, data.url, label );
 	}
 
-	// Iframe error relay — the chromeless bridge posts
-	// `os-iframe-error` from inside the iframe's error +
-	// unhandledrejection handlers. We annotate with the owning
-	// windowId and dispatch the hook, where monitor widgets pick it
-	// up. Shape matches `HOOKS.IFRAME_ERROR`.
-	if ( data.type === 'os-iframe-error' ) {
-		doAction( HOOKS.IFRAME_ERROR, {
-			windowId: win.id,
-			kind: data.kind === 'unhandledrejection'
-				? 'unhandledrejection'
-				: 'error',
-			message: typeof data.message === 'string' ? data.message : '',
-			filename: typeof data.filename === 'string' ? data.filename : null,
-			lineno: typeof data.lineno === 'number' ? data.lineno : null,
-			colno: typeof data.colno === 'number' ? data.colno : null,
-			stack: typeof data.stack === 'string' ? data.stack : null,
-		} );
-	}
+	// The chromeless bridge's error and network reports — shared with
+	// admin pages embedded in native windows (`src/native-windows.ts`).
+	relayIframeReport( win.id, data );
 
 	// Layer-1 theme — iframe content can re-theme its own window
 	// via the bridge. `tokens` is a CSS-variable map; `setAppearanceTheme`
@@ -599,35 +605,6 @@ export function handleWindowMessage( win: Window, event: MessageEvent ): void {
 			);
 		}
 	}
-
-	// Iframe network completion — bridged from the fetch + XHR
-	// wrappers inside the chromeless iframe. Every completed call
-	// (success or failure) fires here. `status === 0` indicates a
-	// network-level failure before a response arrived; `failed` is
-	// pre-computed inside the iframe (by the chromeless bridge's
-	// fetch/XHR wrappers) so subscribers don't have to re-derive
-	// the success / 4xx / 5xx / network boundary.
-	if ( data.type === 'os-iframe-network' ) {
-		const networkPayload: Record< string, unknown > = {
-			windowId: win.id,
-			method: typeof data.method === 'string' ? data.method : 'GET',
-			url: typeof data.url === 'string' ? data.url : '',
-			status: typeof data.status === 'number' ? data.status : 0,
-			duration: typeof data.duration === 'number' ? data.duration : 0,
-			failed: !! data.failed,
-		};
-		// `requestHeaders` / `responseHeaders` only ride along when
-		// devtools have asked the iframe to observe (via
-		// `wp.os.devtools.onRequest( id, cb, { observe: true } )`).
-		// Default deliveries stay summary-only for privacy.
-		if ( data.requestHeaders && typeof data.requestHeaders === 'object' ) {
-			networkPayload.requestHeaders = data.requestHeaders;
-		}
-		if ( data.responseHeaders && typeof data.responseHeaders === 'object' ) {
-			networkPayload.responseHeaders = data.responseHeaders;
-		}
-		doAction( HOOKS.IFRAME_NETWORK_COMPLETED, networkPayload );
-	}
 }
 
 /**
@@ -651,6 +628,42 @@ function iframeActivityError( status: number ): string {
 	}
 	/* translators: %d: HTTP status code of the failed request. */
 	return sprintf( __( 'Request failed (HTTP %d).' ), status );
+}
+
+/**
+ * Follow an off-site redirect the way classic admin does: in this tab.
+ * The destination will not be framed, so it cannot be a window, and the
+ * service sends the user back to an admin URL that the portal routes
+ * into the shell again.
+ *
+ * The window goes first, and without the unsaved-changes query: its
+ * page already left, and a window kept in the session would reopen on
+ * the URL that redirects, sending the user straight back out.
+ *
+ * Only a user who has interacted with the shell is taken anywhere. A
+ * window the session restores on such a URL redirects at boot, before
+ * any click, and leaving the desktop then is a surprise, not a
+ * continuation; that window is just dropped. A browser without
+ * `navigator.userActivation` cannot tell, and always follows.
+ */
+function leaveForOffsiteRedirect( win: Window, rawUrl: string ): void {
+	let url: URL;
+	try {
+		url = new URL( rawUrl );
+	} catch {
+		return;
+	}
+	if (
+		url.origin === INITIAL_ORIGIN ||
+		( url.protocol !== 'https:' && url.protocol !== 'http:' )
+	) {
+		return;
+	}
+	win.destroy();
+	if ( navigator.userActivation?.hasBeenActive === false ) {
+		return;
+	}
+	window.location.assign( url.toString() );
 }
 
 function handleDesktopNavigate(

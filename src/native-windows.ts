@@ -30,11 +30,15 @@ import { injectInlineScript, loadVendorScript } from './wallpapers/vendor-loader
 import { registerSyntheticIframe } from './connection';
 import { isShellDocumentUrl } from './shell-url';
 import { recordFrameLocation, setWindowMenuPages } from './window/share-link';
+import { relayIframeReport } from './window/iframe-reports';
 import {
 	registerNativeUrlRemap,
+	resolveNativeUrlRemapTarget,
+	tryNativeUrlRemap,
 	unregisterNativeUrlRemap,
 } from './native-url-remap';
 import { setPanelTabs } from './window/tab-strip';
+import { loadComponents } from './ui/components/loader';
 import { getWindowContent, setWindowContent } from './window-links/engine';
 import type { WindowContentRef } from './window-links/types';
 import {
@@ -530,6 +534,40 @@ function buildIframeContentRender(
 		// chromeless bridge's own message listener doesn't see this
 		// iframe (it sits inside a native window's body, not the
 		// shell-managed iframe).
+		/**
+		 * Route an admin link clicked inside the page: to the host app
+		 * when it points back at this window (the block editor's "View
+		 * Posts" / "View Pages"), to another native window when one is
+		 * registered for it, and to a plain iframe window otherwise.
+		 */
+		const routeAdminLink = ( linkUrl: string, linkLabel: string ): void => {
+			const win = window.wp?.os?.windowManager?.getById?.( windowId );
+			const baseId = win?.config?.baseId || registeredId;
+			const target = resolveNativeUrlRemapTarget( linkUrl );
+			const tab = target?.params?.tab;
+			if (
+				target?.id === baseId &&
+				typeof tab === 'string' &&
+				cfg.onAdminLink?.( linkUrl, tab )
+			) {
+				return;
+			}
+			if ( tryNativeUrlRemap( linkUrl ) ) {
+				return;
+			}
+			const osApi = window.wp?.os;
+			if ( osApi?.deriveWindowId && osApi?.windowManager ) {
+				const id = osApi.deriveWindowId( linkUrl );
+				void osApi.windowManager.open( {
+					id,
+					baseId: id,
+					url: linkUrl,
+					title: linkLabel || linkUrl,
+					icon: 'dashicons-admin-generic',
+				} );
+			}
+		};
+
 		const onMessage = ( e: MessageEvent ): void => {
 			if ( ! iframe.contentWindow || e.source !== iframe.contentWindow ) {
 				return;
@@ -587,6 +625,15 @@ function buildIframeContentRender(
 					( data as { payload?: unknown } ).payload,
 				);
 			}
+			// The chromeless bridge's error and network reports, relayed
+			// exactly as `src/window/iframe-bridge.ts` relays them for an
+			// iframe window. Without this an embedded page — the Posts
+			// app's block editor — never reached `os.iframe.error` or
+			// `os.iframe.network-completed`. Same-origin only, matching
+			// the bridge's own trust boundary.
+			if ( e.origin === window.location.origin ) {
+				relayIframeReport( windowId, data );
+			}
 			// Content identity of the page in this iframe — the same
 			// announcement `src/window/iframe-bridge.ts` forwards for an
 			// iframe window. Same-origin only: the identity carries
@@ -602,6 +649,27 @@ function buildIframeContentRender(
 						.identity ?? null;
 				syncIdentity();
 			}
+			// In-iframe admin link navigation from the synthetic iframe.
+			// Synthetic iframes in native window tabs lack the outer
+			// `Window.iframe` binding that routes through `handleWindowMessage`,
+			// so in-frame navigation events are handled here. Same-origin
+			// only, like the handlers above. The message still reaches
+			// `cfg.onMessage` below whichever way the link is routed.
+			if (
+				data &&
+				typeof data === 'object' &&
+				( data as { type?: string } ).type === 'os-iframe-admin-link' &&
+				typeof ( data as { url?: string } ).url === 'string' &&
+				( data as { url: string } ).url !== '' &&
+				e.origin === window.location.origin
+			) {
+				const label = ( data as { label?: unknown } ).label;
+				routeAdminLink(
+					( data as { url: string } ).url,
+					typeof label === 'string' ? label : '',
+				);
+			}
+
 			try {
 				cfg.onMessage?.( e.data );
 			} catch ( err ) {
@@ -663,11 +731,13 @@ function buildIframeContentRender(
  * cross-origin URL, or the shell screen, mounts nothing and returns
  * a no-op.
  *
- * @param host          Element to mount into. Its contents are replaced.
- * @param url           Admin URL. The chromeless flag is added here.
- * @param opts          Mount options.
- * @param opts.windowId Fallback for a host that is not inside a window
- *                      root yet; normally resolved from the DOM.
+ * @param host             Element to mount into. Its contents are replaced.
+ * @param url              Admin URL. The chromeless flag is added here.
+ * @param opts             Mount options.
+ * @param opts.windowId    Fallback for a host that is not inside a window
+ *                         root yet; normally resolved from the DOM.
+ * @param opts.onAdminLink Optional callback for in-iframe admin links that
+ *                         remap to this window. Return true if handled.
  * @return Teardown: removes the listeners, the synthetic-iframe
  *         registration and the iframe itself.
  * @public
@@ -675,7 +745,10 @@ function buildIframeContentRender(
 export function embedAdminPage(
 	host: HTMLElement,
 	url: string,
-	opts: { windowId?: string } = {},
+	opts: {
+		windowId?: string;
+		onAdminLink?: ( linkUrl: string, tab: string ) => boolean;
+	} = {},
 ): () => void {
 	let chromeless: string;
 	try {
@@ -695,9 +768,11 @@ export function embedAdminPage(
 	host.replaceChildren();
 	const cleanups: ( () => void )[] = [];
 	const windowId = resolveMountedWindowId( host, opts.windowId ?? '' );
-	const ready = buildIframeContentRender( { url: chromeless }, cleanups, windowId )(
-		host,
-	);
+	const ready = buildIframeContentRender(
+		{ url: chromeless, onAdminLink: opts.onAdminLink },
+		cleanups,
+		windowId,
+	)( host );
 
 	// Styled inline, the way the iframe above is: a class of ours in
 	// someone else's body is a selector they never agreed to. The
@@ -1221,6 +1296,12 @@ function declareServerTabs(
 	if ( ! Array.isArray( tabs ) || tabs.length < 2 ) {
 		return;
 	}
+	// The wrap PHP puts around the panes is the shell's markup, made
+	// of two tags only the component kit registers. Nothing else is
+	// guaranteed to have loaded the kit, a session restore after a
+	// reload least of all, so ask for it here. A failed fetch is left
+	// to the missing-import warner, which names both tags.
+	loadComponents( [ 'os-stack', 'os-tabpanel' ] ).catch( () => {} );
 	const winEl = body.closest< HTMLElement >( '.os-window' );
 	if ( ! winEl ) {
 		return;
@@ -1231,6 +1312,31 @@ function declareServerTabs(
 		// The window's own template is the pane that opens.
 		tabs.find( ( tab ) => tab.isMain )?.value,
 	);
+}
+
+/**
+ * The map a native window's handles resolve through.
+ *
+ * Since GH#898 that is the one `scriptDepPayloads` map every entry
+ * list shares. A payload from an older server (a menu refresh through
+ * a bridge page that predates it) carries `nativeWindowScriptData`.
+ * Servers from #893 to GH#898 (v1.1.11 to v1.1.13) send both, and their
+ * shared map holds only entry dependencies, so the two are merged with
+ * the windows' data winning a handle, the same order the server uses.
+ *
+ * @param source A boot config or menu-refresh payload.
+ */
+export function windowScriptData( source: {
+	scriptDepPayloads?: unknown;
+	nativeWindowScriptData?: unknown;
+} | null | undefined ): NativeWindowScriptData | undefined {
+	const shared = source?.scriptDepPayloads && typeof source.scriptDepPayloads === 'object'
+		? ( source.scriptDepPayloads as NativeWindowScriptData )
+		: undefined;
+	const legacy = source?.nativeWindowScriptData && typeof source.nativeWindowScriptData === 'object'
+		? ( source.nativeWindowScriptData as NativeWindowScriptData )
+		: undefined;
+	return shared && legacy ? { ...shared, ...legacy } : shared ?? legacy;
 }
 
 /**

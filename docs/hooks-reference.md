@@ -1854,6 +1854,41 @@ apply_filters( 'openstation_wallpapers', array $registry );
 
 ---
 
+### Pulse Monitor filters — Experimental
+
+The server feed behind the built-in Pulse Monitor wallpaper and widget (`includes/pulse-monitor.php`). Full design in [Pulse Monitor](./pulse-monitor.md).
+
+```php
+// Capability required to receive the site-wide feed. Default 'manage_options'.
+apply_filters( 'openstation_pulse_capability', string $capability );
+
+// Kind a request is classified as ('visitors', 'bots', 'api', 'team', 'cron').
+// Return '' to keep the request off the monitor.
+apply_filters( 'openstation_pulse_request_kind', string $kind );
+
+// Whether a user agent counts as a bot (bot beats draw smaller).
+apply_filters( 'openstation_pulse_is_bot', bool $is_bot, string $user_agent );
+
+// Whether front-end page views (visitors, bots) are counted. Defaults to the
+// `pulse_visitors` extended option, which is off: page views cost nothing.
+apply_filters( 'openstation_pulse_count_visitors', bool $enabled );
+
+// Whether to close the response (fastcgi_finish_request / litespeed_finish_request)
+// before the log is written. Default true; return false if something later on
+// `shutdown` still sends output. The recorder runs at PHP_INT_MAX.
+apply_filters( 'openstation_pulse_finish_request', bool $finish );
+
+// One event before it is logged: { kind, status, error, user }. Return false to drop it.
+apply_filters( 'openstation_pulse_event', array|false $row );
+
+// Health snapshot sent with every Heartbeat: { siteHealth, requests, failures, cronLate }.
+apply_filters( 'openstation_pulse_health', array $snapshot );
+```
+
+`openstation_pulse_record( string $kind, array $args = array() )` — *Experimental (PHP function).* Queue a beat for the current request (`$args['error']` draws it as a failed beat). Explicit events replace the request's own classification, so a comment POST beats once, as a comment.
+
+---
+
 ### `openstation_network_enabled` — Experimental
 
 Whether the OpenStation Network is enabled site-wide. The default comes from the `network` extended option (OpenStation Preferences → Features → Extended options, admins only) — **off by default**: the network is opt-in. When the resolved value is `false`, `includes/network/bootstrap.php` loads **none** of the network module — no keypair, no identity or list route, no registry, no Network window, no hop token minted or spent — a single site has no site switcher, and a multisite keeps the one it has on its own. Pairings already made survive a disable. See [network.md](network.md).
@@ -3360,7 +3395,7 @@ See [`docs/examples/recycle-bin.md`](./examples/recycle-bin.md) for end-to-end r
 
 ## Native Posts window
 
-Native writing desk that replaces the chromeless `edit.php` iframe. Ruled note cards show titles, excerpts, publishing states, word counts, approved comment totals, tag counts and nearby Edit / Details actions; a companion inspector exposes the taxonomy pickers and extension fields. The Content view control opens the optional Details table. **Opt-in Beta** — fresh installs land on the classic iframe; users turn it on via **OpenStation Preferences → Features → Beta features → Use the native Posts window** (persisted as `OsSettingsState.nativePostsEnabled`, default `false`). The dock tile that points at `edit.php` is unchanged — every click path consults the URL → native-window remap registry first and falls back to the iframe on no-match. An [App Framework](./app-framework.md) app — `apps/posts/` — whose list is a `data()` over `openstation_app_rest_page( 'wp/v2/posts', … )` (so every REST field and the query-args filter below reach the rows exactly as they reached the old bundle), whose server paging / filtering / sorting are its state, and whose "Move to trash" is a server action; the Categories mind map and the Tags cloud are its two canvases. The registration (title, size, config extra) is filterable through [`openstation_app_manifest`](#openstation_app_manifest--experimental-filter) for `$id === 'desktop-mode-posts'`. See [`examples/native-posts.md`](./examples/native-posts.md) for end-to-end recipes and [`migration-list-apps.md`](./migration-list-apps.md) for what the port removed.
+Native writing desk that replaces the chromeless `edit.php` iframe. Ruled note cards show titles, excerpts, publishing states, word counts, approved comment totals, tag counts and nearby Edit / Details actions; a companion inspector exposes the taxonomy pickers and extension fields. The Content view control opens the optional Details table. **Opt-in Beta** — fresh installs land on the classic iframe; users turn it on via **OpenStation Preferences → Features → Beta features → Use the native Posts window** (persisted as `OsSettingsState.nativePostsEnabled`, default `false`). The dock tile that points at `edit.php` is unchanged — every click path consults the URL → native-window remap registry first and falls back to the iframe on no-match. An [App Framework](./app-framework.md) app — `apps/posts/` — whose list is a `data()` over `openstation_app_rest_page( 'wp/v2/posts', … )` (so every REST field and the query-args filter below reach the rows exactly as they reached the old bundle), whose server paging / filtering / sorting are its state, and whose "Move to trash" and "Restore" are server actions; the Categories mind map and the Tags cloud are its two canvases. The registration (title, size, config extra) is filterable through [`openstation_app_manifest`](#openstation_app_manifest--experimental-filter) for `$id === 'desktop-mode-posts'`. See [`examples/native-posts.md`](./examples/native-posts.md) for end-to-end recipes and [`migration-list-apps.md`](./migration-list-apps.md) for what the port removed.
 
 **Its tabs are the Posts menu, in both directions.** All posts, Add Post, Categories and Tags are the same rows the dock's Posts submenu lists, in the same order, because both come from the window's own [`App::menu()`](./app-framework.md) declaration. Each tab names the wp-admin page it replaces, so the shell claims `post-new.php` and the two taxonomy screens for the window **wherever** they are clicked — a link in another window, the admin bar's "+ New", a workspace's launch list — and opens it on the matching tab. A page the window has no tab for keeps its own row, so a plugin's screen registered under Posts stays reachable. Add Post shows the editor embedded in the panel through [`wp.os.embedAdminPage()`](./javascript-reference.md#wposembedadminpage-host-url-opts---stable); it mounts blank unless the page inside says it is holding unsaved changes, in which case the draft is handed back. While Add Post is the visible tab, the embedded editor's content identity is the window's, so the title bar's Preview (eye), revisions row and Related menu work there and leave when another tab is picked. An embedded editor is not an iframe window, so it has no close-time unsaved-changes prompt. Pages works the same minus the taxonomies, and adds the reverse case: **Page atlas** is a tab wp-admin has no screen for, and the dock offers it as a row anyway. All of it is gated on the opt-in, which is why flipping a Beta toggle spends a menu refresh.
 
@@ -3403,7 +3438,7 @@ Default args:
 ```php
 [
     '_embed'  => 'author,wp:term,wp:featuredmedia',
-    '_fields' => 'id,title,status,date,date_gmt,modified,modified_gmt,author,categories,tags,comment_status,excerpt,openstation_lock,_links,_embedded',
+    '_fields' => 'id,title,status,date,date_gmt,modified,modified_gmt,author,categories,tags,comment_status,excerpt,openstation_lock,link,_links,_embedded',
 ]
 ```
 
@@ -3415,7 +3450,7 @@ Every JS hook below is also documented on `wp.hooks` so plugins can register wit
 |---|---|---|---|
 | `openstation.postsWindow.columns` | filter | built-in 5 columns | `OsTableColumn< PostListItem >[]` — append, replace, or remove cells. Second arg: `{ mode: 'posts' \| 'pages' }`, the window the columns are for. |
 | `openstation.postsWindow.statusSegments` | filter | All / Published / Drafts / Pending / Scheduled / Trash | `StatusSegment[]` — `{ value, label }` pairs. `value` is sent verbatim as `?status=…`; use `''` for "All" (the bundle remaps to `?status=any`). |
-| `openstation.postsWindow.bulkActions` | filter | one entry: "Move to trash" | `BulkAction[]` — `{ id, label, icon?, variant?, confirm?, run( ids, ctx ) }`. `confirm` is `string \| ( count: number ) => string`; the function form is the one `_n()` can pluralize. Filter out by id to remove. Second arg: `{ mode: 'posts' \| 'pages' }` — return `actions` unchanged when the action does not belong in that window. |
+| `openstation.postsWindow.bulkActions` | filter | two entries: "Move to trash" (`id: 'trash'`) and "Restore" (`id: 'restore'`) | `BulkAction[]` — `{ id, label, icon?, variant?, confirm?, run( ids, ctx ) }`. `confirm` is `string \| ( count: number ) => string`; the function form is the one `_n()` can pluralize. The bulk bar dynamically displays "Restore" when viewing the Trash status and "Move to trash" otherwise. Filter out by id to remove either. Second arg: `{ mode: 'posts' \| 'pages' }` — return `actions` unchanged when the action does not belong in that window. |
 | `openstation.postsWindow.toolbarTrailing` | filter | `[]` | `HTMLElement[]` rendered before Refresh + Add New. Receives the live `PostsWindowContext` as the second arg. |
 | `openstation.postsWindow.opened` | action | — | `( ctx: PostsWindowContext )` — fired after the first paint with a populated table. |
 | `openstation.postsWindow.dataLoaded` | action | — | `( payload: { items, total, totalPages, page } )` — fired after every successful refresh. |
@@ -5615,7 +5650,12 @@ consumes it.
 
 - **Param** `int $agent_user_id`
 - **Param** `string $message` — the submitted message.
-- **Param** `array $result` — `{ text, toolCalls, turns }`.
+- **Param** `array $result` — `{ text, toolCalls, turns, usage, model }`.
+  `usage` is `{ prompt, completion, total }` summed across every turn of
+  the run and `model` is `{ id, name }` for the last model the AI Client
+  resolved, matching what `openstation_ai_search_completed` reports for
+  Copilot. Both are `null` when the provider reported nothing, which is
+  what tells "cost nothing" apart from "did not say".
 - **Param** `array $context` — invocation context; convention: `source` names the trigger (`chat`, `send-to`, `hook`, …).
 
 ### `openstation_agent_tool_result` — Experimental *(filter)*

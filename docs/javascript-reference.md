@@ -1472,13 +1472,18 @@ Mount a chromeless admin page **inside an element of a native window's body**, a
 wp.os.embedAdminPage(
     host:  HTMLElement,
     url:   string,
-    opts?: { windowId?: string },
+    opts?: {
+        windowId?: string;
+        onAdminLink?: ( linkUrl: string, tab: string ) => boolean;
+    },
 ): () => void;
 ```
 
 An app's window is its own surface, not an iframe, so an app offering one of wp-admin's own screens had only `open_url()` — which spawns a second window. This is for the case where that reads wrong: the Posts app's tabs are the Posts menu's pages, and its **Add Post** tab swaps the body for the editor the way every tab beside it swaps the body.
 
 The page is registered as that window's **synthetic iframe**, so [`wp.os.connect( windowId )`](#wposconnect-windowid-opts---stable) and `Window.send()` reach it, and `os-bridge-*` traffic and `os-window-publish` route as they do for any window. The chromeless flag is added for you.
+
+When `opts.onAdminLink` is provided, clicks inside the embedded page that remap to this window (such as the block editor's "View Posts" button) invoke `onAdminLink( linkUrl, tab )`. Returning `true` signals that the host app handled the navigation (e.g. by switching tabs via `activateTab()`), bypassing fallback window navigation.
 
 While the page loads, the busy mark is the **host's**, not the window's: an embed occupies one panel of a body the user is still looking at, and the window overlay would black out the tab strip that put them there — including the tab they would use to leave. The helper centres an `<os-spinner>` over the host — the same WordPress mark, at the same size, as a window's own loading overlay — and removes it on load, styling it inline so no selector of the shell's lands in your body.
 
@@ -1699,6 +1704,10 @@ Rules:
 - **Same-origin only.** Cross-origin requests never receive the header — the nonce is a credential for this site.
 - **Caller wins.** If you pass `headers: { 'X-WP-Nonce': '...' }` (or the input `Request` already carries the header), the framework does not overwrite it.
 - **REST endpoints only.** `admin-ajax.php` and other non-REST URLs are left alone — admin-ajax uses per-action `_wpnonce` parameters, not the `wp_rest` nonce.
+
+#### PUT, PATCH and DELETE go out as POST
+
+For those same-origin REST URLs, `wp.os.fetch` also sends a `PUT`, `PATCH` or `DELETE` as `POST` with an `X-HTTP-Method-Override` header naming the method you asked for, as Core's `wp.apiFetch` does. Some hosts block those methods, and WordPress Playground drops the body of a `PATCH` or `PUT` while still answering `200`. WordPress's REST server dispatches on the header, so your route sees the method you passed, and so does `os/request-settled`. Cross-origin requests keep their method: Core's CORS reply does not allow the override header.
 
 #### Arguments
 
@@ -2184,7 +2193,7 @@ Heartbeat payloads and timestamp units are unchanged. See
 
 The **work area** is the rectangle of the desktop area (`#os-area`) that no shell chrome floats over — the space content may occupy and the user can reach. The bottom dock pill floats over the area's lower band; a window, widget or icon grid that sized itself against the whole area ended up with its last row under the dock, and every surface that guessed at the dock on its own guessed differently. The shell measures it once, from the live dock geometry, and every **default** placement reads it: window open (a registered size taller than the reachable height is fitted), session restore, cascade and tile, child windows, the widget clamp, the icon grid, sticky notes, embed-window restore, and the Fit of the Corkboard, the categories mind map and the tags cloud.
 
-**Maximize and snap respect the dock safe area.** They fill the measured work area (or half its width) and reflow when dock size, placement or behavior changes, keeping window content and bottom actions above a Static dock. The `dynamic` [dock behavior](#getossettings--stable) folds the rail into a thin indicator and claims no band, so maximized windows reclaim that space; revealing a Dynamic rail remains a transient overlay. Manually dragged or resized windows keep their chosen placement. Fullscreen still fills the screen.
+**Maximize and snap respect the dock safe area.** They fill the measured work area (or half its width) and reflow when dock size, placement or behavior changes, keeping window content and bottom actions above a Static dock. The `dynamic` [dock behavior](#getossettings--stable) folds the rail into a thin indicator and claims no band, so maximized windows reclaim that space; revealing a Dynamic rail remains a transient overlay. Manually dragged or resized windows keep their chosen placement — except inside a [reserved band](#reserved-bands), which no window may enter. Fullscreen still fills the screen.
 
 ```javascript
 // The latest snapshot (a copy).
@@ -2206,11 +2215,27 @@ const inset = wp.os.workArea.insetsOf( myCanvasHost );
 // React to changes — fires once per actual change, never on a
 // same-numbers re-measure.
 const off = wp.os.workArea.subscribe( ( snapshot ) => relayout( snapshot.rect ) );
+
+// Reserve a band nothing else may use (see "Reserved bands" below).
+const release = wp.os.workArea.reserve( 'my-plugin/ticker', { edge: 'top', size: 48 } );
+const band = wp.os.workArea.reservedRectOf( 'my-plugin/ticker' ); // viewport px, or null
+const placeable = wp.os.workArea.placementRectOf(); // area minus reserved bands
+release();
 ```
 
 **CSS custom properties.** The same numbers are written on `#os-shell` so a stylesheet can reserve the band without JS: `--os-work-area-inset-top`, `--os-work-area-inset-right`, `--os-work-area-inset-bottom`, `--os-work-area-inset-left` (px) and `--os-work-area-width`, `--os-work-area-height`. Give the `bottom` inset an `80px` fallback (the bottom pill at its default size, the placement almost every user has) and the others `0px`; those apply until the shell has measured once. `.os-area`'s own padding, the `.os-icons` grid and the `.os-widgets` column read them the same way.
 
-**What claims an inset.** Only chrome that floats **over** the area: the bottom dock pill, and anything a custom dock-rail renderer floats over it (every `.os-dock` in the shell body is measured; a rail claims the edge nearest its centre). A left or right dock is a flex sibling of the area, so the area is already narrower and its inset is 0. The admin bar sits above the shell in every mode, so `viewport` is already below it — below where the bar *actually ends*, not where Core says it should: the shell measures `#wpadminbar` and publishes its bottom edge in viewport px as **`--os-admin-bar-height`** on `<html>` (`src/admin-bar-height.ts`), and `.os-shell`, the toast stack and the release card all read `var( --os-admin-bar-height, var( --wp-admin--admin-bar--height, 32px ) )`. Core's token is Core's promise about Core's bar; a host that makes the bar taller, gives it a border or pushes it down under a fixed strip of its own (WordPress.com's staff debug chrome does) moves the measured edge and the shell follows. The property is present only while the bar is laid out at the top edge — a bar hidden by a mode, a mobile viewport, solo or a fullscreen window, or parked above the viewport in the `dynamic` mode, publishes nothing, so those states keep resolving Core's token. Chrome of your own that hangs below the bar should read the same chain. There is no API for a plugin to claim a band, on purpose: a work area is only useful while few things carve it.
+**What claims an inset.** Only chrome that floats **over** the area: the bottom dock pill, and anything a custom dock-rail renderer floats over it (every `.os-dock` in the shell body is measured; a rail claims the edge nearest its centre). A left or right dock is a flex sibling of the area, so the area is already narrower and its inset is 0. The admin bar sits above the shell in every mode, so `viewport` is already below it — below where the bar *actually ends*, not where Core says it should: the shell measures `#wpadminbar` and publishes its bottom edge in viewport px as **`--os-admin-bar-height`** on `<html>` (`src/admin-bar-height.ts`), and `.os-shell`, the toast stack and the release card all read `var( --os-admin-bar-height, var( --wp-admin--admin-bar--height, 32px ) )`. Core's token is Core's promise about Core's bar; a host that makes the bar taller, gives it a border or pushes it down under a fixed strip of its own (WordPress.com's staff debug chrome does) moves the measured edge and the shell follows. The property is present only while the bar is laid out at the top edge — a bar hidden by a mode, a mobile viewport, solo or a fullscreen window, or parked above the viewport in the `dynamic` mode, publishes nothing, so those states keep resolving Core's token. Chrome of your own that hangs below the bar should read the same chain.
+
+#### Reserved bands
+
+`wp.os.workArea.reserve( id, { edge, size } )` reserves a band along one edge (`top`, `right`, `bottom`, `left`, `size` in px) for a surface that must never be covered — the Pulse Monitor's [reserved top band](./pulse-monitor.md#layout) is the built-in user. It is stronger than a dock band:
+
+- It is added to the work-area insets (stacking after any dock band on that edge, then in reservation order), so maximize, snap, new-window placement, the wallpaper's file icons, widgets and notes all stay out of it, and the CSS custom properties include it. The wallpaper's file-icon layer starts at the work area's top-left (`--os-work-area-inset-top` / `-left`), and a sticky note stored inside the band is drawn just outside it — display only, so releasing the band puts it back.
+- It also bounds **manual** placement. A window may be dragged under the dock, but not into a reserved band: dragging and resizing stop at its edge, a floating window already there is moved out when the band appears, and a window opened with explicit coordinates inside it (a native window's default `0, 0`) is placed just below it. `wp.os.workArea.placementRectOf( areaEl? )` is that bound: the desktop area minus reserved bands only.
+- Reserving the same id again resizes the band in place; the returned function releases it (by id, whatever size it was last given). `wp.os.workArea.reservedRectOf( id )` gives the band's rectangle in viewport px, so the surface can draw into it — position your element there and follow `subscribe()`.
+
+The shell does not draw anything in a band; the reserver owns that space and should paint it (a layer appended to `#os-shell` sits above the desk area and under the docks). Reserve sparingly: every band takes room from every window, and a work area is only useful while few things carve it — this is for a surface the user asked to keep in view, not for placing a plugin's chrome.
 
 **Outside the contract.** Body-level popovers — context menus, tooltips, the dock's constellation and peek cards — position against the viewport and may open over the dock; they are transient chrome, not content, and stay that way. The Exposé overview collapses every rail while it is open and lays its grid out against the whole area on purpose.
 
@@ -3186,6 +3211,8 @@ Programmatic access to the AI Copilot — same endpoint the built-in overlay tal
 The built-in content tools (`search_posts`, `search_pages`, `search_comments`, `search_comments_by_post`) run WordPress's native keyword search — the model derives a `query` from the user's request and the tools return matching titles + excerpts, plus the commenter's display name (`author_name`, never an email or IP) on comments. (Nothing is pre-analyzed: posts, pages, comments and terms are never analyzed in the background.) When you continue an exhausted search with `resumeTool` / `startOffset`, the original query is reused automatically.
 
 Results are scoped to what the requesting user may read. The comment tools drop every comment whose parent post the caller cannot access (private, draft, or password-protected parents, and non-viewable post types), and `search_comments_by_post` returns an empty batch — without the parent title — when the target post itself is unreadable. As in Core's comments REST controller, this filtering happens per row after the query, so a batch can carry fewer items than `total` implies; treat `total` / `has_more` as pagination hints, not as an exact count of readable matches. The final `entity` record applies the same readability check to the model-chosen id, resolving unreadable entities to `null` exactly like nonexistent ones.
+
+`search_media` lists where a media item is used, and `find_unused_media` (Editors and Administrators) lists the items nothing on the site points at. Neither can delete anything.
 
 ```javascript
 const res = await wp.os.ai.ask( 'where do I manage categories?' );
@@ -4725,6 +4752,15 @@ Posted by the same head script whenever the document changes its own address wit
 
 The parent only records `url` as where the frame now is, which is what `Window.getCurrentUrl()` returns for a frame it cannot read. Without it, "Copy link", "Open in new window", "Open in classic wp-admin" and the saved session would all go on naming the URL the document loaded on. It is not a navigation: it settles no submit and keeps the window's title.
 
+#### `os-menu-owner` — Experimental
+Posted by the chromeless bridge on every page load. `menu` is the id of the dock tile whose admin menu WordPress files the page under (the menu the classic sidebar would highlight, from `$parent_file`), or `''` when no menu owns it.
+
+```typescript
+{ type: 'os-menu-owner', menu: string }
+```
+
+The dock counts the window as one of that tile's windows: the tile shows it as open, lights as focused while it is in front, and its flyout lists it. That ties a window to its menu when nothing in its URL does: a post editor (`post.php?post=<id>`) to Posts, Pages or its post type's menu, and a post's comments (`edit-comments.php?p=<id>`) to Comments. To change it for your own screen, use Core's `parent_file` filter, which moves the sidebar highlight too.
+
 #### `os-focus-request` — Stable
 Posted by the chromeless bridge on every pointerdown inside the iframe. The parent focuses the window, unless it's currently in the overview grid (where clicks are absorbed by the grid controller).
 
@@ -4762,7 +4798,7 @@ Posted from inside the chromeless iframe's `error` / `unhandledrejection` handle
 ```
 
 #### `os-iframe-network` — Stable
-Posted by the chromeless bridge's `fetch` and `XMLHttpRequest` wrappers whenever an HTTP call completes (success or failure). The parent re-dispatches as `HOOKS.IFRAME_NETWORK_COMPLETED` with `{ windowId, method, url, status, duration, failed }`. `status === 0` indicates a network-level failure before a response arrived.
+Posted by the chromeless bridge's `fetch` and `XMLHttpRequest` wrappers whenever an HTTP call completes (success or failure). The parent re-dispatches as `HOOKS.IFRAME_NETWORK_COMPLETED` with `{ windowId, method, url, status, duration, failed, aborted }`. `status === 0` indicates a network-level failure before a response arrived, unless `aborted` is set: the page cancelled the request itself (an `AbortError` from `fetch`, an `abort` before `loadend` on an XHR).
 
 ```typescript
 {
@@ -4772,6 +4808,7 @@ Posted by the chromeless bridge's `fetch` and `XMLHttpRequest` wrappers whenever
     status: number;
     duration: number;
     failed: boolean;
+    aborted?: true;  // present only for a request the page cancelled
 }
 ```
 
@@ -4872,6 +4909,8 @@ A payload-less nudge emitted by the chromeless bridge when Core's shiny updater 
 #### `os-menu-signature` — Stable
 
 A lightweight structural fingerprint of the admin menu, emitted by the chromeless bridge on **every** chromeless admin page that does *not* already carry a full `os-plugins-changed` payload. The shell compares `sig` against its last-known value (seeded from `openStationConfig.menuSig` at boot, updated on every applied payload) and — only when it differs — spends one [`wp.os.refreshMenu()`](#refreshmenu) probe to reconcile the dock.
+
+The hash covers the slug and title of every menu and submenu item the viewer can see. The `return=` value on Customize links is left out: it is the page being viewed, and would give every page its own signature for the same menu.
 
 This closes the gap where a custom post type registered through a settings tool (CPT UI, Pods, ACF, …) saves on its own `admin.php?page=…` / `options.php` screen — none of which is on the full-payload allowlist — so the new menu item never reached the live dock until a full browser reload (GH#325). An unchanged menu costs nothing beyond the tiny message; a full harvest happens only on a real change.
 
@@ -5180,6 +5219,7 @@ wp.os.registerWidget( {
 | `minWidth`, `minHeight` | `number` | Lower bounds enforced during user resize (px). |
 | `maxWidth`, `maxHeight` | `number` | Upper bounds enforced during user resize (px). |
 | `defaultWidth`, `defaultHeight` | `number` | Initial floating size — used the first time the widget is liberated. |
+| `fitContent` | `boolean` | Let the card grow taller than the user's height when its content needs the room, so controls a widget adds after the size was saved stay visible instead of scrolling inside the body. Applies to floating cards and to docked cards with a resized height. Grows up to `maxHeight` and never past the work-area bottom, shrinks back as the content does, never goes below the user's height, and never changes width or position. |
 
 ```js
 wp.os.registerWidget( {
@@ -5204,7 +5244,11 @@ wp.os.registerWidget( {
 } );
 ```
 
-User-placed geometry (position + size of liberated widgets) persists per-user in `localStorage` under `desktop-mode-widgets-geometry`. Height resizes made while a resizable widget is docked in the column persist separately under `desktop-mode-widgets-docked-heights` (height only — column widgets have no free position, and a full geometry record would mark the widget as floating at boot). Removing a widget clears both records so a re-add starts docked at its natural height.
+User-placed geometry (position + size of liberated widgets) persists per-user in `localStorage` under `desktop-mode-widgets-geometry`. Height resizes made while a resizable widget is docked in the column persist separately under `desktop-mode-widgets-docked-heights` (height only — column widgets have no free position, and a full geometry record would mark the widget as floating at boot). Removing a widget clears both records so a re-add starts docked at its natural height. A card dragged out of the column keeps its on-screen size, but never more height than the work area holds (20 px of air above and below, above the dock); taller content scrolls inside the card.
+
+Floating widgets follow the desktop when it changes size (a resized browser or PWA window, the dock moved to a side). Cards that touch (within 32 px) form one arrangement, and each arrangement keeps its distance to the edge it sits nearest to on each axis: a group beside the right-hand column follows the right edge, a group on the left stays, a roughly centred group stays centred. Cards never move relative to their own group. The area size the geometry was saved against lives under `openstation-widgets-geometry-frame`, so a session opened at a different size reflows on boot too.
+
+A `fitContent` card's grown height is never stored: both records keep the height the user chose, and the card grows from it on every load. A user resize sets that height anew, so a `fitContent` card dragged shorter than its content grows back to fit on release.
 
 ##### `wp.os.widgets.redock( id )` — Stable
 
@@ -5473,8 +5517,8 @@ Lifecycle + instrumentation for the chromeless iframe inside each window. Re-dis
 | Hook | Kind | Status | Payload |
 |---|---|---|---|
 | `os.iframe.ready` | action | Stable | `{ windowId }` — fires once per iframe when the chromeless bridge script has attached its listeners. Use this instead of the iframe's `load` event when timing matters (the native `load` fires before our bridge attaches, so messages sent on `load` can miss the listener). |
-| `os.iframe.error` | action | Stable | `{ windowId, kind: 'error' \| 'unhandledrejection', message, filename, lineno, colno, stack }` — bridged from the iframe's `error` / `unhandledrejection` handlers. Cross-origin iframe errors are origin-filtered at the bridge and never reach this hook. |
-| `os.iframe.network-completed` | action | Stable | `{ windowId, method, url, status, duration, failed }` — every `fetch` + `XMLHttpRequest` call inside the iframe. `status === 0` indicates a network-level failure with no response received. |
+| `os.iframe.error` | action | Stable | `{ windowId, kind: 'error' \| 'unhandledrejection', message, filename, lineno, colno, stack }` — bridged from the iframe's `error` / `unhandledrejection` handlers, for an iframe window's page and for an admin page embedded in a native window (`iframeContent`, `embedAdminPage()`); `windowId` is the owning window. Cross-origin iframe errors are origin-filtered at the bridge and never reach this hook. |
+| `os.iframe.network-completed` | action | Stable | `{ windowId, method, url, status, duration, failed, aborted }` — every `fetch` + `XMLHttpRequest` call inside the iframe: an iframe window's page, or an admin page embedded in a native window (`iframeContent`, `embedAdminPage()` — the Posts app's block editor included); `windowId` is the owning window. `status === 0` indicates a network-level failure with no response received — unless `aborted` is `true`, which means the page cancelled the request itself (an `AbortController` signal, `xhr.abort()`), as a search-as-you-type field does with its previous query. |
 
 Use `IFRAME_READY` when you need to send a `os-focus` (or any parent→iframe message) as early as possible without racing the bridge setup. Use `IFRAME_ERROR` / `IFRAME_NETWORK_COMPLETED` to build a monitor widget that surfaces per-window reliability data.
 
@@ -5927,6 +5971,19 @@ Four things follow from a system tile's menu being *actions* rather than admin p
 Declare `submenu` as a getter if the rows depend on live state — it is read fresh each time the flyout opens.
 
 ---
+
+### Pulse Monitor — beats in and out *(Experimental)*
+
+The built-in Pulse Monitor — wallpaper `wp-pulse` and widget `desktop-mode/pulse`, one bundle — beats for every request and shell signal. See [Pulse Monitor](./pulse-monitor.md).
+
+- **Activity channel `pulse/beat`** — publish to add a beat. Payload `{ source?: string, amplitude?: number, error?: boolean, detail?: string }`. A known source id (`requests`, `visitors`, …) borrows that source's shape and label; anything else is a standard beat labelled with the id. `amplitude` is clamped to 0–2; on a failed beat, `detail` is printed after the label ("my-plugin · quota exceeded").
+- **Action `os.pulse.beat`** — fires for every beat a monitor draws. Payload `{ source, shape, error, major, duration, detail, ectopic, surface }`; `source` is `rest` for the idle pacemaker, `ectopic` marks a beat the diagnosis made abnormal, `surface` is `wallpaper` or `widget`.
+- **Heartbeat field `openstation_pulse`** — sent while a monitor is mounted (`{ since }`); answered with `{ seq, now, events, health }`.
+
+```js
+wp.os.activity.publish( 'pulse/beat', { source: 'my-plugin', error: true, detail: 'quota exceeded' } );
+wp.hooks.addAction( 'os.pulse.beat', 'my-plugin', ( beat ) => console.log( beat.source, beat.detail ) );
+```
 
 ### Wallpaper surfaces
 
@@ -7859,7 +7916,10 @@ interface Agent {
 ```
 
 `POST /agents/{id}/invoke` with `{ message, source?, history? }`
-returns `{ text, callToActions, toolCalls, turns }` where each tool call is
+returns `{ text, callToActions, toolCalls, turns, usage, model }` where
+`usage` is `{ prompt, completion, total }` summed across the run and
+`model` is `{ id, name }` for the last model resolved (both `null` when
+the provider reported neither), and where each tool call is
 `{ callId, name, args, output, error }`.
 
 `history` is the prior conversation (`[ { role: 'user'|'agent', text },

@@ -74,6 +74,14 @@ Emitted on **every** chromeless page load, **including `identity: null`** — a 
 
 **Save broadcast**: on the same save-success edge the watcher also posts an upstream `{ type: 'os-broadcast', topic: 'os.<postType>.changed', payload: { source: 'editor', action: 'created' | 'updated', ids: [ postId ] } }` to the parent, which fans it out to every window — list windows showing that type refresh instantly. `action` is `'created'` exactly when the post was still new on the tick the save started. This is the block editor's leg of the content-change realtime layer (`includes/content-changes.php`); form-POST → redirect flows are covered server-side by the chromeless-footer emitter instead. The iframe-side consumer is the soft-reload handler: `edit.php` / `upload.php` / `edit-comments.php` are matched generically by list type, and non-standard list screens (the HPOS `wc-orders` list) are declared via the PHP-printed `/*__OPENSTATION_SOFT_RELOAD_EXTRAS__*/` placeholder, filterable server-side through `openstation_soft_reload_rules`.
 
+### Menu owner — `os-menu-owner`
+
+| Type | Direction | Carries | Purpose |
+|---|---|---|---|
+| `os-menu-owner` | iframe → parent | `{ menu: string }` | The id of the dock tile whose admin menu WordPress files this page under, or `''` when no menu owns it. Resolved server-side from `$parent_file` with the rule the classic sidebar uses to highlight its current menu, after Core's `parent_file` filter has run. The dock counts the window as one of that tile's windows, so a post editor lights Posts (Pages, or its post type's menu), and `edit-comments.php?p=<id>` lights Comments, however the window was opened. |
+
+Posted on every chromeless page load, right after `os-content-identity`, so a navigation to a screen no menu owns clears it. A plugin that moves the sidebar highlight with the `parent_file` filter moves the dock's with it.
+
 ### Connection bridge — `os-bridge-*`
 
 | Type | Direction | Carries | Purpose |
@@ -136,6 +144,8 @@ A keydown inside an iframe never reaches the parent document, and every admin wi
 | `os-palette-cycle` | iframe → parent | *(none)* | `Cmd/Ctrl+K`. Opens the shell's command palette / Ask AI overlay rather than the in-page `core/commands` one, which the shell harvests anyway. |
 | `os-window-switch` | iframe → parent | `{ direction: 'prev' \| 'next' }` | `` ` `` / `` Shift+` ``. Cycles window focus on the active desktop. |
 | `os-window-close-all` | iframe → parent | *(none)* | `⌥⌘W` / `Ctrl+Alt+W`. Runs the shell's confirm-then-`closeAll()` path (see [`javascript-reference.md`](./javascript-reference.md#batch-close--closeall)). |
+
+The Cmd/Ctrl+K forwarder yields to a keydown that arrives already `defaultPrevented`: that is the block editor's canvas re-dispatching a chord its rich-text Add Link shortcut has already handled, and Core's own palette bails on the same flag.
 
 The backtick forwarder — and only that one — applies a **text-entry gate** before forwarding: a bare key with no modifier has to yield to whatever the user is typing into, including the `IFRAME` case that catches Gutenberg's block canvas re-dispatching cloned keydowns. The other two carry modifiers that type nothing, so they forward from anywhere.
 
@@ -296,11 +306,12 @@ The chromeless bridge intercepts every same-origin `<a href="/wp-admin/…">` cl
 | Type | Direction | Carries | Purpose |
 |---|---|---|---|
 | `os-iframe-other-admin-link` | iframe → parent | `{ url }` | Posted for a same-origin click that leaves this ADMIN — another site's `wp-admin`, or the network admin, detected by the bridge's `adminScope()` rule. Deliberately its own message rather than a flag on `os-iframe-admin-link`: the same-admin path consults remaps and dock entries that mean nothing in another admin. The shell hops to that admin's own shell, since on a network every site is its own OpenStation (see [multisite.md](./multisite.md#site-instances)); the flag `openstation_chromeless` is stripped before posting. Modifier and middle clicks never produce it — the interceptor yields those to the browser. |
+| `os-iframe-offsite-redirect` | iframe → parent | `{ url }` | Sent instead of a window's redirect to another host, such as WooCommerce.com's **Connect account** (`openstation_chromeless_hand_off_offsite_redirect()`). The shell drops the window and takes the tab to `url`, as classic admin would; the return to an admin URL comes back through the portal. Before any user interaction (a window restored at boot) it only drops the window. Only http(s) URLs on another origin are followed; a parent that does not answer leaves a `target="_top"` link to `url`. |
 | `os-iframe-admin-link` | iframe → parent | `{ url, label, newContext }` | Posted from the chromeless bridge's link interceptor for every admin-internal click that survived the modifier-key / target / download filters. `label` is the clicked link's visible text (falling back to its `title` / `aria-label`, truncated to 80 chars). `newContext` is true when the link named another browsing context, and bars the parent from driving the source window with it, closing it on a native remap included. The bridge `preventDefault`s the click first; the parent owns the navigation. The plugins screen posts one too, with `newContext: true`, for a screen a plugin redirected a window to (see `openstation_chromeless_hand_off_plugins_redirect()`). |
 
-Parent dispatch (in `src/window/iframe-bridge.ts`, wired by `bindAdminLinkDispatch` in `desktop.ts`):
+Parent dispatch (in `src/window/iframe-bridge.ts`, wired by `bindAdminLinkDispatch` in `desktop.ts`; synthetic iframes in native windows route through `native-windows.ts` via `onAdminLink` first):
 
-1. **Native-window remap** — the URL goes through `tryNativeUrlRemap`. On a hit the parent opens the native window and closes the source iframe so the brief in-flight nav never paints.
+1. **Native-window remap** — the URL goes through `tryNativeUrlRemap`. On a hit the parent opens the native window and closes the source iframe so the brief in-flight nav never paints. For synthetic iframes in native window panels (`wp.os.embedAdminPage`), a URL matching the window's own `baseId` delegates to the host app's `onAdminLink( linkUrl, tab )` callback instead of opening a second window.
 2. **Same-slug click** — `deriveWindowId(url, adminUrl)` matches the source window's `baseId` **or** the slug its iframe is currently showing (`getCurrentUrl()`). The parent calls `iframe.contentWindow.location.assign(url)`, which navigates the iframe in place AND adds a session-history entry. Pagination, list filtering, and per-window tab strips ride this path.
 
    Both slugs count because they diverge as soon as the iframe navigates in place: clicking the Menus tab in the Appearance window points the iframe at `nav-menus.php` while the window keeps `baseId: themes-php`. Matching only `baseId` would classify the Menus screen's own tab links as cross-page and spawn a fresh window per click. The live slug only ever *widens* the same-page set — it never turns an in-place navigation into a new window, so a window that has navigated away still treats a link back to its landing page as in-page.

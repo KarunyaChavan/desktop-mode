@@ -2171,6 +2171,7 @@ export class Window {
 		this.element.style.removeProperty( 'will-change' );
 		this.element.style.removeProperty( 'transform' );
 		this.element.style.removeProperty( 'opacity' );
+		this.element.style.removeProperty( '--os-genie-rank' );
 	}
 
 	/**
@@ -2427,9 +2428,6 @@ export class Window {
 	 * silently dropping into 'normal' while the `--maximized` class
 	 * (still on the element from before minimize) leaves the visual
 	 * out of sync with `this.state`.
-	 */
-	/**
-	 * Restore the window from the dock.
 	 *
 	 * @param options             Flight options.
 	 * @param options.flightLayer When true (the default), elevates the window

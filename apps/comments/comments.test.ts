@@ -351,6 +351,34 @@ describe( 'conversation', () => {
 		expect( trashCtx.dispatch ).toHaveBeenCalledWith( 'moderate', { ids: [ 1 ], action: 'untrash' }, { confirm: null } );
 	} );
 
+	it( 'the composer is suppressed when the comment is in spam or trash', () => {
+		const { root: spamRoot } = mount(
+			{ selected: 1 },
+			data( { thread: thread( [ row( { status: 'spam' } ) ] ) } ),
+		);
+		expect( spamRoot.querySelector( '.os-comments__composer' )?.classList.contains( 'is-empty' ) ).toBe( true );
+		expect( spamRoot.querySelector( '.os-comments__reply-input' ) ).toBeNull();
+
+		const { root: trashRoot } = mount(
+			{ selected: 1 },
+			data( { thread: thread( [ row( { status: 'trash' } ) ] ) } ),
+		);
+		expect( trashRoot.querySelector( '.os-comments__composer' )?.classList.contains( 'is-empty' ) ).toBe( true );
+		expect( trashRoot.querySelector( '.os-comments__reply-input' ) ).toBeNull();
+	} );
+
+	it( 'the composer is suppressed when replying to a quarantined comment in the thread', () => {
+		const rows = [ row( { id: 1, status: 'approved' } ), row( { id: 2, parent: 1, status: 'spam' } ) ];
+		const { root, ctx, ui } = mount( { selected: 1 }, data( { thread: thread( rows ) } ) );
+		expect( root.querySelector( '.os-comments__reply-input' ) ).not.toBeNull();
+
+		ui.replyTo = 2;
+		ctx.repaint();
+
+		expect( root.querySelector( '.os-comments__composer' )?.classList.contains( 'is-empty' ) ).toBe( true );
+		expect( root.querySelector( '.os-comments__reply-input' ) ).toBeNull();
+	} );
+
 	it( 'Reply retargets the composer; Send dispatches the draft and Enter sends too', async () => {
 		const rows = [ row( { id: 1 } ), row( { id: 2, parent: 1, author_name: 'Bob' } ) ];
 		const { root, ctx, ui } = mount( { selected: 1 }, data( { thread: thread( rows ) } ) );

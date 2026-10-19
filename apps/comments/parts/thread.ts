@@ -176,7 +176,8 @@ function messageActions( ctx: Ctx, ui: UiState, row: CommentRow ): TemplateResul
 	const items: TemplateResult[] = [];
 	if ( canModerate ) {
 		// Spam/trash replace Approve with their own restorative verb —
-		// wp_set_comment_status( 'approve' ) destroys _wp_trash_meta_status, bypassing moderation.
+		// wp_set_comment_status( 'approve' ) forces the comment live and skips
+		// the untrashed_comment / unspammed_comment hooks.
 		if ( 'spam' === status ) {
 			items.push(
 				actionButton(
@@ -342,6 +343,10 @@ function composer( ctx: Ctx, ui: UiState, root: CommentRow, rows: CommentRow[] )
 		return html`<div class="${ NS }__composer is-empty" data-target=${ root.id }></div>`;
 	}
 	const target = rows.find( ( r ) => r.id === ui.replyTo ) ?? root;
+	const targetStatus = normalizeStatus( target );
+	if ( 'spam' === targetStatus || 'trash' === targetStatus ) {
+		return html`<div class="${ NS }__composer is-empty" data-target=${ target.id }></div>`;
+	}
 	const busy = ui.busy === 'reply';
 	return html`<div class="${ NS }__composer" data-target=${ target.id }>
 		<div class="${ NS }__composer-to">${ __( 'Replying to' ) } <b>${ authorName( target ) }</b></div>

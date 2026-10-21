@@ -213,7 +213,40 @@ function openstation_notes_prepare( $post ) {
 }
 
 /**
- * Derive the post title from the note text (first non-empty line).
+ * Keep the save filters off a note's text, the way the agents module
+ * does for a conversation's transcript. Hooked only while a note
+ * handler saves.
+ *
+ * The text is Markdown the client renders escaped, never HTML that
+ * WordPress echoes, and `sanitize_textarea_field()` has already
+ * stripped its tags. For a user without `unfiltered_html` (everyone
+ * but a super admin on multisite) kses would still turn a quote's
+ * `>` into `&gt;` and `&` into `&amp;`, so the note would stop being
+ * the text its owner typed.
+ *
+ * @param array $data                Slashed, sanitized post data.
+ * @param array $postarr             Sanitized post data.
+ * @param array $unsanitized_postarr Slashed post data as passed to `wp_insert_post()`.
+ * @return array
+ */
+function openstation_notes_preserve_text( $data, $postarr, $unsanitized_postarr ) {
+	global $wpdb;
+
+	if ( OPENSTATION_NOTES_POST_TYPE !== $data['post_type'] || ! isset( $unsanitized_postarr['post_content'] ) ) {
+		return $data;
+	}
+	$data['post_content'] = $unsanitized_postarr['post_content'];
+	// `wp_insert_post()` has already swapped emoji for entities where
+	// the column is utf8mb3. Redo it on the restored text.
+	if ( in_array( $wpdb->get_col_charset( $wpdb->posts, 'post_content' ), array( 'utf8', 'utf8mb3' ), true ) ) {
+		$data['post_content'] = wp_encode_emoji( $data['post_content'] );
+	}
+	return $data;
+}
+
+/**
+ * Derive the post title from the note text: its first line with any
+ * text left once the Markdown markers are dropped.
  *
  * Only used for admin-side lists / exports — the shell never shows it.
  *
@@ -222,7 +255,7 @@ function openstation_notes_prepare( $post ) {
  */
 function openstation_notes_derive_title( $text ) {
 	foreach ( preg_split( '/\r\n|\r|\n/', (string) $text ) as $line ) {
-		$line = trim( $line );
+		$line = openstation_notes_markdown_plain_line( $line );
 		if ( '' !== $line ) {
 			return mb_substr( sanitize_text_field( $line ), 0, 80 );
 		}
@@ -302,16 +335,18 @@ function openstation_notes_rest_create( $request ) {
 
 	$text = sanitize_textarea_field( (string) $request['text'] );
 
+	add_filter( 'wp_insert_post_data', 'openstation_notes_preserve_text', 5, 3 );
 	$post_id = wp_insert_post(
 		array(
 			'post_type'    => OPENSTATION_NOTES_POST_TYPE,
 			'post_status'  => $request['public'] ? 'publish' : 'private',
 			'post_author'  => get_current_user_id(),
 			'post_title'   => openstation_notes_derive_title( $text ),
-			'post_content' => $text,
+			'post_content' => wp_slash( $text ),
 		),
 		true
 	);
+	remove_filter( 'wp_insert_post_data', 'openstation_notes_preserve_text', 5 );
 	if ( is_wp_error( $post_id ) ) {
 		$post_id->add_data( array( 'status' => 500 ) );
 		return $post_id;
@@ -394,7 +429,7 @@ function openstation_notes_rest_update( $request ) {
 
 	if ( null !== $request['text'] ) {
 		$text                   = sanitize_textarea_field( (string) $request['text'] );
-		$update['post_content'] = $text;
+		$update['post_content'] = wp_slash( $text );
 		$update['post_title']   = openstation_notes_derive_title( $text );
 	}
 	if ( null !== $request['public'] ) {
@@ -417,7 +452,9 @@ function openstation_notes_rest_update( $request ) {
 	// Always run the post update — even a meta-only PATCH must bump
 	// `post_modified` so the concurrency token advances and the
 	// Heartbeat delta query sees the move.
+	add_filter( 'wp_insert_post_data', 'openstation_notes_preserve_text', 5, 3 );
 	$result = wp_update_post( $update, true );
+	remove_filter( 'wp_insert_post_data', 'openstation_notes_preserve_text', 5 );
 	if ( is_wp_error( $result ) ) {
 		$result->add_data( array( 'status' => 500 ) );
 		return $result;
@@ -493,31 +530,6 @@ function openstation_notes_rest_restore( $request ) {
 	}
 
 	return rest_ensure_response( openstation_notes_prepare( get_post( $post->ID ) ) );
-}
-
-/**
- * Convert a note's plain text into Gutenberg paragraph-block markup.
- *
- * Blank lines split paragraphs; single newlines within a paragraph
- * become `<br>`. The result lands clean in the block editor rather
- * than as one classic-HTML blob.
- *
- * @param string $text Note text.
- * @return string Serialized block markup (empty string for empty text).
- */
-function openstation_notes_text_to_blocks( $text ) {
-	$text       = str_replace( array( "\r\n", "\r" ), "\n", (string) $text );
-	$paragraphs = preg_split( '/\n{2,}/', trim( $text ) );
-	$blocks     = array();
-	foreach ( $paragraphs as $paragraph ) {
-		$paragraph = trim( $paragraph, "\n" );
-		if ( '' === $paragraph ) {
-			continue;
-		}
-		$html     = nl2br( esc_html( $paragraph ), false );
-		$blocks[] = "<!-- wp:paragraph -->\n<p>{$html}</p>\n<!-- /wp:paragraph -->";
-	}
-	return implode( "\n\n", $blocks );
 }
 
 /**

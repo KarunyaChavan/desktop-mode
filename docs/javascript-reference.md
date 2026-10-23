@@ -6921,7 +6921,9 @@ DOM — `preview-extras` (the `header`/`meta`/`footer` slots),
 `list-tile`, `list-bands`, `tile-context-menu`, `preview-actions`,
 `group-extras`, `hover-card`, `user-activate`, `user-preview-actions`
 and `user-dossier-sections` — and its rows carry the REST-visible fields
-subscribers read (`meta`, per-taxonomy term ids, `openstation_woo`;
+subscribers read (`meta`, per-taxonomy term ids, `openstation_woo` —
+`null` on a `product` row for a logged-out caller or anyone failing
+`openstation_my_wordpress_user_can_use()`;
 the Customers section's rows carry `openstation_woo_customer` — the
 built-in Users folder deliberately ships no money on its rows, and
 the Woo bundle treats the facts' presence as the opt-in outside the

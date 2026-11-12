@@ -1606,6 +1606,16 @@
 			return;
 		}
 		/*
+		 * ThickBox modal triggers open an in-page modal in the bubble phase;
+		 * intercepting them here spawns a duplicate desktop window.
+		 */
+		if (
+			link.classList.contains( 'thickbox' ) ||
+			link.classList.contains( 'open-plugin-details-modal' )
+		) {
+			return;
+		}
+		/*
 		 * Jetpack's Stats and Blaze dashboards route their own
 		 * root-relative links to `#!` hashes; see isJetpackAppRoute().
 		 */

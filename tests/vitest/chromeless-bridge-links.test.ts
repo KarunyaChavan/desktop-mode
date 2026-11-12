@@ -178,6 +178,22 @@ describe( 'chromeless bridge: which clicks reach the shell', () => {
 		expect( adminLinkMessages() ).toHaveLength( 0 );
 	} );
 
+	// ThickBox triggers (e.g. "View version X details") open an in-page
+	// modal via thickbox.js / updates.js; routing their href spawned a
+	// duplicate desktop window on top of the modal.
+	test( 'ThickBox modal links stay in-place', () => {
+		const anchors = [
+			'<a href="/wp-admin/plugin-install.php?tab=plugin-information&amp;plugin=gutenberg&amp;section=changelog&amp;TB_iframe=true&amp;width=772&amp;height=918" class="thickbox open-plugin-details-modal" aria-label="View Gutenberg version 24.3.1 details">View version 24.3.1 details</a>',
+			'<a href="/wp-admin/plugin-install.php?tab=plugin-information&amp;plugin=akismet&amp;TB_iframe=true" class="thickbox">More Details</a>',
+			'<a href="/wp-admin/plugin-install.php?tab=plugin-information&amp;plugin=jetpack" class="open-plugin-details-modal">View details</a>',
+		];
+
+		for ( const html of anchors ) {
+			clickLink( html );
+			expect( adminLinkMessages() ).toHaveLength( 0 );
+		}
+	} );
+
 	// `plugin-install.php`'s Upload Plugin. Core binds a bubble-phase
 	// toggle that opens the drop zone in place above the plugin cards,
 	// but stamps no `aria-button-if-js`, so we used to win the click
